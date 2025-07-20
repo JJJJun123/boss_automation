@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data files
+data/
+*.json
+*.txt
+*.csv
+*.xlsx
+
+# Screenshots
+*.png
+*.jpg
+*.jpeg
+
+# Config with secrets
+config/secrets.env
+
+# Node modules (if using frontend)
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+
+# Browser data
+cookies.json
+session_data/

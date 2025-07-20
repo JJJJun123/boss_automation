@@ -1,0 +1,138 @@
+# 用户偏好设置配置文件
+# 此文件包含用户可在Web界面中动态调整的设置
+
+# 搜索偏好设置
+search:
+  # 当前搜索关键词
+  keyword: "市场风险管理"
+  
+  # 备选关键词列表（用于快速切换）
+  quick_keywords:
+    - "市场风险管理"
+    - "风险控制"
+    - "量化分析"
+    - "金融风控"
+    - "投资顾问"
+    - "战略咨询"
+    - "管理咨询"
+    - "AI算法"
+    - "机器学习"
+    - "数据分析"
+  
+  # 选择的城市
+  selected_cities:
+    - "shanghai"
+    - "hangzhou"
+  
+  # 搜索数量设置
+  max_jobs: 20           # 搜索岗位总数
+  max_analyze_jobs: 10   # AI分析岗位数
+  fetch_details: false   # 是否获取岗位详细信息（会增加抓取时间）
+  
+  # 爬虫引擎选择
+  spider_engine: "selenium"  # selenium 或 playwright_mcp
+  use_playwright_mcp: false  # 是否使用Playwright MCP（更稳定但需要手动登录）
+
+# AI分析偏好
+ai_analysis:
+  # 当前使用的AI服务商
+  provider: "deepseek"
+  
+  # 评分标准
+  min_score: 6           # 最低接受评分
+  
+  # 分析深度
+  analysis_depth: "standard"  # standard/detailed/quick
+
+# 个人信息配置（用于AI分析匹配）
+personal_profile:
+  # 基本信息
+  experience_years: 5
+  current_location: "shanghai"
+  
+  # 技能标签
+  skills:
+    - "风险管理"
+    - "数据分析"
+    - "Python"
+    - "金融建模"
+    - "量化分析"
+  
+  # 求职意向
+  job_intentions:
+    - "市场风险管理相关岗位"
+    - "咨询相关岗位（战略咨询、管理咨询、行业分析）"
+    - "AI/人工智能相关岗位"
+    - "金融相关岗位（银行、证券、基金、保险）"
+  
+  # 薪资期望范围
+  salary_range:
+    min: 15000    # 最低期望薪资(K/月)
+    max: 35000    # 最高期望薪资(K/月)
+  
+  # 公司偏好
+  company_preferences:
+    sizes:        # 偏好的公司规模
+      - "100-499人"
+      - "500-999人"
+      - "1000人以上"
+    industries:   # 偏好的行业
+      - "互联网"
+      - "人工智能"
+      - "金融科技"
+      - "咨询服务"
+    
+  # 不接受的岗位类型
+  excluded_job_types:
+    - "纯销售岗位"
+    - "客服岗位"
+    - "纯技术开发（除非AI相关）"
+    - "初级行政岗位"
+
+# 界面显示偏好
+ui_preferences:
+  # 主题设置
+  theme: "auto"          # light/dark/auto
+  
+  # 语言设置
+  language: "zh-CN"      # zh-CN/en-US
+  
+  # 结果显示设置
+  results_display:
+    items_per_page: 10   # 每页显示岗位数
+    show_detailed_analysis: true  # 显示详细分析
+    show_company_info: true       # 显示公司信息
+    auto_refresh: false           # 自动刷新结果
+  
+  # 通知设置
+  notifications:
+    show_progress: true           # 显示进度通知
+    show_completion: true         # 显示完成通知
+    sound_enabled: false          # 启用声音提示
+
+# 数据导出偏好
+export:
+  # 默认导出格式
+  default_format: "json"  # json/csv/excel
+  
+  # 导出字段选择
+  include_fields:
+    - "title"
+    - "company"
+    - "salary" 
+    - "score"
+    - "analysis"
+    - "url"
+    - "job_description"
+
+# 历史记录设置
+history:
+  # 保存搜索历史
+  save_search_history: true
+  
+  # 历史记录保留天数
+  retention_days: 30
+  
+  # 自动清理低分岗位
+  auto_cleanup_low_score: true
+  cleanup_threshold: 4

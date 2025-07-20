@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 苹果风格全局样式 */
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-gray-50 dark:bg-dark-50 text-gray-900 dark:text-dark-900 font-sans;
+    @apply transition-colors duration-300;
+  }
+
+  /* 自定义滚动条 */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 dark:bg-dark-400 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400 dark:bg-dark-500;
+  }
+}
+
+@layer components {
+  /* 苹果风格按钮 */
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-6 py-3;
+    @apply bg-primary-600 hover:bg-primary-700 text-white;
+    @apply rounded-2xl font-medium;
+    @apply transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-opacity-50;
+    @apply shadow-lg hover:shadow-xl;
+    @apply transform hover:scale-105 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-6 py-3;
+    @apply bg-gray-100 hover:bg-gray-200 dark:bg-dark-200 dark:hover:bg-dark-300;
+    @apply text-gray-900 dark:text-dark-900;
+    @apply rounded-2xl font-medium;
+    @apply transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50;
+    @apply transform hover:scale-105 active:scale-95;
+  }
+
+  /* 苹果风格卡片 */
+  .card {
+    @apply bg-white dark:bg-dark-100;
+    @apply rounded-3xl shadow-lg;
+    @apply border border-gray-200 dark:border-dark-300;
+    @apply p-6;
+    @apply backdrop-blur-lg bg-opacity-80 dark:bg-opacity-80;
+    @apply transition-all duration-300;
+  }
+
+  .card-hover {
+    @apply hover:shadow-xl hover:scale-102;
+    @apply transform transition-all duration-300;
+  }
+
+  /* 毛玻璃效果 */
+  .glass {
+    @apply backdrop-blur-xl bg-white/80 dark:bg-dark-100/80;
+    @apply border border-white/20 dark:border-dark-300/20;
+  }
+
+  /* 输入框样式 */
+  .input-field {
+    @apply w-full px-4 py-3;
+    @apply bg-gray-50 dark:bg-dark-200;
+    @apply border border-gray-200 dark:border-dark-300;
+    @apply rounded-2xl;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500;
+    @apply transition-all duration-200;
+    @apply placeholder-gray-400 dark:placeholder-dark-600;
+    @apply text-gray-900 dark:text-dark-900;
+  }
+
+  /* 进度条 */
+  .progress-bar {
+    @apply w-full h-2 bg-gray-200 dark:bg-dark-300 rounded-full overflow-hidden;
+  }
+
+  .progress-fill {
+    @apply h-full bg-gradient-to-r from-primary-500 to-primary-600;
+    @apply transition-all duration-500 ease-out;
+  }
+
+  /* 标签样式 */
+  .tag {
+    @apply inline-flex items-center px-3 py-1;
+    @apply bg-primary-100 dark:bg-primary-900/30 text-primary-800 dark:text-primary-200;
+    @apply rounded-full text-sm font-medium;
+  }
+
+  /* 状态指示器 */
+  .status-indicator {
+    @apply inline-flex items-center;
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full mr-2;
+  }
+
+  .status-success {
+    @apply bg-green-500;
+  }
+
+  .status-warning {
+    @apply bg-yellow-500;
+  }
+
+  .status-error {
+    @apply bg-red-500;
+  }
+
+  .status-info {
+    @apply bg-blue-500;
+  }
+}
+
+@layer utilities {
+  /* 动画工具类 */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-bounce-gentle {
+    animation: bounceGentle 2s infinite;
+  }
+
+  /* 变换工具类 */
+  .scale-102 {
+    transform: scale(1.02);
+  }
+
+  /* 苹果风格阴影 */
+  .shadow-apple {
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+
+  .shadow-apple-lg {
+    box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.15), 0 8px 16px -4px rgba(0, 0, 0, 0.1);
+  }
+}

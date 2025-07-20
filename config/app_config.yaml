@@ -1,0 +1,94 @@
+# Boss直聘自动化应用配置文件
+# 此文件包含应用的基础设置，可以提交到版本控制系统
+
+# 应用基础信息
+app:
+  name: "Boss直聘AI助手"
+  version: "1.0.0"
+  description: "智能化的Boss直聘岗位筛选工具"
+
+# AI模型配置
+ai:
+  # 支持的AI服务商列表
+  supported_providers:
+    - deepseek
+    - claude  
+    - gemini
+  
+  # 默认AI服务商
+  default_provider: "deepseek"
+  
+  # 各AI模型的默认配置
+  models:
+    deepseek:
+      model_name: "deepseek-reasoner"
+      temperature: 0.7
+      max_tokens: 1000
+    claude:
+      model_name: "claude-3-sonnet-20240229"
+      temperature: 0.7
+      max_tokens: 1000
+    gemini:
+      model_name: "gemini-pro"
+      temperature: 0.7
+      max_tokens: 1000
+
+# 爬虫配置
+crawler:
+  # Boss直聘基础URL
+  base_url: "https://www.zhipin.com"
+  
+  # 浏览器配置
+  browser:
+    headless: false  # 是否无头模式
+    timeout: 30      # 页面加载超时时间(秒)
+    
+  # 反爬虫设置
+  anti_detection:
+    random_delay_min: 1    # 最小延迟(秒)
+    random_delay_max: 3    # 最大延迟(秒)
+    scroll_times: 3        # 滚动次数
+    
+  # 数据提取设置
+  extraction:
+    max_retries: 3         # 最大重试次数
+    retry_delay: 2         # 重试延迟(秒)
+
+# 系统限制
+limits:
+  max_jobs_search: 100     # 最大搜索岗位数
+  max_jobs_analyze: 50     # 最大分析岗位数
+  min_score: 1             # 最小评分
+  max_score: 10            # 最大评分
+
+# 城市配置
+cities:
+  shanghai:
+    name: "上海"
+    code: "101210100"
+  hangzhou:
+    name: "杭州"  
+    code: "101210300"
+  shenzhen:
+    name: "深圳"
+    code: "101280600"
+  beijing:
+    name: "北京"
+    code: "101010100"
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Web界面配置
+web:
+  host: "127.0.0.1"
+  port: 5000
+  debug: true
+  
+  # 静态资源配置
+  static_folder: "../frontend/build"
+  template_folder: "../frontend/build"
