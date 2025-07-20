@@ -315,6 +315,11 @@ def serve_frontend():
                     <div class="text-gray-600 mb-2">🏢 ${job.company}</div>
                     <div class="text-gray-600 mb-2">💰 <span class="text-green-600 font-medium">${job.salary}</span></div>
                     ${job.work_location ? `<div class="text-gray-600 mb-2">📍 ${job.work_location}</div>` : ''}
+                    ${job.url ? `
+                        <div class="text-gray-600 mb-2">
+                            🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm break-all">${job.url}</a>
+                        </div>
+                    ` : ''}
                 </div>
                 
                 ${job.tags && job.tags.length > 0 ? `

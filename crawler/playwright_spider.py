@@ -147,46 +147,109 @@ def search_with_playwright_mcp(keyword: str, city_code: str = "101280600", max_j
         
         logger.info(f"🔍 搜索参数: {keyword}, 城市代码: {city_code}, 最大岗位数: {max_jobs}")
         
-        # 生成合理的岗位标题，移除不合理的引擎标识拼接
-        # 用户能在进度日志中看到引擎类型，不需要在岗位标题中显示
-        
-        sample_jobs = [
-            {
-                "title": "市场风险管理专员",
-                "company": "某金融科技公司",
-                "salary": "15-25K",
-                "tags": ["风险管理", "金融", "数据分析"],
-                "url": "https://www.zhipin.com/job_detail/sample1",
-                "company_info": "500-999人 | 金融科技",
-                "work_location": "上海·浦东新区",
-                "benefits": "五险一金,股票期权,年终奖",
-                "job_description": "负责市场风险识别、评估和控制，建立完善的风险管理体系。主要工作内容包括：1. 建立和完善市场风险管理制度和流程；2. 对交易组合进行市场风险计量和分析；3. 编制风险报告，向管理层汇报风险状况；4. 协助业务部门进行风险控制和管理；5. 参与新产品的风险评估工作。要求具备扎实的金融理论基础和风险管理专业知识。",
-                "job_requirements": "3年以上风险管理经验，熟悉金融衍生品定价和风险计量方法。具备以下技能：1. 熟练掌握VaR、压力测试等风险计量方法；2. 精通Python、R、MATLAB等分析工具；3. 具备CFA、FRM等相关资格证书优先；4. 良好的沟通协调能力和团队合作精神；5. 本科及以上学历，金融、数学、统计等相关专业。",
-                "company_details": "专注于金融科技创新的领先企业，致力于通过技术手段提升金融服务效率。公司成立于2015年，目前员工规模500-999人，在风险管理、量化投资、智能投顾等领域具有深厚的技术积累。公司文化开放包容，注重员工个人发展，提供完善的培训体系和晋升通道。",
-                "experience_required": "3-5年经验",
-                "education_required": "本科及以上",
-                "engine_source": "Playwright MCP"  # 用单独字段标识数据源
-            },
-            {
-                "title": "高级风险控制专家",
-                "company": "某大型银行",
-                "salary": "20-35K",
-                "tags": ["风险控制", "银行", "合规"],
-                "url": "https://www.zhipin.com/job_detail/sample2",
-                "company_info": "1000人以上 | 银行",
-                "work_location": "上海·黄浦区",
-                "benefits": "五险一金,带薪年假,节日福利",
-                "job_description": "制定和实施全面风险管理策略，监控市场风险指标。具体职责包括：1. 制定银行整体风险管理政策和流程；2. 建立健全风险识别、计量、监测和控制体系；3. 负责信用风险、市场风险、操作风险的全面管理；4. 定期评估和报告银行风险状况；5. 协调各部门风险管理工作，确保合规经营；6. 参与重大业务决策的风险评估。",
-                "job_requirements": "5年以上银行风险管理经验，CFA/FRM证书优先。任职要求：1. 深入了解银行业务和监管要求；2. 熟悉巴塞尔协议III相关规定；3. 具备丰富的信贷风险、市场风险管理经验；4. 精通风险建模和压力测试方法；5. 优秀的分析判断能力和沟通协调能力；6. 硕士及以上学历，金融、经济、统计等相关专业。",
-                "company_details": "国内领先的商业银行，业务遍布全国各大城市。成立于1984年，现为国有大型商业银行，资产规模超过30万亿元。银行秉承客户至上、服务第一的经营理念，为个人和企业客户提供全方位的金融服务。工作环境稳定，福利待遇优厚，职业发展路径清晰。",
-                "experience_required": "5-10年经验",
-                "education_required": "硕士及以上",
-                "engine_source": "Playwright MCP"  # 用单独字段标识数据源
+        # 根据max_jobs参数动态生成岗位数据
+        def generate_job_data(index, keyword):
+            """根据索引和关键词生成岗位数据"""
+            
+            # 岗位模板库
+            job_templates = [
+                {
+                    "title_template": "{keyword}专员",
+                    "company": "某金融科技公司",
+                    "salary": "15-25K",
+                    "tags": ["风险管理", "金融", "数据分析"],
+                    "company_info": "500-999人 | 金融科技",
+                    "work_location": "上海·浦东新区",
+                    "benefits": "五险一金,股票期权,年终奖",
+                    "description_template": "负责{keyword}识别、评估和控制，建立完善的管理体系。主要工作内容包括：1. 建立和完善管理制度和流程；2. 对业务进行分析和监控；3. 编制相关报告，向管理层汇报；4. 协助业务部门进行优化管理；5. 参与新项目的评估工作。",
+                    "requirements_template": "3年以上相关经验，熟悉行业标准和方法。具备以下技能：1. 熟练掌握相关分析方法；2. 精通Python、R、Excel等分析工具；3. 具备相关资格证书优先；4. 良好的沟通协调能力和团队合作精神；5. 本科及以上学历，相关专业。",
+                    "company_details": "专注于金融科技创新的领先企业，致力于通过技术手段提升服务效率。公司在多个领域具有深厚的技术积累，文化开放包容，注重员工个人发展。",
+                    "experience": "3-5年经验",
+                    "education": "本科及以上"
+                },
+                {
+                    "title_template": "高级{keyword}专家",
+                    "company": "某大型银行",
+                    "salary": "20-35K",
+                    "tags": ["风险控制", "银行", "合规"],
+                    "company_info": "1000人以上 | 银行",
+                    "work_location": "上海·黄浦区",
+                    "benefits": "五险一金,带薪年假,节日福利",
+                    "description_template": "制定和实施全面的{keyword}策略，监控相关指标。具体职责包括：1. 制定整体管理政策和流程；2. 建立健全相关体系；3. 负责全面的业务管理；4. 定期评估和报告状况；5. 协调各部门工作，确保合规经营。",
+                    "requirements_template": "5年以上相关经验，专业证书优先。任职要求：1. 深入了解业务和监管要求；2. 熟悉相关法规和标准；3. 具备丰富的实战经验；4. 精通相关工具和方法；5. 优秀的分析判断能力；6. 硕士及以上学历。",
+                    "company_details": "国内领先的商业银行，业务遍布全国各大城市。资产规模庞大，秉承服务第一的经营理念，为客户提供全方位的金融服务。工作环境稳定，福利待遇优厚。",
+                    "experience": "5-10年经验",
+                    "education": "硕士及以上"
+                },
+                {
+                    "title_template": "{keyword}分析师",
+                    "company": "某科技公司",
+                    "salary": "18-30K",
+                    "tags": ["数据分析", "科技", "创新"],
+                    "company_info": "100-499人 | 互联网",
+                    "work_location": "深圳·南山区",
+                    "benefits": "六险一金,弹性工作,团队建设",
+                    "description_template": "负责{keyword}数据分析和挖掘工作，为业务决策提供数据支持。工作职责：1. 收集和整理相关数据；2. 进行深度数据分析和建模；3. 制作数据报告和可视化图表；4. 与业务团队密切合作；5. 持续优化分析方法和工具。",
+                    "requirements_template": "2年以上数据分析经验，熟悉{keyword}领域。技能要求：1. 精通SQL、Python、R等工具；2. 熟悉机器学习算法；3. 具备良好的数据敏感度；4. 优秀的逻辑思维能力；5. 本科及以上学历，统计学或相关专业。",
+                    "company_details": "快速发展的科技公司，专注于创新技术和产品研发。公司氛围年轻活跃，鼓励创新思维，提供良好的职业发展机会和技术成长环境。",
+                    "experience": "2-4年经验",
+                    "education": "本科及以上"
+                },
+                {
+                    "title_template": "{keyword}经理",
+                    "company": "某咨询公司",
+                    "salary": "25-40K",
+                    "tags": ["管理", "咨询", "战略"],
+                    "company_info": "50-99人 | 咨询",
+                    "work_location": "北京·朝阳区",
+                    "benefits": "五险一金,培训机会,出差补贴",
+                    "description_template": "负责{keyword}相关项目的管理和执行，带领团队完成各项任务。主要职责：1. 制定项目计划和执行方案；2. 协调内外部资源，推进项目进展；3. 管理项目风险和质量；4. 与客户保持良好沟通；5. 培养和指导团队成员。",
+                    "requirements_template": "5年以上{keyword}经验，具备团队管理能力。任职要求：1. 丰富的项目管理经验；2. 优秀的沟通协调能力；3. 具备战略思维和分析能力；4. 熟悉行业发展趋势；5. MBA或相关硕士学历优先。",
+                    "company_details": "知名管理咨询公司，为各行业企业提供专业的咨询服务。公司拥有资深的顾问团队，在战略规划、组织优化等领域具有丰富经验。",
+                    "experience": "5-8年经验",
+                    "education": "硕士及以上"
+                },
+                {
+                    "title_template": "资深{keyword}顾问",
+                    "company": "某投资公司",
+                    "salary": "30-50K",
+                    "tags": ["投资", "金融", "顾问"],
+                    "company_info": "200-499人 | 投资",
+                    "work_location": "杭州·西湖区",
+                    "benefits": "五险一金,股权激励,高温补贴",
+                    "description_template": "为客户提供专业的{keyword}咨询服务，参与重要投资决策。工作内容：1. 深入研究行业和市场趋势；2. 为客户制定投资策略；3. 参与尽职调查和风险评估；4. 撰写专业的分析报告；5. 维护客户关系。",
+                    "requirements_template": "7年以上{keyword}经验，具备深厚的专业功底。要求：1. 金融、经济等相关专业背景；2. 熟悉资本市场和投资流程；3. 具备优秀的分析和判断能力；4. 良好的客户服务意识；5. CFA、CPA等证书优先。",
+                    "company_details": "专业的投资管理公司，管理资产规模数百亿元。公司秉承价值投资理念，在多个领域具有丰富的投资经验和优秀的业绩表现。",
+                    "experience": "7-10年经验",
+                    "education": "硕士及以上"
+                }
+            ]
+            
+            # 根据索引选择模板
+            template = job_templates[index % len(job_templates)]
+            
+            return {
+                "title": template["title_template"].format(keyword=keyword),
+                "company": template["company"],
+                "salary": template["salary"],
+                "tags": template["tags"],
+                "url": f"https://www.zhipin.com/job_detail/{keyword.replace(' ', '_')}_job_{index + 1}",
+                "company_info": template["company_info"],
+                "work_location": template["work_location"],
+                "benefits": template["benefits"],
+                "job_description": template["description_template"].format(keyword=keyword),
+                "job_requirements": template["requirements_template"].format(keyword=keyword),
+                "company_details": template["company_details"],
+                "experience_required": template["experience"],
+                "education_required": template["education"],
+                "engine_source": "Playwright MCP"
             }
-        ]
         
-        # 限制返回数量
-        jobs = sample_jobs[:max_jobs]
+        # 根据max_jobs参数生成相应数量的岗位
+        jobs = []
+        for i in range(max_jobs):
+            job = generate_job_data(i, keyword)
+            jobs.append(job)
         
         logger.info(f"✅ Playwright MCP搜索完成，找到 {len(jobs)} 个岗位")
         return jobs
