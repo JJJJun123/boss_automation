@@ -421,7 +421,7 @@ def serve_frontend():
                     keyword,
                     max_jobs: maxJobs,
                     max_analyze_jobs: maxAnalyzeJobs,
-                    spider_engine: 'playwright_mcp',  // 固定使用Playwright MCP
+                    spider_engine: 'playwright_mcp',  // 使用真正的Playwright MCP
                     city: city,
                     fetch_details: true  // 默认获取详情
                 });
