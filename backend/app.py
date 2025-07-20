@@ -319,7 +319,10 @@ def serve_frontend():
                 </div>
                 
                 <div class="pr-20 mb-4">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title}</h3>
+                    <div class="flex items-center gap-2 mb-2">
+                        <h3 class="text-lg font-semibold text-gray-900">${job.title}</h3>
+                        ${job.engine_source ? `<span class="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-800 rounded-md text-xs font-medium">🎭 ${job.engine_source}</span>` : ''}
+                    </div>
                     <div class="text-gray-600 mb-2">🏢 ${job.company}</div>
                     <div class="text-gray-600 mb-2">💰 <span class="text-green-600 font-medium">${job.salary}</span></div>
                     ${job.work_location ? `<div class="text-gray-600 mb-2">📍 ${job.work_location}</div>` : ''}
@@ -594,6 +597,10 @@ def run_job_search_task(params):
             
             emit_progress("✅ 登录成功，开始搜索岗位...", 30)
             jobs = current_spider.search_jobs(keyword, city_code, max_jobs, fetch_details)
+            
+            # 为Selenium获取的岗位添加引擎来源标识
+            for job in jobs:
+                job['engine_source'] = 'Selenium'
         
         emit_progress(f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
         
