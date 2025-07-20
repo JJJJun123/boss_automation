@@ -230,19 +230,18 @@ def search_with_playwright_mcp(keyword: str, city_code: str = "101280600", max_j
             # 根据索引选择模板
             template = job_templates[index % len(job_templates)]
             
-            # 生成真实风格的Boss直聘URL
-            # Boss直聘的实际URL格式类似: https://www.zhipin.com/job_detail/123456789.html
-            # 生成基于关键词和索引的伪随机ID，保证一致性
-            seed_string = f"{keyword}_{index}_{template['company']}"
-            hash_object = hashlib.md5(seed_string.encode())
-            job_id = str(int(hash_object.hexdigest()[:8], 16))
+            # 生成Boss直聘搜索链接，用户点击可以查看相关真实岗位
+            # 使用URL编码确保中文关键词正确传递
+            encoded_keyword = urllib.parse.quote(keyword)
+            job_title = template["title_template"].format(keyword=keyword)
+            encoded_title = urllib.parse.quote(job_title)
             
             return {
                 "title": template["title_template"].format(keyword=keyword),
                 "company": template["company"],
                 "salary": template["salary"],
                 "tags": template["tags"],
-                "url": f"https://www.zhipin.com/job_detail/{job_id}.html",
+                "url": f"https://www.zhipin.com/web/geek/job?query={encoded_title}&city=101280600",
                 "company_info": template["company_info"],
                 "work_location": template["work_location"],
                 "benefits": template["benefits"],

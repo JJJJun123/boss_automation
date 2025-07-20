@@ -317,7 +317,7 @@ def serve_frontend():
                     ${job.work_location ? `<div class="text-gray-600 mb-2">📍 ${job.work_location}</div>` : ''}
                     ${job.url ? `
                         <div class="text-gray-600 mb-2">
-                            🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm break-all">${job.url}</a>
+                            🔍 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm">在Boss直聘搜索相关岗位</a>
                         </div>
                     ` : ''}
                 </div>
@@ -340,7 +340,7 @@ def serve_frontend():
                 <div class="flex gap-2">
                     ${job.url ? `
                         <button onclick="window.open('${job.url}', '_blank')" class="btn btn-primary">
-                            查看详情
+                            搜索相关岗位
                         </button>
                     ` : ''}
                     ${job.job_description ? `
