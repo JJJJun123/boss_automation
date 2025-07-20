@@ -126,12 +126,13 @@ def serve_frontend():
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">搜索关键词</label>
-                            <input type="text" id="keyword" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入搜索关键词" value="市场风险管理">
+                            <input type="text" id="keyword" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="如：市场风险管理、数据分析、AI工程师" value="">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">🌍 目标城市</label>
                             <select id="city" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">请选择城市</option>
                                 <option value="shanghai">上海</option>
                                 <option value="beijing">北京</option>
                                 <option value="shenzhen">深圳</option>
@@ -142,21 +143,12 @@ def serve_frontend():
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
-                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" value="20" min="1" max="100">
+                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">分析数量</label>
-                                <input type="number" id="max_analyze_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" value="10" min="1" max="50">
+                                <input type="number" id="max_analyze_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="10" min="1" max="50">
                             </div>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">🎭 爬虫引擎</label>
-                            <select id="spider_engine" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="selenium">Selenium (传统方式)</option>
-                                <option value="playwright_mcp">🆕 Playwright MCP (AI驱动，更稳定)</option>
-                            </select>
-                            <p class="text-xs text-gray-500 mt-1">💡 Playwright MCP使用AI控制浏览器，更难被检测</p>
                         </div>
                         
                         
@@ -319,10 +311,7 @@ def serve_frontend():
                 </div>
                 
                 <div class="pr-20 mb-4">
-                    <div class="flex items-center gap-2 mb-2">
-                        <h3 class="text-lg font-semibold text-gray-900">${job.title}</h3>
-                        ${job.engine_source ? `<span class="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-800 rounded-md text-xs font-medium">🎭 ${job.engine_source}</span>` : ''}
-                    </div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title}</h3>
                     <div class="text-gray-600 mb-2">🏢 ${job.company}</div>
                     <div class="text-gray-600 mb-2">💰 <span class="text-green-600 font-medium">${job.salary}</span></div>
                     ${job.work_location ? `<div class="text-gray-600 mb-2">📍 ${job.work_location}</div>` : ''}
@@ -392,16 +381,24 @@ def serve_frontend():
         startBtn.addEventListener('click', async () => {
             if (isSearching) return;
 
-            const keyword = document.getElementById('keyword').value;
-            const maxJobs = parseInt(document.getElementById('max_jobs').value);
-            const maxAnalyzeJobs = parseInt(document.getElementById('max_analyze_jobs').value);
-            const spiderEngine = document.getElementById('spider_engine').value;
+            const keyword = document.getElementById('keyword').value.trim();
+            const maxJobsInput = document.getElementById('max_jobs').value;
+            const maxAnalyzeJobsInput = document.getElementById('max_analyze_jobs').value;
             const city = document.getElementById('city').value;
 
-            if (!keyword.trim()) {
+            // 表单验证
+            if (!keyword) {
                 alert('请输入搜索关键词');
                 return;
             }
+            if (!city) {
+                alert('请选择目标城市');
+                return;
+            }
+
+            // 设置默认值
+            const maxJobs = maxJobsInput ? parseInt(maxJobsInput) : 20;
+            const maxAnalyzeJobs = maxAnalyzeJobsInput ? parseInt(maxAnalyzeJobsInput) : 10;
 
             isSearching = true;
             startBtn.textContent = '搜索中...';
@@ -410,12 +407,21 @@ def serve_frontend():
             jobsList.innerHTML = '';
             emptyState.style.display = 'none';
 
+            console.log('发送的搜索参数:', {
+                keyword,
+                max_jobs: maxJobs,
+                max_analyze_jobs: maxAnalyzeJobs,
+                spider_engine: 'playwright_mcp',
+                city: city,
+                fetch_details: true
+            });
+
             try {
                 const response = await axios.post('/api/jobs/search', {
                     keyword,
                     max_jobs: maxJobs,
                     max_analyze_jobs: maxAnalyzeJobs,
-                    spider_engine: spiderEngine,
+                    spider_engine: 'playwright_mcp',  // 固定使用Playwright MCP
                     city: city,
                     fetch_details: true  // 默认获取详情
                 });
@@ -567,7 +573,7 @@ def run_job_search_task(params):
         keyword = params.get('keyword', search_config['keyword'])
         max_jobs = params.get('max_jobs', search_config['max_jobs'])
         max_analyze_jobs = params.get('max_analyze_jobs', search_config['max_analyze_jobs'])
-        spider_engine = params.get('spider_engine', 'selenium')  # 默认selenium
+        spider_engine = params.get('spider_engine', 'playwright_mcp')  # 默认Playwright MCP
         fetch_details = params.get('fetch_details', True)  # 默认获取详情
         selected_city = params.get('city', 'shanghai')  # 默认上海
         
