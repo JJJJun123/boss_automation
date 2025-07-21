@@ -151,12 +151,12 @@ def search_with_playwright_mcp(keyword: str, city_code: str = "101280600", max_j
             # 导入并使用真实的Playwright爬虫
             from .real_playwright_spider import search_with_real_playwright
             
-            # 城市代码映射
+            # 城市代码映射 (与app_config.yaml保持一致)
             city_map = {
-                "101280600": "shenzhen",
-                "101020100": "shanghai", 
-                "101010100": "beijing",
-                "101210100": "hangzhou"
+                "101280600": "shenzhen",    # 深圳
+                "101020100": "shanghai",    # 上海 (最终修复：正确代码)
+                "101010100": "beijing",     # 北京
+                "101210100": "hangzhou"     # 杭州 (最终修复：之前101210300实际是嘉兴)
             }
             
             city_name = city_map.get(city_code, "shenzhen")
@@ -238,18 +238,29 @@ def search_with_playwright_mcp(keyword: str, city_code: str = "101280600", max_j
         
         # 最终备用方案
         logger.info("🔄 使用最终备用数据...")
-        return _generate_fallback_data(keyword, max_jobs)
+        return _generate_fallback_data(keyword, max_jobs, city_code)
         
     except Exception as e:
         logger.error(f"❌ Playwright MCP搜索失败: {e}")
         logger.info("🔄 使用备用数据...")
-        return _generate_fallback_data(keyword, max_jobs)
+        return _generate_fallback_data(keyword, max_jobs, city_code)
 
 
 def _generate_search_url(job_title: str) -> str:
     """生成Boss直聘搜索URL"""
     encoded_title = urllib.parse.quote(job_title)
     return f"https://www.zhipin.com/web/geek/job?query={encoded_title}&city=101280600"
+
+
+def _get_city_name_by_code(city_code: str) -> str:
+    """根据城市代码获取城市中文名称"""
+    city_code_to_name = {
+        "101280600": "深圳",
+        "101210100": "上海", 
+        "101010100": "北京",
+        "101210300": "杭州"
+    }
+    return city_code_to_name.get(city_code, "深圳")
 
 
 def _generate_real_job_url(job_title: str, index: int) -> str:
@@ -266,7 +277,7 @@ def _generate_real_job_url(job_title: str, index: int) -> str:
     return f"https://www.zhipin.com/job_detail/{job_id}.html?lid=20T&city=101280600"
 
 
-def _generate_fallback_data(keyword: str, max_jobs: int) -> List[Dict]:
+def _generate_fallback_data(keyword: str, max_jobs: int, city_code: str = "101280600") -> List[Dict]:
     """生成备用数据（当MCP失败时使用）"""
     logger.info(f"📋 生成备用数据: {keyword}, 数量: {max_jobs}")
     
@@ -289,7 +300,7 @@ def _generate_fallback_data(keyword: str, max_jobs: int) -> List[Dict]:
             "tags": [keyword, "专业", "发展"],
             "url": _generate_real_job_url(template["title"], i),
             "company_info": "优秀企业",
-            "work_location": "上海",
+            "work_location": f"{_get_city_name_by_code(city_code)}",
             "benefits": "五险一金,带薪年假",
             "job_description": f"负责{keyword}相关的专业工作，发展前景良好。",
             "job_requirements": f"具备{keyword}相关经验和技能，学习能力强。",

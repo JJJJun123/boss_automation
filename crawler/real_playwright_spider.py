@@ -23,12 +23,12 @@ class RealPlaywrightBossSpider:
         self.page: Optional[Page] = None
         self.playwright = None
         
-        # Boss直聘城市代码映射
+        # Boss直聘城市代码映射 (与app_config.yaml保持一致)
         self.city_codes = {
-            "shanghai": "101020100",
-            "beijing": "101010100", 
-            "shenzhen": "101280100",
-            "hangzhou": "101210100"
+            "shanghai": "101020100",   # 上海 (修复：之前错误为101210100)
+            "beijing": "101010100",    # 北京 (正确)
+            "shenzhen": "101280600",   # 深圳 (正确)
+            "hangzhou": "101210100"    # 杭州 (修复：之前错误为101210300->嘉兴)
         }
         
     async def start(self) -> bool:
@@ -103,8 +103,23 @@ class RealPlaywrightBossSpider:
             await self.page.screenshot(path=screenshot_path)
             logger.info(f"📸 已截图当前页面: {screenshot_path}")
             
-            # 等待页面加载完成
-            await asyncio.sleep(5)
+            # 等待页面加载完成（增加等待时间）
+            logger.info("⏳ 等待页面完全加载...")
+            await asyncio.sleep(8)  # 增加到8秒，确保动态内容加载
+            
+            # 尝试滚动页面以加载更多岗位（Boss直聘可能使用懒加载）
+            logger.info("📜 滚动页面以触发更多岗位加载...")
+            for scroll_attempt in range(3):
+                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(2)  # 每次滚动后等待2秒
+                
+                # 检查是否有新内容加载
+                page_height = await self.page.evaluate("document.body.scrollHeight")
+                logger.info(f"   滚动 {scroll_attempt + 1}/3，页面高度: {page_height}")
+            
+            # 滚动回顶部
+            await self.page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(2)
             
             logger.info("📄 页面已加载，开始处理可能的弹窗...")
             
@@ -311,47 +326,166 @@ class RealPlaywrightBossSpider:
             else:
                 logger.warning("⚠️ 页面可能未正确加载岗位内容")
             
-            # 尝试多种选择器
+            # 尝试多种选择器 - 基于实时分析结果优化，优先选择精确的岗位容器
             selectors_to_try = [
-                '.job-card-wrapper',
-                '.job-list-item', 
-                '.job-card-container',
-                '.job-primary',
-                '.job-detail-box',
-                '[data-testid="job-card"]',
-                '.job-content'
+                # 最精确的选择器 - 直接选择包含岗位链接的父容器
+                'li:has(a[href*="job_detail"])',  # 只选择包含岗位链接的li
+                
+                # Boss直聘特有选择器
+                '.job-detail-box',        # 之前成功的选择器
+                'a[ka*="search_list"]',   # Boss直聘特有的ka属性
+                '.job-card-wrapper', '.job-card-container',
+                'li.job-card-container',
+                '.job-card-left', '.job-info-box',
+                
+                # 包含岗位信息的容器
+                'li:has(.job-name)',     # 只选择包含岗位标题的li
+                'div:has(.job-name)',    # 只选择包含岗位标题的div
+                '.job-list-box .job-card-body',
+                
+                # 备用选择器 - 需要后续过滤
+                '.job-list-container li', '.search-job-result li',
+                '.job-list .job-item', '.job-result-item',
+                
+                # 更通用的选择器（最后尝试）
+                'li[class*="job"]', 'div[class*="job-card"]',
+                'a[class*="job"]', '.job-primary', '.job-content'
             ]
             
-            job_cards = []
+            # 尝试所有选择器，收集所有可能的岗位元素
+            all_job_cards = []
+            successful_selectors = []
+            
             for selector in selectors_to_try:
                 try:
                     logger.info(f"🔍 尝试选择器: {selector}")
-                    await self.page.wait_for_selector(selector, timeout=3000)
-                    job_cards = await self.page.query_selector_all(selector)
-                    if job_cards:
-                        logger.info(f"✅ 找到 {len(job_cards)} 个岗位卡片 (使用选择器: {selector})")
-                        break
-                except:
+                    elements = await self.page.query_selector_all(selector)
+                    if elements:
+                        logger.info(f"   ✅ 找到 {len(elements)} 个元素")
+                        all_job_cards.extend(elements)
+                        successful_selectors.append((selector, len(elements)))
+                    else:
+                        logger.debug(f"   选择器 {selector} 未找到元素")
+                except Exception as e:
+                    logger.debug(f"   选择器 {selector} 异常: {e}")
                     continue
+            
+            # 去重（避免同一个元素被多个选择器选中）
+            unique_job_cards = []
+            seen_job_urls = set()  # 基于岗位URL去重，更可靠
+            seen_element_positions = set()  # 基于元素位置去重，避免嵌套元素
+            
+            for element in all_job_cards:
+                try:
+                    # 方法1：基于岗位URL去重（最可靠）
+                    link_elem = await element.query_selector('a[href*="job_detail"]')
+                    if link_elem:
+                        href = await link_elem.get_attribute('href')
+                        if href:
+                            # 清理URL，移除查询参数
+                            clean_href = href.split('?')[0] if '?' in href else href
+                            if clean_href in seen_job_urls:
+                                logger.debug(f"跳过重复岗位URL: {clean_href}")
+                                continue
+                            seen_job_urls.add(clean_href)
+                    
+                    # 方法2：基于元素位置去重（避免嵌套元素重复）
+                    try:
+                        bbox = await element.bounding_box()
+                        if bbox:
+                            # 使用位置和尺寸作为唯一标识
+                            position_key = (
+                                round(bbox['x']), 
+                                round(bbox['y']), 
+                                round(bbox['width']), 
+                                round(bbox['height'])
+                            )
+                            if position_key in seen_element_positions:
+                                logger.debug(f"跳过重复位置元素: {position_key}")
+                                continue
+                            seen_element_positions.add(position_key)
+                    except:
+                        pass  # 位置获取失败不影响去重
+                    
+                    unique_job_cards.append(element)
+                    
+                except Exception as e:
+                    logger.debug(f"去重处理异常，保留元素: {e}")
+                    # 异常情况下仍然包含元素，但检查是否明显重复
+                    if len(unique_job_cards) < 50:  # 限制最大数量，避免无限重复
+                        unique_job_cards.append(element)
+            
+            job_cards = unique_job_cards
+            logger.info(f"📊 选择器统计: 总共 {len(all_job_cards)} 个元素，去重后 {len(job_cards)} 个")
+            if successful_selectors:
+                logger.info("   成功的选择器:")
+                for sel, count in successful_selectors:
+                    logger.info(f"     {sel}: {count} 个元素")
             
             if not job_cards:
                 logger.warning("⚠️ 所有选择器都未找到岗位，尝试通用方法...")
-                # 尝试通过文本内容查找
-                all_elements = await self.page.query_selector_all('div')
-                for elem in all_elements[:50]:  # 限制检查数量
-                    text = await elem.inner_text()
-                    if "K" in text and ("月" in text or "薪" in text):
-                        job_cards.append(elem)
-                        if len(job_cards) >= max_jobs:
+                
+                # 尝试通过页面截图和页面源码分析
+                await self.take_screenshot("debug_no_jobs.png")
+                page_html = await self.page.content()
+                
+                # 保存页面HTML用于调试
+                with open("debug_page.html", "w", encoding="utf-8") as f:
+                    f.write(page_html)
+                logger.info("📄 已保存页面HTML到 debug_page.html")
+                
+                # 查找可能的岗位容器
+                potential_selectors = [
+                    'div[class*="job"]',
+                    'li[class*="job"]', 
+                    'div[class*="card"]',
+                    'a[class*="job"]',
+                    'div[data-*]',
+                    '.search-job-result li'
+                ]
+                
+                for selector in potential_selectors:
+                    try:
+                        elements = await self.page.query_selector_all(selector)
+                        logger.info(f"🔍 潜在选择器 {selector}: 找到 {len(elements)} 个元素")
+                        
+                        # 检查前几个元素的文本内容
+                        for i, elem in enumerate(elements[:5]):
+                            try:
+                                text = await elem.inner_text()
+                                if text and len(text) > 10:
+                                    logger.info(f"   元素 {i+1} 文本: {text[:100]}...")
+                                    # 检查是否像岗位信息
+                                    if any(keyword in text for keyword in ["K", "薪", "经验", "学历", "职位", "公司"]):
+                                        job_cards.append(elem)
+                            except Exception as e:
+                                logger.debug(f"   无法获取元素文本: {e}")
+                        
+                        if job_cards:
+                            logger.info(f"✅ 通过潜在选择器找到 {len(job_cards)} 个可能的岗位")
                             break
+                            
+                    except Exception as e:
+                        logger.debug(f"潜在选择器 {selector} 异常: {e}")
             
             jobs = []
-            for i, card in enumerate(job_cards[:max_jobs]):
+            valid_job_count = 0
+            
+            for i, card in enumerate(job_cards):
+                if valid_job_count >= max_jobs:
+                    break
+                    
                 try:
-                    job_data = await self._extract_single_job(card, i)
+                    # 预先检查是否为有效的岗位元素
+                    if not await self._is_valid_job_element(card):
+                        logger.debug(f"跳过无效元素 {i+1}（可能是筛选标签或分隔元素）")
+                        continue
+                    
+                    job_data = await self._extract_single_job(card, valid_job_count)
                     if job_data:
                         jobs.append(job_data)
-                        logger.info(f"📌 提取岗位 {i+1}: {job_data.get('title', '未知')}")
+                        valid_job_count += 1
+                        logger.info(f"📌 提取岗位 {valid_job_count}: {job_data.get('title', '未知')}")
                         
                 except Exception as e:
                     logger.warning(f"⚠️ 提取第 {i+1} 个岗位失败: {e}")
@@ -362,24 +496,204 @@ class RealPlaywrightBossSpider:
             logger.error(f"❌ 提取岗位信息失败: {e}")
             return []
     
+    async def _is_valid_job_element(self, card) -> bool:
+        """检查元素是否为有效的岗位元素（而不是筛选标签或分隔元素）"""
+        try:
+            # 获取元素文本内容
+            text = await card.inner_text()
+            text = text.strip()
+            
+            # 如果文本太短，可能是标签
+            if len(text) < 10:
+                return False
+                
+            # 检查是否包含明显的筛选标签关键词
+            filter_keywords = [
+                "经验不限", "不限经验", "硕士", "本科", "大专", "博士",
+                "1年以下", "1-3年", "3-5年", "5-10年", "10年以上",
+                "应届生", "实习生", "面议薪资", "全职", "兼职"
+            ]
+            
+            # 如果文本完全匹配筛选标签，则不是岗位
+            if text in filter_keywords:
+                return False
+                
+            # 检查是否包含岗位相关元素
+            has_job_title = await card.query_selector('.job-name, .job-title')
+            has_link = await card.query_selector('a[href*="job"]')
+            
+            # 必须包含岗位标题或链接才是有效岗位
+            return has_job_title is not None or has_link is not None
+            
+        except Exception as e:
+            logger.debug(f"检查岗位元素有效性失败: {e}")
+            return True  # 默认认为有效，让后续处理决定
+    
     async def _extract_single_job(self, card, index: int) -> Optional[Dict]:
         """提取单个岗位信息"""
         try:
-            # 岗位标题
-            title_elem = await card.query_selector('.job-name, .job-title, .job-info h3, .job-primary .name')
-            title = await title_elem.inner_text() if title_elem else f"岗位{index+1}"
+            # 岗位标题 - 扩展选择器
+            title_selectors = [
+                '.job-name', '.job-title', '.job-info h3', '.job-primary .name',
+                'a .job-name', 'h3.job-name', '.job-card-body .job-name',
+                '[class*="job"][class*="name"]', '.position-name'
+            ]
+            title = ""
+            for selector in title_selectors:
+                title_elem = await card.query_selector(selector)
+                if title_elem:
+                    title = await title_elem.inner_text()
+                    if title.strip():
+                        logger.debug(f"   ✅ 找到岗位标题: {title} (选择器: {selector})")
+                        break
+            if not title:
+                title = f"岗位{index+1}"
+                logger.warning(f"   ⚠️ 未找到岗位标题，使用默认: {title}")
+            else:
+                # 清洗岗位标题，分离职位名称和地点信息
+                clean_title, extracted_location = self._clean_job_title(title)
+                logger.info(f"   🧹 标题清洗: '{title}' -> 职位: '{clean_title}', 地点: '{extracted_location}'")
+                title = clean_title
             
-            # 公司名称
-            company_elem = await card.query_selector('.company-name, .company-text h3, .job-primary .company')
-            company = await company_elem.inner_text() if company_elem else "未知公司"
+            # 公司名称 - 基于实时分析结果优化选择器
+            company_selectors = [
+                # 精确的公司名称选择器
+                '.company-name', '.company-text', 'h3:not(.job-name):not([class*="salary"])', 
+                '.job-company', '.company-info .name', 
+                # 新的选择器 - 基于分析结果
+                'span:not([class*="salary"]):not([class*="location"]):not([class*="area"])',
+                'div:not([class*="salary"]):not([class*="location"]):not([class*="area"])',
+                # 通过位置定位（公司名通常在岗位标题下方，地点上方）
+                '.job-name ~ div:not([class*="salary"]):not([class*="area"])',
+                '.job-name ~ span:not([class*="salary"]):not([class*="area"])',
+                # 备用选择器
+                '.company-info h3', '.job-info .company'
+            ]
             
-            # 薪资
-            salary_elem = await card.query_selector('.salary, .job-limit .red, .job-primary .red')
-            salary = await salary_elem.inner_text() if salary_elem else "面议"
+            company = ""
+            for selector in company_selectors:
+                try:
+                    company_elems = await card.query_selector_all(selector)
+                    for company_elem in company_elems:
+                        company_text = await company_elem.inner_text()
+                        if company_text and company_text.strip():
+                            company_text = company_text.strip()
+                            
+                            # 智能过滤：排除明显不是公司名的文本
+                            if (len(company_text) > 1 and len(company_text) < 30 and  # 公司名长度合理
+                                company_text != title.strip() and  # 不是岗位标题
+                                not any(word in company_text for word in ['K·薪', '万·薪', '经验', '学历', '岗位', '·', '区', '市']) and  # 不包含薪资、地点关键词
+                                not company_text.isdigit() and  # 不是纯数字
+                                '年' not in company_text and  # 不是经验要求
+                                len([c for c in company_text if c.isalpha() or '\u4e00' <= c <= '\u9fff']) > 1):  # 包含足够的字母或汉字
+                                
+                                company = company_text
+                                logger.debug(f"   ✅ 找到公司名称: {company} (选择器: {selector})")
+                                break
+                    if company:
+                        break
+                except Exception as e:
+                    logger.debug(f"   公司选择器 {selector} 异常: {e}")
+                    
+            if not company:
+                company = "未知公司"
+                logger.warning(f"   ⚠️ 未找到公司名称，使用默认: {company}")
             
-            # 工作地点
-            location_elem = await card.query_selector('.job-area, .work-addr, .job-primary .job-area')
-            location = await location_elem.inner_text() if location_elem else "未知"
+            # 薪资 - 基于实时分析结果优化
+            salary_selectors = [
+                # 基于分析结果的薪资选择器
+                '[class*="salary"]', '.red', '.salary', '.job-limit .red', 
+                '.job-primary .red', '.job-salary',
+                # 新增：通过文本特征定位薪资
+                'span:contains("K")', 'span:contains("万")', 'div:contains("K")'
+            ]
+            salary = ""
+            for selector in salary_selectors:
+                try:
+                    salary_elems = await card.query_selector_all(selector)
+                    for salary_elem in salary_elems:
+                        salary_text = await salary_elem.inner_text()
+                        if salary_text and salary_text.strip():
+                            salary_text = salary_text.strip()
+                            
+                            # 修复薪资文本（处理"-K·薪"这种显示异常）
+                            if 'K' in salary_text or '万' in salary_text or '千' in salary_text:
+                                # 清理异常字符
+                                cleaned_salary = salary_text.replace('·', '-').replace('薪', '')
+                                if '-K' in cleaned_salary and len(cleaned_salary) < 10:
+                                    # 可能是渲染问题，尝试获取更多上下文
+                                    parent_text = await salary_elem.evaluate("el => el.parentElement?.innerText || el.innerText")
+                                    if parent_text and parent_text != salary_text:
+                                        # 从父元素文本中提取薪资信息
+                                        import re
+                                        salary_match = re.search(r'\d+[KkWw万千][\-~]\d+[KkWw万千]', parent_text)
+                                        if salary_match:
+                                            salary = salary_match.group()
+                                        else:
+                                            salary = cleaned_salary
+                                    else:
+                                        salary = cleaned_salary
+                                else:
+                                    salary = cleaned_salary
+                                
+                                logger.debug(f"   ✅ 找到薪资信息: {salary_text} -> {salary} (选择器: {selector})")
+                                break
+                    if salary:
+                        break
+                except Exception as e:
+                    logger.debug(f"   薪资选择器 {selector} 异常: {e}")
+                    
+            if not salary:
+                salary = "面议"
+                logger.warning(f"   ⚠️ 未找到薪资信息，使用默认: {salary}")
+            
+            # 工作地点 - 基于实时分析结果优化
+            location_selectors = [
+                # 基于分析结果的地点选择器
+                '[class*="location"]', '[class*="area"]', '.job-area', '.work-addr',
+                '.job-location', '.job-primary .job-area',
+                # Boss直聘最新格式
+                '.job-area-wrapper', '.area-district', '.job-city',
+                'span[class*="area"]', 'div[class*="location"]',
+                # 通过位置定位（地点通常在公司名下方）
+                'span:last-child', 'div:last-child'
+            ]
+            location = ""
+            for selector in location_selectors:
+                try:
+                    location_elems = await card.query_selector_all(selector)
+                    for location_elem in location_elems:
+                        location_text = await location_elem.inner_text()
+                        if location_text and location_text.strip():
+                            location_text = location_text.strip()
+                            
+                            # 智能过滤：只选择看起来像地点的文本
+                            if (len(location_text) > 1 and len(location_text) < 50 and  # 地点信息长度合理
+                                location_text != company and  # 不是公司名
+                                location_text != title and   # 不是岗位标题
+                                not any(word in location_text for word in ['K', '经验', '学历', '岗位', '职位', '万', '千']) and
+                                ('·' in location_text or  # Boss直聘地点格式：城市·区域·具体位置
+                                 any(city in location_text for city in ['北京', '上海', '广州', '深圳', '杭州', '南京', '武汉', '成都']) or
+                                 any(area_word in location_text for area_word in ['市', '区', '县', '街', '路', '镇', '村']))):
+                                
+                                location = location_text
+                                logger.debug(f"   ✅ 找到工作地点: {location} (选择器: {selector})")
+                                break
+                    if location:
+                        break
+                except Exception as e:
+                    logger.debug(f"   地点选择器 {selector} 异常: {e}")
+            
+            # 如果从页面没找到地点，使用从标题中提取的地点信息
+            if not location and 'extracted_location' in locals() and extracted_location:
+                location = self._clean_location_info(extracted_location)
+                logger.info(f"   🔄 使用从标题提取的地点: {location}")
+            elif not location:
+                location = "未知地点"
+                logger.warning(f"   ⚠️ 未找到工作地点，使用默认: {location}")
+            else:
+                # 清洗地点信息
+                location = self._clean_location_info(location)
             
             # 岗位链接 - 尝试多种选择器
             url = ""
@@ -418,19 +732,87 @@ class RealPlaywrightBossSpider:
             if not url:
                 logger.warning(f"⚠️ 未找到岗位 {index+1} 的链接")
             
-            # 技能标签
+            # 技能标签 - 扩展选择器
             tags = []
-            tag_elems = await card.query_selector_all('.tag-list .tag, .job-tags .tag')
-            for tag_elem in tag_elems[:5]:  # 最多5个标签
-                tag_text = await tag_elem.inner_text()
-                if tag_text.strip():
-                    tags.append(tag_text.strip())
+            tag_selectors = [
+                '.tag-list .tag', '.job-tags .tag', '.tags .tag',
+                'span[class*="tag"]', '.skill-tag', '.job-tag',
+                '.label', 'span.label'
+            ]
             
-            # 经验要求
+            for tag_selector in tag_selectors:
+                try:
+                    tag_elems = await card.query_selector_all(tag_selector)
+                    for tag_elem in tag_elems:
+                        tag_text = await tag_elem.inner_text()
+                        if (tag_text.strip() and 
+                            len(tag_text.strip()) < 20 and  # 标签通常较短
+                            tag_text.strip() not in tags):  # 避免重复
+                            tags.append(tag_text.strip())
+                            if len(tags) >= 8:  # 最多8个标签
+                                break
+                    if len(tags) >= 8:
+                        break
+                except:
+                    continue
+            
+            # 岗位描述 - 尝试从列表页抓取基本描述
+            description = ""
+            description_selectors = [
+                '.job-desc', '.job-description', '.job-intro',
+                '.job-content', '.job-detail', '.desc-text',
+                'p[class*="desc"]', '.job-summary',
+                'div[class*="description"]', '.job-info p'
+            ]
+            
+            for desc_selector in description_selectors:
+                try:
+                    desc_elem = await card.query_selector(desc_selector)
+                    if desc_elem:
+                        desc_text = await desc_elem.inner_text()
+                        if (desc_text.strip() and 
+                            len(desc_text.strip()) > 10 and  # 描述应该有一定长度
+                            len(desc_text.strip()) < 500 and  # 但不应该太长
+                            desc_text.strip() not in [title, company, salary, location]):
+                            description = desc_text.strip()
+                            logger.debug(f"   ✅ 找到岗位描述: {description[:50]}... (选择器: {desc_selector})")
+                            break
+                except:
+                    continue
+            
+            if not description:
+                description = f"负责{title}相关工作，具体职责请查看岗位详情。"
+                logger.debug(f"   ⚠️ 未找到岗位描述，使用默认")
+            
+            # 岗位要求 - 尝试提取
+            requirements = ""
+            requirement_selectors = [
+                '.job-require', '.job-requirement', '.requirements',
+                '.job-qualification', '.job-skills'
+            ]
+            
+            for req_selector in requirement_selectors:
+                try:
+                    req_elem = await card.query_selector(req_selector)
+                    if req_elem:
+                        req_text = await req_elem.inner_text()
+                        if (req_text.strip() and 
+                            len(req_text.strip()) > 5 and
+                            req_text.strip() not in [title, company, salary, location, description]):
+                            requirements = req_text.strip()
+                            logger.debug(f"   ✅ 找到岗位要求: {requirements[:50]}...")
+                            break
+                except:
+                    continue
+            
+            # 经验要求 - 必须在requirements之前提取
             exp_elem = await card.query_selector('.job-limit')
             exp_text = await exp_elem.inner_text() if exp_elem else ""
             experience = self._extract_experience(exp_text)
             education = self._extract_education(exp_text)
+            
+            if not requirements:
+                requirements = f"要求{experience}工作经验，{education}学历。"
             
             job_data = {
                 "title": title.strip(),
@@ -439,14 +821,18 @@ class RealPlaywrightBossSpider:
                 "work_location": location.strip(),
                 "url": url,
                 "tags": tags,
-                "job_description": f"负责{title}相关工作，具体职责请查看岗位详情。",
-                "job_requirements": f"要求{experience}工作经验，{education}学历。",
+                "job_description": description,
+                "job_requirements": requirements,
                 "company_details": f"{company} - 查看详情了解更多公司信息",
                 "benefits": "五险一金等，具体福利请查看岗位详情",
                 "experience_required": experience,
                 "education_required": education,
                 "engine_source": "Playwright真实抓取"
             }
+            
+            # 获取详情页的真实信息
+            if url and url.startswith('http'):
+                job_data = await self.fetch_job_details_enhanced(url, job_data)
             
             return job_data
             
@@ -483,6 +869,384 @@ class RealPlaywrightBossSpider:
             return "学历不限"
         else:
             return "本科"
+    
+    def _clean_job_title(self, raw_title: str) -> tuple:
+        """
+        清洗岗位标题，分离职位名称和地点信息
+        
+        Args:
+            raw_title: 原始标题，如"风险策略/应急管理（风险治理）-杭州上海"
+        
+        Returns:
+            tuple: (清洗后的职位名称, 提取的地点信息)
+        """
+        if not raw_title:
+            return "未知职位", "未知地点"
+        
+        # 处理包含地点信息的标题格式：职位名称-地点1地点2
+        if '-' in raw_title:
+            parts = raw_title.split('-')
+            if len(parts) >= 2:
+                job_title = parts[0].strip()
+                location_part = parts[1].strip()
+                
+                # 进一步清洗职位名称，移除括号内容
+                if '（' in job_title and '）' in job_title:
+                    # 保留括号内容，这通常是职位的重要描述
+                    pass  # 不做处理，保持完整
+                
+                return job_title, location_part
+        
+        # 如果没有-分隔符，检查是否包含常见城市名
+        cities = ['北京', '上海', '广州', '深圳', '杭州', '南京', '武汉', '成都', '西安', '苏州']
+        for city in cities:
+            if raw_title.endswith(city):
+                job_title = raw_title[:-len(city)].strip()
+                return job_title, city
+        
+        # 默认返回原标题
+        return raw_title.strip(), ""
+    
+    async def fetch_job_details_enhanced(self, url: str, job_data: Dict) -> Dict:
+        """
+        增强的岗位详情抓取方法
+        访问详情页并精确提取岗位职责、任职要求等信息
+        """
+        if not url or not url.startswith('http'):
+            return job_data
+        
+        try:
+            # 创建新页面避免影响主页面
+            detail_page = await self.browser.new_page()
+            
+            # 设置更真实的浏览器行为
+            await detail_page.set_viewport_size({"width": 1920, "height": 1080})
+            
+            # 访问详情页
+            logger.info(f"🔍 访问岗位详情页: {url[:50]}...")
+            await detail_page.goto(url, wait_until="networkidle", timeout=15000)
+            
+            # 等待关键内容加载
+            try:
+                await detail_page.wait_for_selector('.job-sec-text, .job-detail', timeout=5000)
+            except:
+                logger.warning("详情页主要内容未加载")
+            
+            await asyncio.sleep(1.5)  # 额外等待动态内容
+            
+            # 模拟真实用户行为 - 滚动页面
+            await detail_page.evaluate("""
+                () => {
+                    // 平滑滚动到岗位详情区域
+                    const jobSection = document.querySelector('.job-sec-text');
+                    if (jobSection) {
+                        jobSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    // 随机滚动一些距离
+                    window.scrollBy(0, Math.random() * 200 + 100);
+                }
+            """)
+            await asyncio.sleep(0.5)
+            
+            # 1. 提取岗位职责
+            job_description = await self._extract_job_description(detail_page)
+            if job_description and len(job_description) > 50:
+                job_data['job_description'] = job_description
+                logger.info(f"✅ 获取岗位职责: {len(job_description)}字符")
+            
+            # 2. 提取任职要求
+            job_requirements = await self._extract_job_requirements(detail_page)
+            if job_requirements and len(job_requirements) > 30:
+                job_data['job_requirements'] = job_requirements
+                logger.info(f"✅ 获取任职要求: {len(job_requirements)}字符")
+            
+            # 3. 提取公司详情
+            company_details = await self._extract_company_details(detail_page)
+            if company_details:
+                job_data['company_details'] = company_details
+                job_data['company'] = company_details.split(' ')[0]  # 更新公司名称
+                logger.info(f"✅ 获取公司详情: {company_details[:50]}...")
+            
+            # 4. 提取其他补充信息
+            additional_info = await self._extract_additional_info(detail_page)
+            job_data.update(additional_info)
+            
+            await detail_page.close()
+            return job_data
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 获取详情页失败: {e}")
+            if 'detail_page' in locals():
+                try:
+                    await detail_page.close()
+                except:
+                    pass
+            return job_data
+    
+    async def _extract_job_description(self, page) -> str:
+        """提取岗位职责"""
+        # Boss直聘岗位职责的精确选择器
+        selectors = [
+            # 最精确：查找包含"岗位职责"文本的区域
+            "//div[contains(text(), '岗位职责')]/following-sibling::div[1]",
+            "//div[contains(text(), '工作职责')]/following-sibling::div[1]",
+            "//div[contains(text(), '职位描述')]/following-sibling::div[1]",
+            # 标准选择器
+            ".job-sec-text:first-child",
+            ".job-detail .job-sec:first-child .job-sec-text",
+            # 通过结构定位
+            ".job-detail-section:first-child .text",
+            "section.job-sec:nth-child(1) .job-sec-text",
+            # 备用选择器
+            ".job-sec .job-sec-text",
+            ".detail-content .text:first-child"
+        ]
+        
+        for selector in selectors:
+            try:
+                if selector.startswith("//"):
+                    # XPath选择器
+                    elem = await page.query_selector(f"xpath={selector}")
+                else:
+                    # CSS选择器
+                    elem = await page.query_selector(selector)
+                
+                if elem:
+                    text = await elem.inner_text()
+                    if text and len(text.strip()) > 50:
+                        # 清理文本
+                        cleaned_text = text.strip()
+                        # 如果包含明显的分隔符，只取岗位职责部分
+                        if "任职要求" in cleaned_text:
+                            cleaned_text = cleaned_text.split("任职要求")[0].strip()
+                        if "岗位要求" in cleaned_text:
+                            cleaned_text = cleaned_text.split("岗位要求")[0].strip()
+                        
+                        return cleaned_text[:1500]  # 限制长度
+            except:
+                continue
+        
+        # 如果上述方法都失败，尝试通过JavaScript提取
+        try:
+            js_result = await page.evaluate("""
+                () => {
+                    // 查找包含岗位职责的文本节点
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                    );
+                    
+                    let node;
+                    let foundJobDesc = false;
+                    let description = '';
+                    
+                    while (node = walker.nextNode()) {
+                        const text = node.textContent.trim();
+                        if (text.includes('岗位职责') || text.includes('工作职责') || text.includes('职位描述')) {
+                            foundJobDesc = true;
+                            continue;
+                        }
+                        
+                        if (foundJobDesc && text.length > 20) {
+                            // 找到下一个包含实质内容的文本节点
+                            const parentClass = node.parentElement?.className || '';
+                            if (parentClass.includes('job-sec-text') || parentClass.includes('text') || parentClass.includes('detail')) {
+                                description = text;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    return description;
+                }
+            """)
+            
+            if js_result and len(js_result) > 50:
+                return js_result[:1500]
+        except:
+            pass
+        
+        return ""
+    
+    async def _extract_job_requirements(self, page) -> str:
+        """提取任职要求"""
+        # Boss直聘任职要求的精确选择器
+        selectors = [
+            # 最精确：查找包含"任职要求"文本的区域
+            "//div[contains(text(), '任职要求')]/following-sibling::div[1]",
+            "//div[contains(text(), '岗位要求')]/following-sibling::div[1]",
+            "//div[contains(text(), '职位要求')]/following-sibling::div[1]",
+            # 标准选择器（通常是第二个job-sec-text）
+            ".job-sec-text:nth-child(2)",
+            ".job-detail .job-sec:nth-child(2) .job-sec-text",
+            # 通过结构定位
+            ".job-detail-section:nth-child(2) .text",
+            "section.job-sec:nth-child(2) .job-sec-text",
+            # 备用选择器
+            ".job-require-text",
+            ".requirement-content"
+        ]
+        
+        for selector in selectors:
+            try:
+                if selector.startswith("//"):
+                    elem = await page.query_selector(f"xpath={selector}")
+                else:
+                    elem = await page.query_selector(selector)
+                
+                if elem:
+                    text = await elem.inner_text()
+                    if text and len(text.strip()) > 30:
+                        return text.strip()[:1000]
+            except:
+                continue
+        
+        # JavaScript备用方案
+        try:
+            js_result = await page.evaluate("""
+                () => {
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                    );
+                    
+                    let node;
+                    let foundRequirements = false;
+                    let requirements = '';
+                    
+                    while (node = walker.nextNode()) {
+                        const text = node.textContent.trim();
+                        if (text.includes('任职要求') || text.includes('岗位要求') || text.includes('职位要求')) {
+                            foundRequirements = true;
+                            continue;
+                        }
+                        
+                        if (foundRequirements && text.length > 20) {
+                            const parentClass = node.parentElement?.className || '';
+                            if (parentClass.includes('job-sec-text') || parentClass.includes('text') || parentClass.includes('detail')) {
+                                requirements = text;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    return requirements;
+                }
+            """)
+            
+            if js_result and len(js_result) > 30:
+                return js_result[:1000]
+        except:
+            pass
+        
+        return ""
+    
+    async def _extract_company_details(self, page) -> str:
+        """提取公司详情"""
+        # Boss直聘公司名称的精确选择器
+        selectors = [
+            ".brand-name",
+            ".company-name",
+            ".company-brand",
+            "h1 .company-name",
+            ".detail-company .company-name",
+            ".company-info .name",
+            ".job-company h3",
+            # 通过结构定位
+            ".sider-company .company-name",
+            ".job-box .company-info h3"
+        ]
+        
+        for selector in selectors:
+            try:
+                elem = await page.query_selector(selector)
+                if elem:
+                    text = await elem.inner_text()
+                    if text and len(text.strip()) > 1:
+                        company_name = text.strip()
+                        
+                        # 尝试获取更多公司信息
+                        company_info_elem = await page.query_selector('.company-info, .sider-company')
+                        if company_info_elem:
+                            info_text = await company_info_elem.inner_text()
+                            # 提取行业、规模等信息
+                            lines = info_text.split('\n')
+                            useful_lines = [line.strip() for line in lines if line.strip() and len(line.strip()) < 50]
+                            if len(useful_lines) > 1:
+                                return f"{company_name} | {' | '.join(useful_lines[1:3])}"
+                        
+                        return company_name
+            except:
+                continue
+        
+        return ""
+    
+    async def _extract_additional_info(self, page) -> Dict:
+        """提取其他补充信息"""
+        additional_info = {}
+        
+        try:
+            # 提取福利信息
+            benefits_elem = await page.query_selector('.job-tags, .welfare-list, .tag-list')
+            if benefits_elem:
+                benefits_text = await benefits_elem.inner_text()
+                if benefits_text:
+                    additional_info['benefits'] = benefits_text.strip()
+            
+            # 提取工作地址详情
+            address_elem = await page.query_selector('.location-address, .work-addr, .job-address')
+            if address_elem:
+                address_text = await address_elem.inner_text()
+                if address_text and '地址' not in address_text:  # 过滤掉"工作地址"这种标签
+                    additional_info['detailed_address'] = address_text.strip()
+            
+            # 提取发布时间
+            time_elem = await page.query_selector('.job-time, .time')
+            if time_elem:
+                time_text = await time_elem.inner_text()
+                if time_text:
+                    additional_info['publish_time'] = time_text.strip()
+        
+        except Exception as e:
+            logger.debug(f"提取补充信息失败: {e}")
+        
+        return additional_info
+    
+    def _clean_location_info(self, location_text: str) -> str:
+        """
+        清洗地点信息，提取主要城市
+        
+        Args:
+            location_text: 原始地点文本，如"杭州上海"
+        
+        Returns:
+            str: 清洗后的地点，如"杭州·上海"
+        """
+        if not location_text:
+            return "未知地点"
+        
+        # 常见城市列表
+        cities = ['北京', '上海', '广州', '深圳', '杭州', '南京', '武汉', '成都', '西安', '苏州', '天津', '重庆']
+        
+        # 找出文本中包含的所有城市，并保持原始文本顺序
+        found_cities = []
+        for i, char in enumerate(location_text):
+            for city in cities:
+                # 检查从当前位置开始是否匹配城市名
+                if location_text[i:i+len(city)] == city and city not in found_cities:
+                    found_cities.append(city)
+                    break
+        
+        if found_cities:
+            # 用·分隔，保持原始文本中的顺序
+            return '·'.join(found_cities)
+        
+        # 如果没找到已知城市，返回原文本（可能包含区域信息）
+        return location_text.strip() if location_text.strip() else "未知地点"
     
     def _generate_sample_jobs(self, keyword: str, city: str, max_jobs: int) -> List[Dict]:
         """生成示例岗位数据（当真实抓取失败时）"""

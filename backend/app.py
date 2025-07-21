@@ -267,26 +267,40 @@ def serve_frontend():
             // 如果有结果数据
             if (data.data && data.data.results) {
                 displayResults(data.data.results, data.data.stats);
+                // 同时存储所有岗位数据
+                if (data.data.all_jobs) {
+                    allJobs = data.data.all_jobs;
+                }
             }
         }
 
         // 显示结果
         function displayResults(results, stats) {
+            // 调试：打印接收到的数据
+            console.log('🔍 DisplayResults called with:', { results, stats });
+            console.log('📊 Results type:', typeof results, 'Length:', results?.length);
+            
             if (stats) {
                 document.getElementById('total-jobs').textContent = stats.total;
                 document.getElementById('analyzed-jobs').textContent = stats.analyzed;
                 document.getElementById('qualified-jobs').textContent = stats.qualified;
                 statsCard.style.display = 'block';
+                console.log('📈 Stats updated:', stats);
             }
 
             if (results && results.length > 0) {
+                console.log('✅ Showing jobs list, hiding empty state');
                 emptyState.style.display = 'none';
                 jobsList.innerHTML = '';
 
                 results.forEach((job, index) => {
+                    console.log(`🔨 Creating job card ${index + 1}:`, job.title);
                     const jobCard = createJobCard(job, index + 1);
                     jobsList.appendChild(jobCard);
                 });
+                console.log(`🎉 Created ${results.length} job cards`);
+            } else {
+                console.log('⚠️ No results to display:', { results, length: results?.length });
             }
         }
 
@@ -654,8 +668,9 @@ def run_job_search_task(params):
             'status': 'completed',
             'end_time': datetime.now(),
             'results': filtered_jobs,
+            'analyzed_jobs': analyzed_jobs,  # 存储实际的岗位列表
             'total_jobs': len(jobs),
-            'analyzed_jobs': len(analyzed_jobs),
+            'analyzed_jobs_count': len(analyzed_jobs),
             'qualified_jobs': len(filtered_jobs)
         })
         
@@ -685,6 +700,23 @@ def run_job_search_task(params):
             except:
                 pass
             current_spider = None
+
+
+@app.route('/api/jobs/all')
+def get_all_jobs():
+    """获取所有搜索到的岗位（未过滤）"""
+    try:
+        if not current_job or 'analyzed_jobs' not in current_job:
+            return jsonify({'error': '没有可用的搜索结果'}), 404
+        
+        return jsonify({
+            'jobs': current_job.get('analyzed_jobs', []),
+            'total': len(current_job.get('analyzed_jobs', []))
+        })
+        
+    except Exception as e:
+        logger.error(f"获取所有岗位失败: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/jobs/results')
