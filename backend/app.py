@@ -715,8 +715,9 @@ def run_job_search_task(params):
         
         # 7. 保存结果
         emit_progress("💾 保存结果...", 95)
-        from main import save_results_to_json
-        save_results_to_json(filtered_jobs)
+        # 使用新的保存函数，保存所有岗位
+        from utils.data_saver import save_all_job_results
+        save_all_job_results(analyzed_jobs, filtered_jobs)
         
         # 8. 完成
         current_job.update({
@@ -731,8 +732,9 @@ def run_job_search_task(params):
         
         emit_progress(f"✅ 任务完成! 找到 {len(filtered_jobs)} 个合适岗位", 100, {
             'results': filtered_jobs,
+            'all_jobs': analyzed_jobs,  # 返回所有分析过的岗位
             'stats': {
-                'total': len(jobs),
+                'total': len(analyzed_jobs),  # 总搜索数应该是分析过的岗位数
                 'analyzed': len(analyzed_jobs),
                 'qualified': len(filtered_jobs)
             }
