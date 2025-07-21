@@ -316,12 +316,25 @@ def serve_frontend():
         function renderJobsList(jobs) {
             jobsList.innerHTML = '';
             
+            // 统计分析情况
+            const analyzedCount = jobs.filter(job => job.analysis?.recommendation !== '未分析').length;
+            const unanalyzedCount = jobs.filter(job => job.analysis?.recommendation === '未分析').length;
+            
             // 添加视图标题
             const viewTitle = document.createElement('div');
             viewTitle.className = 'mb-4 text-sm text-gray-600';
-            viewTitle.innerHTML = currentView === 'all' 
-                ? `<span class="font-medium">显示所有搜索结果 (${jobs.length}个)</span>` 
-                : `<span class="font-medium">显示推荐岗位 (${jobs.length}个)</span>`;
+            if (currentView === 'all') {
+                viewTitle.innerHTML = `
+                    <span class="font-medium">显示所有搜索结果 (${jobs.length}个)</span>
+                    ${unanalyzedCount > 0 ? `
+                        <span class="ml-2 text-xs text-yellow-600">
+                            其中 ${analyzedCount} 个已分析，${unanalyzedCount} 个未分析
+                        </span>
+                    ` : ''}
+                `;
+            } else {
+                viewTitle.innerHTML = `<span class="font-medium">显示AI推荐岗位 (${jobs.length}个)</span>`;
+            }
             jobsList.appendChild(viewTitle);
             
             jobs.forEach((job, index) => {
@@ -373,7 +386,10 @@ def serve_frontend():
             
             const analysis = job.analysis || {};
             const score = analysis.score || 0;
-            const getScoreColor = (score) => {
+            const isAnalyzed = analysis.recommendation !== '未分析';
+            
+            const getScoreColor = (score, isAnalyzed) => {
+                if (!isAnalyzed) return 'text-gray-500 bg-gray-100';
                 if (score >= 8) return 'text-green-600 bg-green-100';
                 if (score >= 6) return 'text-yellow-600 bg-yellow-100';
                 return 'text-red-600 bg-red-100';
@@ -381,9 +397,15 @@ def serve_frontend():
 
             div.innerHTML = `
                 <div class="absolute top-4 right-4">
-                    <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score)}">
-                        ⭐ ${score}/10
-                    </div>
+                    ${isAnalyzed ? `
+                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score, isAnalyzed)}">
+                            ⭐ ${score}/10
+                        </div>
+                    ` : `
+                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium text-gray-500 bg-gray-100">
+                            ⏩️ 未分析
+                        </div>
+                    `}
                 </div>
                 
                 <div class="pr-20 mb-4">
@@ -406,10 +428,14 @@ def serve_frontend():
                 ` : ''}
                 
                 ${analysis.summary ? `
-                    <div class="mb-4 p-4 bg-gray-50 rounded-2xl">
-                        <div class="text-sm font-medium text-gray-700 mb-2">AI分析</div>
-                        <p class="text-sm text-gray-600 mb-2">${analysis.summary}</p>
-                        <p class="text-xs text-gray-500">${analysis.reason?.substring(0, 100)}${analysis.reason?.length > 100 ? '...' : ''}</p>
+                    <div class="mb-4 p-4 ${isAnalyzed ? 'bg-gray-50' : 'bg-yellow-50'} rounded-2xl">
+                        <div class="text-sm font-medium ${isAnalyzed ? 'text-gray-700' : 'text-yellow-700'} mb-2">
+                            ${isAnalyzed ? 'AI分析' : '💡 提示'}
+                        </div>
+                        <p class="text-sm ${isAnalyzed ? 'text-gray-600' : 'text-yellow-600'} mb-2">${analysis.summary}</p>
+                        ${isAnalyzed ? `<p class="text-xs text-gray-500">${analysis.reason?.substring(0, 100)}${analysis.reason?.length > 100 ? '...' : ''}</p>` : `
+                            <p class="text-xs text-yellow-500">由于分析数量限制，该岗位未进行详细AI分析。您可以根据岗位信息自行判断。</p>
+                        `}
                     </div>
                 ` : ''}
                 
@@ -686,45 +712,60 @@ def run_job_search_task(params):
         
         # 5. AI分析
         analyzer = JobAnalyzer(ai_config['provider'])
-        jobs_to_analyze = jobs[:max_analyze_jobs]  # 使用前端参数
+        jobs_to_analyze = jobs[:max_analyze_jobs]  # 只分析前几个
         
-        analyzed_jobs = []
-        for i, job in enumerate(jobs_to_analyze):
-            progress = 50 + (i / len(jobs_to_analyze)) * 30
-            emit_progress(f"🤖 分析第 {i+1}/{len(jobs_to_analyze)} 个岗位...", progress)
-            
-            try:
-                analysis_result = analyzer.ai_client.analyze_job_match(
-                    job, analyzer.user_requirements
-                )
-                job['analysis'] = analysis_result
-                analyzed_jobs.append(job)
-            except Exception as e:
-                logger.error(f"分析岗位失败: {e}")
+        # 为所有岗位初始化分析结果
+        all_jobs_with_analysis = []
+        
+        # 先分析前max_analyze_jobs个岗位
+        for i, job in enumerate(jobs):
+            if i < max_analyze_jobs:
+                # 分析前几个岗位
+                progress = 50 + (i / max_analyze_jobs) * 30
+                emit_progress(f"🤖 分析第 {i+1}/{max_analyze_jobs} 个岗位...", progress)
+                
+                try:
+                    analysis_result = analyzer.ai_client.analyze_job_match(
+                        job, analyzer.user_requirements
+                    )
+                    job['analysis'] = analysis_result
+                except Exception as e:
+                    logger.error(f"分析岗位失败: {e}")
+                    job['analysis'] = {
+                        "score": 0,
+                        "recommendation": "分析失败",
+                        "reason": f"分析过程中出错: {e}",
+                        "summary": "无法分析此岗位"
+                    }
+            else:
+                # 未分析的岗位给予默认分析结果
                 job['analysis'] = {
                     "score": 0,
-                    "recommendation": "分析失败",
-                    "reason": f"分析过程中出错: {e}",
-                    "summary": "无法分析此岗位"
+                    "recommendation": "未分析",
+                    "reason": "超出分析数量限制，未进行AI分析",
+                    "summary": "该岗位未进行详细分析"
                 }
-                analyzed_jobs.append(job)
+            
+            all_jobs_with_analysis.append(job)
         
         # 6. 过滤和排序
         emit_progress("🎯 过滤和排序结果...", 85)
+        # 只从分析过的岗位中筛选
+        analyzed_jobs = [job for job in all_jobs_with_analysis if job['analysis']['recommendation'] != "未分析"]
         filtered_jobs = analyzer.filter_and_sort_jobs(analyzed_jobs, ai_config['min_score'])
         
         # 7. 保存结果
         emit_progress("💾 保存结果...", 95)
         # 使用新的保存函数，保存所有岗位
         from utils.data_saver import save_all_job_results
-        save_all_job_results(analyzed_jobs, filtered_jobs)
+        save_all_job_results(all_jobs_with_analysis, filtered_jobs)  # 保存所有岗位
         
         # 8. 完成
         current_job.update({
             'status': 'completed',
             'end_time': datetime.now(),
             'results': filtered_jobs,
-            'analyzed_jobs': analyzed_jobs,  # 存储实际的岗位列表
+            'analyzed_jobs': all_jobs_with_analysis,  # 存储所有岗位（包括未分析的）
             'total_jobs': len(jobs),
             'analyzed_jobs_count': len(analyzed_jobs),
             'qualified_jobs': len(filtered_jobs)
@@ -732,9 +773,9 @@ def run_job_search_task(params):
         
         emit_progress(f"✅ 任务完成! 找到 {len(filtered_jobs)} 个合适岗位", 100, {
             'results': filtered_jobs,
-            'all_jobs': analyzed_jobs,  # 返回所有分析过的岗位
+            'all_jobs': all_jobs_with_analysis,  # 返回所有岗位（包括未分析的）
             'stats': {
-                'total': len(analyzed_jobs),  # 总搜索数应该是分析过的岗位数
+                'total': len(all_jobs_with_analysis),  # 总搜索数是所有搜索到的岗位
                 'analyzed': len(analyzed_jobs),
                 'qualified': len(filtered_jobs)
             }
