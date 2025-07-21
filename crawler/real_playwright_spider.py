@@ -832,7 +832,10 @@ class RealPlaywrightBossSpider:
             
             # 获取详情页的真实信息
             if url and url.startswith('http'):
-                job_data = await self.fetch_job_details_enhanced(url, job_data)
+                try:
+                    job_data = await self.fetch_job_details_enhanced(url, job_data)
+                except Exception as e:
+                    logger.warning(f"获取详情页信息失败，使用默认值: {e}")
             
             return job_data
             
@@ -984,164 +987,131 @@ class RealPlaywrightBossSpider:
             return job_data
     
     async def _extract_job_description(self, page) -> str:
-        """提取岗位职责"""
-        # Boss直聘岗位职责的精确选择器
-        selectors = [
-            # 最精确：查找包含"岗位职责"文本的区域
-            "//div[contains(text(), '岗位职责')]/following-sibling::div[1]",
-            "//div[contains(text(), '工作职责')]/following-sibling::div[1]",
-            "//div[contains(text(), '职位描述')]/following-sibling::div[1]",
-            # 标准选择器
-            ".job-sec-text:first-child",
-            ".job-detail .job-sec:first-child .job-sec-text",
-            # 通过结构定位
-            ".job-detail-section:first-child .text",
-            "section.job-sec:nth-child(1) .job-sec-text",
-            # 备用选择器
-            ".job-sec .job-sec-text",
-            ".detail-content .text:first-child"
-        ]
-        
-        for selector in selectors:
-            try:
-                if selector.startswith("//"):
-                    # XPath选择器
-                    elem = await page.query_selector(f"xpath={selector}")
-                else:
-                    # CSS选择器
-                    elem = await page.query_selector(selector)
-                
-                if elem:
-                    text = await elem.inner_text()
-                    if text and len(text.strip()) > 50:
-                        # 清理文本
-                        cleaned_text = text.strip()
-                        # 如果包含明显的分隔符，只取岗位职责部分
-                        if "任职要求" in cleaned_text:
-                            cleaned_text = cleaned_text.split("任职要求")[0].strip()
-                        if "岗位要求" in cleaned_text:
-                            cleaned_text = cleaned_text.split("岗位要求")[0].strip()
-                        
-                        return cleaned_text[:1500]  # 限制长度
-            except:
-                continue
-        
-        # 如果上述方法都失败，尝试通过JavaScript提取
+        """提取岗位职责 - 增强版"""
         try:
+            # 方法1: 使用更精确的JavaScript提取完整内容
             js_result = await page.evaluate("""
                 () => {
-                    // 查找包含岗位职责的文本节点
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                    );
+                    // 查找包含岗位职责的section
+                    const sections = document.querySelectorAll('.job-sec');
                     
-                    let node;
-                    let foundJobDesc = false;
-                    let description = '';
-                    
-                    while (node = walker.nextNode()) {
-                        const text = node.textContent.trim();
+                    for (let section of sections) {
+                        const text = section.innerText || '';
                         if (text.includes('岗位职责') || text.includes('工作职责') || text.includes('职位描述')) {
-                            foundJobDesc = true;
-                            continue;
-                        }
-                        
-                        if (foundJobDesc && text.length > 20) {
-                            // 找到下一个包含实质内容的文本节点
-                            const parentClass = node.parentElement?.className || '';
-                            if (parentClass.includes('job-sec-text') || parentClass.includes('text') || parentClass.includes('detail')) {
-                                description = text;
-                                break;
+                            // 找到了职责section
+                            const secText = section.querySelector('.job-sec-text');
+                            if (secText) {
+                                // 获取全部内容，包括换行
+                                return secText.innerText.trim();
                             }
                         }
                     }
                     
-                    return description;
+                    // 备用方案：查找第一个job-sec-text
+                    const firstJobSecText = document.querySelector('.job-sec-text');
+                    if (firstJobSecText) {
+                        const text = firstJobSecText.innerText.trim();
+                        // 检查是否是职责内容（通常包含数字开头的条目）
+                        if (text.match(/\d[、，]/)) {
+                            return text;
+                        }
+                    }
+                    
+                    return '';
                 }
             """)
             
             if js_result and len(js_result) > 50:
-                return js_result[:1500]
-        except:
-            pass
+                logger.info(f"✅ JS提取岗位职责成功: {len(js_result)}字符")
+                return js_result
+        except Exception as e:
+            logger.debug(f"JS提取岗位职责失败: {e}")
         
-        return ""
-    
-    async def _extract_job_requirements(self, page) -> str:
-        """提取任职要求"""
-        # Boss直聘任职要求的精确选择器
+        # 方法2: 使用CSS选择器
         selectors = [
-            # 最精确：查找包含"任职要求"文本的区域
-            "//div[contains(text(), '任职要求')]/following-sibling::div[1]",
-            "//div[contains(text(), '岗位要求')]/following-sibling::div[1]",
-            "//div[contains(text(), '职位要求')]/following-sibling::div[1]",
-            # 标准选择器（通常是第二个job-sec-text）
-            ".job-sec-text:nth-child(2)",
-            ".job-detail .job-sec:nth-child(2) .job-sec-text",
-            # 通过结构定位
-            ".job-detail-section:nth-child(2) .text",
-            "section.job-sec:nth-child(2) .job-sec-text",
-            # 备用选择器
-            ".job-require-text",
-            ".requirement-content"
+            ".job-detail .job-sec:first-child .job-sec-text",
+            ".job-sec:first-child .job-sec-text",
+            ".job-sec-text"
         ]
         
         for selector in selectors:
             try:
-                if selector.startswith("//"):
-                    elem = await page.query_selector(f"xpath={selector}")
-                else:
-                    elem = await page.query_selector(selector)
-                
+                elem = await page.query_selector(selector)
                 if elem:
                     text = await elem.inner_text()
-                    if text and len(text.strip()) > 30:
-                        return text.strip()[:1000]
+                    if text and len(text.strip()) > 50:
+                        # 检查是否是职责内容
+                        if any(keyword in text for keyword in ['基于', '负责', '完成', '参与', '开发', '设计']):
+                            logger.info(f"✅ CSS提取岗位职责成功: {len(text)}字符")
+                            return text.strip()
             except:
                 continue
         
-        # JavaScript备用方案
+        return ""
+    
+    async def _extract_job_requirements(self, page) -> str:
+        """提取任职要求 - 增强版"""
         try:
+            # 方法1: 使用更精确的JavaScript提取完整内容
             js_result = await page.evaluate("""
                 () => {
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                    );
+                    // 查找所有job-sec部分
+                    const sections = document.querySelectorAll('.job-sec');
                     
-                    let node;
-                    let foundRequirements = false;
-                    let requirements = '';
-                    
-                    while (node = walker.nextNode()) {
-                        const text = node.textContent.trim();
-                        if (text.includes('任职要求') || text.includes('岗位要求') || text.includes('职位要求')) {
-                            foundRequirements = true;
-                            continue;
-                        }
+                    for (let i = 0; i < sections.length; i++) {
+                        const section = sections[i];
+                        const text = section.innerText || '';
                         
-                        if (foundRequirements && text.length > 20) {
-                            const parentClass = node.parentElement?.className || '';
-                            if (parentClass.includes('job-sec-text') || parentClass.includes('text') || parentClass.includes('detail')) {
-                                requirements = text;
-                                break;
+                        // 查找任职要求部分
+                        if (text.includes('任职要求') || text.includes('岗位要求') || 
+                            text.includes('职位要求') || text.includes('任职资格')) {
+                            const secText = section.querySelector('.job-sec-text');
+                            if (secText) {
+                                return secText.innerText.trim();
                             }
                         }
                     }
                     
-                    return requirements;
+                    // 备用方案：查找第二个job-sec-text（通常是要求）
+                    const allJobSecTexts = document.querySelectorAll('.job-sec-text');
+                    if (allJobSecTexts.length >= 2) {
+                        const secondText = allJobSecTexts[1].innerText.trim();
+                        // 检查是否像要求内容
+                        if (secondText.includes('学历') || secondText.includes('经验') || 
+                            secondText.includes('能力') || secondText.includes('技能')) {
+                            return secondText;
+                        }
+                    }
+                    
+                    return '';
                 }
             """)
             
             if js_result and len(js_result) > 30:
-                return js_result[:1000]
-        except:
-            pass
+                logger.info(f"✅ JS提取任职要求成功: {len(js_result)}字符")
+                return js_result
+        except Exception as e:
+            logger.debug(f"JS提取任职要求失败: {e}")
+        
+        # 方法2: 使用CSS选择器
+        selectors = [
+            ".job-detail .job-sec:nth-child(2) .job-sec-text",
+            ".job-sec:nth-child(2) .job-sec-text",
+            ".job-sec:last-child .job-sec-text"
+        ]
+        
+        for selector in selectors:
+            try:
+                elem = await page.query_selector(selector)
+                if elem:
+                    text = await elem.inner_text()
+                    if text and len(text.strip()) > 30:
+                        # 检查是否是要求内容
+                        if any(keyword in text for keyword in ['学历', '经验', '能力', '技能', '要求', '资格']):
+                            logger.info(f"✅ CSS提取任职要求成功: {len(text)}字符")
+                            return text.strip()
+            except:
+                continue
         
         return ""
     

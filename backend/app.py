@@ -239,6 +239,13 @@ def serve_frontend():
 
         socket.on('progress_update', (data) => {
             updateProgress(data);
+            
+            // 如果任务完成或失败，重置按钮状态
+            if (data.message.includes('完成') || data.message.includes('失败')) {
+                isSearching = false;
+                startBtn.textContent = '开始搜索';
+                startBtn.disabled = false;
+            }
         });
 
         // 更新进度
@@ -462,18 +469,11 @@ def serve_frontend():
         
         // 使函数全局可用
         window.showJobDetails = showJobDetails;
+        window.showAllJobs = showAllJobs;
+        window.showQualifiedJobs = showQualifiedJobs;
 
-        // 监听搜索完成
-        socket.on('progress_update', (data) => {
-            updateProgress(data);
-            
-            // 如果任务完成或失败，重置按钮状态
-            if (data.message.includes('完成') || data.message.includes('失败')) {
-                isSearching = false;
-                startBtn.textContent = '开始搜索';
-                startBtn.disabled = false;
-            }
-        });
+        // 注意：progress_update事件已经在上面监听过了，这里只需要处理按钮状态
+        // 在updateProgress函数中处理按钮状态更新
     </script>
 </body>
 </html>
