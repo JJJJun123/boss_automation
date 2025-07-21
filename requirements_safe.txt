@@ -1,0 +1,22 @@
+# Boss直聘自动化 - 安全依赖列表 (Python 3.13 兼容)
+
+# 基础依赖
+requests==2.31.0
+beautifulsoup4==4.12.2
+python-dotenv==1.0.0
+PyYAML==6.0.1
+
+# Web框架
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# WebSocket支持 (避免greenlet编译问题)
+flask-socketio>=5.0.0
+python-socketio>=5.0.0
+
+# Selenium爬虫
+selenium==4.15.2
+undetected-chromedriver==3.5.4
+
+# Playwright (可选，如果安装失败可跳过)
+# playwright==1.40.0

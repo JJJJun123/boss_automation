@@ -8,8 +8,8 @@ import json
 import asyncio
 import subprocess
 import logging
-import aiohttp
 import time
+import requests
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
