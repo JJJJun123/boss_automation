@@ -177,18 +177,16 @@ def serve_frontend():
                     <!-- 统计信息 -->
                     <div id="stats-card" class="card" style="display: none;">
                         <h3 class="text-lg font-semibold text-gray-900 mb-4">统计信息</h3>
-                        <div class="grid grid-cols-3 gap-4">
-                            <div class="text-center">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showAllJobs()">
                                 <div id="total-jobs" class="text-2xl font-bold text-blue-600">0</div>
                                 <div class="text-sm text-gray-600">总搜索数</div>
+                                <div class="text-xs text-gray-400 mt-1">点击查看所有</div>
                             </div>
-                            <div class="text-center">
-                                <div id="analyzed-jobs" class="text-2xl font-bold text-green-600">0</div>
-                                <div class="text-sm text-gray-600">已分析</div>
-                            </div>
-                            <div class="text-center">
+                            <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showQualifiedJobs()">
                                 <div id="qualified-jobs" class="text-2xl font-bold text-purple-600">0</div>
                                 <div class="text-sm text-gray-600">合格岗位</div>
+                                <div class="text-xs text-gray-400 mt-1">点击查看推荐</div>
                             </div>
                         </div>
                     </div>
@@ -281,6 +279,11 @@ def serve_frontend():
             }
         }
 
+        // 存储所有搜索结果
+        let allJobs = [];
+        let qualifiedJobs = [];
+        let currentView = 'qualified';  // 'all' or 'qualified'
+
         // 显示结果
         function displayResults(results, stats) {
             // 调试：打印接收到的数据
@@ -289,7 +292,6 @@ def serve_frontend():
             
             if (stats) {
                 document.getElementById('total-jobs').textContent = stats.total;
-                document.getElementById('analyzed-jobs').textContent = stats.analyzed;
                 document.getElementById('qualified-jobs').textContent = stats.qualified;
                 statsCard.style.display = 'block';
                 console.log('📈 Stats updated:', stats);
@@ -298,16 +300,69 @@ def serve_frontend():
             if (results && results.length > 0) {
                 console.log('✅ Showing jobs list, hiding empty state');
                 emptyState.style.display = 'none';
-                jobsList.innerHTML = '';
-
-                results.forEach((job, index) => {
-                    console.log(`🔨 Creating job card ${index + 1}:`, job.title);
-                    const jobCard = createJobCard(job, index + 1);
-                    jobsList.appendChild(jobCard);
-                });
-                console.log(`🎉 Created ${results.length} job cards`);
+                
+                // 存储结果用于切换视图
+                qualifiedJobs = results;
+                // 注意：这里的results已经是过滤后的合格岗位
+                // 我们需要在后端同时返回所有岗位
+                
+                renderJobsList(results);
             } else {
                 console.log('⚠️ No results to display:', { results, length: results?.length });
+            }
+        }
+
+        // 渲染岗位列表
+        function renderJobsList(jobs) {
+            jobsList.innerHTML = '';
+            
+            // 添加视图标题
+            const viewTitle = document.createElement('div');
+            viewTitle.className = 'mb-4 text-sm text-gray-600';
+            viewTitle.innerHTML = currentView === 'all' 
+                ? `<span class="font-medium">显示所有搜索结果 (${jobs.length}个)</span>` 
+                : `<span class="font-medium">显示推荐岗位 (${jobs.length}个)</span>`;
+            jobsList.appendChild(viewTitle);
+            
+            jobs.forEach((job, index) => {
+                console.log(`🔨 Creating job card ${index + 1}:`, job.title);
+                const jobCard = createJobCard(job, index + 1);
+                jobsList.appendChild(jobCard);
+            });
+            console.log(`🎉 Created ${jobs.length} job cards`);
+        }
+
+        // 显示所有岗位
+        function showAllJobs() {
+            currentView = 'all';
+            if (allJobs.length > 0) {
+                renderJobsList(allJobs);
+            } else {
+                alert('正在获取所有岗位数据...');
+                // 需要从后端获取所有岗位
+                fetchAllJobs();
+            }
+        }
+
+        // 显示合格岗位
+        function showQualifiedJobs() {
+            currentView = 'qualified';
+            renderJobsList(qualifiedJobs);
+        }
+
+        // 获取所有岗位
+        async function fetchAllJobs() {
+            try {
+                const response = await axios.get('/api/jobs/all');
+                if (response.data && response.data.jobs) {
+                    allJobs = response.data.jobs;
+                    if (currentView === 'all') {
+                        renderJobsList(allJobs);
+                    }
+                }
+            } catch (error) {
+                console.error('获取所有岗位失败:', error);
+                alert('获取数据失败，请稍后重试');
             }
         }
 
