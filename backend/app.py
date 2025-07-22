@@ -224,6 +224,11 @@ def serve_frontend():
         const jobsList = document.getElementById('jobs-list');
         const emptyState = document.getElementById('empty-state');
 
+        // 存储所有搜索结果 - 全局变量
+        let allJobs = [];
+        let qualifiedJobs = [];
+        let currentView = 'qualified';  // 'all' or 'qualified'
+
         // WebSocket事件
         socket.on('connect', () => {
             statusDot.className = 'w-2 h-2 rounded-full bg-green-500 mr-2';
@@ -279,16 +284,12 @@ def serve_frontend():
             }
         }
 
-        // 存储所有搜索结果
-        let allJobs = [];
-        let qualifiedJobs = [];
-        let currentView = 'qualified';  // 'all' or 'qualified'
-
         // 显示结果
         function displayResults(results, stats) {
             // 调试：打印接收到的数据
             console.log('🔍 DisplayResults called with:', { results, stats });
             console.log('📊 Results type:', typeof results, 'Length:', results?.length);
+            console.log('📄 All jobs stored:', allJobs.length);
             
             if (stats) {
                 document.getElementById('total-jobs').textContent = stats.total;
@@ -304,7 +305,7 @@ def serve_frontend():
                 // 存储结果用于切换视图
                 qualifiedJobs = results;
                 // 注意：这里的results已经是过滤后的合格岗位
-                // 我们需要在后端同时返回所有岗位
+                // allJobs在updateProgress中已经设置
                 
                 renderJobsList(results);
             } else {
@@ -314,11 +315,22 @@ def serve_frontend():
 
         // 渲染岗位列表
         function renderJobsList(jobs) {
+            console.log('🎨 renderJobsList called with:', jobs.length, 'jobs');
+            console.log('🎯 jobsList element:', jobsList);
+            console.log('📋 First job sample:', jobs[0]);
+            
+            if (!jobsList) {
+                console.error('❌ jobsList element not found!');
+                return;
+            }
+            
             jobsList.innerHTML = '';
+            console.log('🧹 Cleared jobsList innerHTML');
             
             // 统计分析情况
             const analyzedCount = jobs.filter(job => job.analysis?.recommendation !== '未分析').length;
             const unanalyzedCount = jobs.filter(job => job.analysis?.recommendation === '未分析').length;
+            console.log('📊 Stats:', { analyzedCount, unanalyzedCount });
             
             // 添加视图标题
             const viewTitle = document.createElement('div');
@@ -336,23 +348,42 @@ def serve_frontend():
                 viewTitle.innerHTML = `<span class="font-medium">显示AI推荐岗位 (${jobs.length}个)</span>`;
             }
             jobsList.appendChild(viewTitle);
+            console.log('📌 Added view title');
             
             jobs.forEach((job, index) => {
                 console.log(`🔨 Creating job card ${index + 1}:`, job.title);
-                const jobCard = createJobCard(job, index + 1);
-                jobsList.appendChild(jobCard);
+                try {
+                    const jobCard = createJobCard(job, index + 1);
+                    if (jobCard) {
+                        jobsList.appendChild(jobCard);
+                        console.log(`✅ Added job card ${index + 1}`);
+                    } else {
+                        console.error(`❌ createJobCard returned null for job ${index + 1}`);
+                    }
+                } catch (error) {
+                    console.error(`❌ Error creating job card ${index + 1}:`, error);
+                }
             });
-            console.log(`🎉 Created ${jobs.length} job cards`);
+            console.log(`🎉 Completed rendering ${jobs.length} job cards`);
+            console.log('📄 Final jobsList HTML length:', jobsList.innerHTML.length);
         }
 
         // 显示所有岗位
         function showAllJobs() {
+            console.log('🔄 showAllJobs called');
+            console.log('📊 Current allJobs length:', allJobs ? allJobs.length : 'undefined');
+            console.log('📊 Current qualifiedJobs length:', qualifiedJobs ? qualifiedJobs.length : 'undefined');
+            console.log('📊 Current view before change:', currentView);
+            
             currentView = 'all';
-            if (allJobs.length > 0) {
+            console.log('📊 Current view after change:', currentView);
+            
+            if (allJobs && allJobs.length > 0) {
+                console.log('📦 Rendering all jobs:', allJobs.length);
                 renderJobsList(allJobs);
             } else {
-                alert('正在获取所有岗位数据...');
-                // 需要从后端获取所有岗位
+                console.log('🔍 allJobs is empty or undefined, fetching from backend...');
+                console.log('🔍 allJobs:', allJobs);
                 fetchAllJobs();
             }
         }
@@ -366,21 +397,55 @@ def serve_frontend():
         // 获取所有岗位
         async function fetchAllJobs() {
             try {
+                console.log('🌐 Fetching all jobs from /api/jobs/all');
+                console.log('🔄 Current location:', window.location.href);
+                
                 const response = await axios.get('/api/jobs/all');
+                console.log('📥 Response received:', response);
+                console.log('📊 Response status:', response.status);
+                console.log('📄 Response data:', response.data);
+                
                 if (response.data && response.data.jobs) {
                     allJobs = response.data.jobs;
+                    console.log('✅ All jobs loaded:', allJobs.length);
+                    console.log('📋 Sample job titles:', allJobs.slice(0, 3).map(job => job.title));
+                    
                     if (currentView === 'all') {
+                        console.log('🎯 Rendering jobs list for "all" view');
                         renderJobsList(allJobs);
+                    } else {
+                        console.log('⏭️ Current view is not "all", skipping render');
                     }
+                } else {
+                    console.error('⚠️ No jobs data in response:', response.data);
+                    alert('未找到岗位数据');
                 }
             } catch (error) {
-                console.error('获取所有岗位失败:', error);
-                alert('获取数据失败，请稍后重试');
+                console.error('❌ 获取所有岗位失败:', error);
+                console.error('❌ Error details:', {
+                    message: error.message,
+                    response: error.response,
+                    status: error.response?.status,
+                    data: error.response?.data
+                });
+                const errorMsg = error.response ? 
+                    `服务器错误(${error.response.status}): ${error.response.data?.error || error.message}` :
+                    `网络错误: ${error.message}`;
+                alert('获取数据失败: ' + errorMsg);
             }
+        }
+
+        // HTML转义函数
+        function escapeHtml(text) {
+            if (typeof text !== 'string') return text;
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // 创建岗位卡片
         function createJobCard(job, index) {
+            console.log(`🔨 createJobCard called for: ${job.title}`);
             const div = document.createElement('div');
             div.className = 'card relative';
             
@@ -395,87 +460,57 @@ def serve_frontend():
                 return 'text-red-600 bg-red-100';
             };
 
-            div.innerHTML = `
-                <div class="absolute top-4 right-4">
-                    ${isAnalyzed ? `
-                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score, isAnalyzed)}">
-                            ⭐ ${score}/10
-                        </div>
-                    ` : `
-                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium text-gray-500 bg-gray-100">
-                            ⏩️ 未分析
-                        </div>
-                    `}
-                </div>
-                
-                <div class="pr-20 mb-4">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title}</h3>
-                    <div class="text-gray-600 mb-2">🏢 ${job.company}</div>
-                    <div class="text-gray-600 mb-2">💰 <span class="text-green-600 font-medium">${job.salary}</span></div>
-                    ${job.work_location ? `<div class="text-gray-600 mb-2">📍 ${job.work_location}</div>` : ''}
-                    ${job.url ? `
-                        <div class="text-gray-600 mb-2">
-                            🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-xs break-all">${job.url}</a>
-                        </div>
-                    ` : ''}
-                </div>
-                
-                ${job.tags && job.tags.length > 0 ? `
-                    <div class="flex flex-wrap gap-2 mb-4">
-                        ${job.tags.slice(0, 3).map(tag => `<span class="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">${tag}</span>`).join('')}
-                        ${job.tags.length > 3 ? `<span class="inline-flex items-center px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm">+${job.tags.length - 3}</span>` : ''}
-                    </div>
-                ` : ''}
-                
-                ${analysis.summary ? `
-                    <div class="mb-4 p-4 ${isAnalyzed ? 'bg-gray-50' : 'bg-yellow-50'} rounded-2xl">
-                        <div class="text-sm font-medium ${isAnalyzed ? 'text-gray-700' : 'text-yellow-700'} mb-2">
-                            ${isAnalyzed ? 'AI分析' : '💡 提示'}
-                        </div>
-                        <p class="text-sm ${isAnalyzed ? 'text-gray-600' : 'text-yellow-600'} mb-2">${analysis.summary}</p>
-                        ${isAnalyzed ? `<p class="text-xs text-gray-500">${analysis.reason?.substring(0, 100)}${analysis.reason?.length > 100 ? '...' : ''}</p>` : `
-                            <p class="text-xs text-yellow-500">由于分析数量限制，该岗位未进行详细AI分析。您可以根据岗位信息自行判断。</p>
-                        `}
-                    </div>
-                ` : ''}
-                
-                <div class="flex gap-2">
-                    ${job.job_description ? `
-                        <button onclick="showJobDetails('${index}')" class="btn btn-secondary">
-                            完整信息
-                        </button>
-                    ` : ''}
-                </div>
-                
-                <!-- 隐藏的详细信息 -->
-                <div id="job-details-${index}" style="display: none;" class="mt-4 p-4 bg-gray-50 rounded-2xl">
-                    ${job.job_description ? `
-                        <div class="mb-3">
-                            <h4 class="font-medium text-gray-900 mb-2">岗位描述</h4>
-                            <p class="text-sm text-gray-600">${job.job_description}</p>
-                        </div>
-                    ` : ''}
-                    ${job.job_requirements ? `
-                        <div class="mb-3">
-                            <h4 class="font-medium text-gray-900 mb-2">岗位要求</h4>
-                            <p class="text-sm text-gray-600">${job.job_requirements}</p>
-                        </div>
-                    ` : ''}
-                    ${job.company_details ? `
-                        <div class="mb-3">
-                            <h4 class="font-medium text-gray-900 mb-2">公司详情</h4>
-                            <p class="text-sm text-gray-600">${job.company_details}</p>
-                        </div>
-                    ` : ''}
-                    ${job.benefits ? `
-                        <div class="mb-3">
-                            <h4 class="font-medium text-gray-900 mb-2">福利待遇</h4>
-                            <p class="text-sm text-gray-600">${job.benefits}</p>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
+            // 使用安全的方式构建HTML，避免特殊字符问题
+            const scoreDiv = document.createElement('div');
+            scoreDiv.className = 'absolute top-4 right-4';
             
+            const scoreSpan = document.createElement('div');
+            scoreSpan.className = `inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score, isAnalyzed)}`;
+            scoreSpan.textContent = isAnalyzed ? `⭐ ${score}/10` : '⏩️ 未分析';
+            scoreDiv.appendChild(scoreSpan);
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'pr-20 mb-4';
+            
+            const title = document.createElement('h3');
+            title.className = 'text-lg font-semibold text-gray-900 mb-2';
+            title.textContent = job.title || '未知岗位';
+            contentDiv.appendChild(title);
+            
+            const company = document.createElement('div');
+            company.className = 'text-gray-600 mb-2';
+            company.innerHTML = '🏢 <span></span>';
+            company.querySelector('span').textContent = job.company || '未知公司';
+            contentDiv.appendChild(company);
+            
+            const salary = document.createElement('div');
+            salary.className = 'text-gray-600 mb-2';
+            salary.innerHTML = '💰 <span class="text-green-600 font-medium"></span>';
+            salary.querySelector('span').textContent = job.salary || '面议';
+            contentDiv.appendChild(salary);
+            
+            if (job.work_location) {
+                const location = document.createElement('div');
+                location.className = 'text-gray-600 mb-2';
+                location.innerHTML = '📍 <span></span>';
+                location.querySelector('span').textContent = job.work_location;
+                contentDiv.appendChild(location);
+            }
+            
+            if (job.url) {
+                const urlDiv = document.createElement('div');
+                urlDiv.className = 'text-gray-600 mb-2';
+                urlDiv.innerHTML = '🔗 <a href="" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-xs break-all"></a>';
+                const link = urlDiv.querySelector('a');
+                link.href = job.url;
+                link.textContent = job.url;
+                contentDiv.appendChild(urlDiv);
+            }
+            
+            div.appendChild(scoreDiv);
+            div.appendChild(contentDiv);
+            
+            console.log(`✅ Created basic structure for: ${job.title}`);
             return div;
         }
 
@@ -555,6 +590,20 @@ def serve_frontend():
 
         // 注意：progress_update事件已经在上面监听过了，这里只需要处理按钮状态
         // 在updateProgress函数中处理按钮状态更新
+        
+        // 调试功能 - 检查数据状态
+        window.debugJobData = function() {
+            console.log('=== 调试信息 ===');
+            console.log('allJobs:', allJobs);
+            console.log('allJobs length:', allJobs ? allJobs.length : 'undefined');
+            console.log('qualifiedJobs:', qualifiedJobs);
+            console.log('qualifiedJobs length:', qualifiedJobs ? qualifiedJobs.length : 'undefined');
+            console.log('currentView:', currentView);
+            console.log('================');
+        };
+        
+        // 初始化时输出调试信息
+        console.log('🚀 页面初始化完成，可以使用 debugJobData() 查看数据状态');
     </script>
 </body>
 </html>
@@ -804,13 +853,29 @@ def run_job_search_task(params):
 def get_all_jobs():
     """获取所有搜索到的岗位（未过滤）"""
     try:
-        if not current_job or 'analyzed_jobs' not in current_job:
-            return jsonify({'error': '没有可用的搜索结果'}), 404
+        from utils.data_saver import load_all_job_results
         
-        return jsonify({
-            'jobs': current_job.get('analyzed_jobs', []),
-            'total': len(current_job.get('analyzed_jobs', []))
-        })
+        # 尝试从保存的文件中读取所有岗位
+        job_data = load_all_job_results()
+        if job_data and 'all_jobs' in job_data:
+            all_jobs = job_data['all_jobs']
+            logger.info(f"✅ 从文件加载了 {len(all_jobs)} 个岗位")
+            return jsonify({
+                'jobs': all_jobs,
+                'total': len(all_jobs),
+                'metadata': job_data.get('metadata', {})
+            })
+        
+        # 如果文件中没有数据，fallback到current_job
+        if current_job and 'analyzed_jobs' in current_job:
+            jobs = current_job.get('analyzed_jobs', [])
+            logger.info(f"⚠️ 从内存加载了 {len(jobs)} 个岗位")
+            return jsonify({
+                'jobs': jobs,
+                'total': len(jobs)
+            })
+        
+        return jsonify({'error': '没有可用的搜索结果，请先进行搜索'}), 404
         
     except Exception as e:
         logger.error(f"获取所有岗位失败: {e}")
