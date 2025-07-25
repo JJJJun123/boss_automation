@@ -3,7 +3,10 @@ import json
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# 加载配置文件中的环境变量
+config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
+secrets_file = os.path.join(config_dir, 'secrets.env')
+load_dotenv(secrets_file)
 
 
 class DeepSeekClient:

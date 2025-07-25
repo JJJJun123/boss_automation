@@ -9,7 +9,7 @@ import sys
 import logging
 import json
 from datetime import datetime
-from crawler.boss_spider import BossSpider
+from crawler.real_playwright_spider import search_with_real_playwright
 from analyzer.job_analyzer import JobAnalyzer
 from config.config_manager import ConfigManager
 
@@ -185,31 +185,28 @@ def main():
         logging.error(f"配置初始化失败: {e}")
         return
     
-    spider = None
     try:
-        # 1. 启动爬虫
-        print("🚀 第一步: 启动爬虫...")
-        spider = BossSpider()
-        if not spider.start():
-            print("❌ 爬虫启动失败")
-            return
+        # 1. 城市代码映射
+        print("🚀 第一步: 准备搜索参数...")
+        city_map = {
+            "101280600": "shenzhen",    # 深圳
+            "101020100": "shanghai",    # 上海
+            "101010100": "beijing",     # 北京
+            "101210100": "hangzhou"     # 杭州
+        }
+        city_name = city_map.get(city_code, "shanghai")
+        print(f"🌍 搜索城市: {city_name}")
         
-        # 2. 登录
-        print("\n🔐 第二步: 处理登录...")
-        if not spider.login_with_manual_help():
-            print("❌ 登录失败")
-            return
-        
-        # 3. 搜索岗位
-        print(f"\n🔍 第三步: 搜索岗位...")
-        jobs = spider.search_jobs(search_config['keyword'], city_code, search_config['max_jobs'], search_config['fetch_details'])
+        # 2. 搜索岗位
+        print(f"\n🔍 第二步: 使用Playwright搜索岗位...")
+        jobs = search_with_real_playwright(search_config['keyword'], city_name, search_config['max_jobs'])
         
         if not jobs:
             print("❌ 未找到任何岗位")
             return
         
-        # 4. AI分析
-        print(f"\n🤖 第四步: AI智能分析...")
+        # 3. AI分析
+        print(f"\n🤖 第三步: AI智能分析...")
         analyzer = JobAnalyzer(ai_config['provider'])
         
         # 只分析前max_analyze_jobs个岗位
@@ -218,12 +215,12 @@ def main():
         
         analyzed_jobs = analyzer.analyze_jobs(jobs_to_analyze)
         
-        # 5. 过滤和排序
-        print(f"\n🎯 第五步: 过滤和排序...")
+        # 4. 过滤和排序
+        print(f"\n🎯 第四步: 过滤和排序...")
         filtered_jobs = analyzer.filter_and_sort_jobs(analyzed_jobs, ai_config['min_score'])
         
-        # 6. 输出结果
-        print(f"\n📊 第六步: 输出结果...")
+        # 5. 输出结果
+        print(f"\n📊 第五步: 输出结果...")
         if filtered_jobs:
             print(f"\n🎉 找到 {len(filtered_jobs)} 个匹配的岗位:")
             
@@ -250,10 +247,7 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        # 清理资源
-        if spider:
-            print("\n🧹 清理资源...")
-            spider.close()
+        # 清理资源 (Playwright会自动清理)
         print("👋 程序结束")
 
 

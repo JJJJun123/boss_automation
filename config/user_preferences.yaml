@@ -30,8 +30,8 @@ search:
   fetch_details: false   # 是否获取岗位详细信息（会增加抓取时间）
   
   # 爬虫引擎选择
-  spider_engine: "selenium"  # selenium 或 playwright_mcp
-  use_playwright_mcp: false  # 是否使用Playwright MCP（更稳定但需要手动登录）
+  spider_engine: "playwright"  # playwright（推荐）或 mcp（实验性）
+  use_playwright_mcp: false     # 已弃用，请使用 spider_engine: "mcp"
 
 # AI分析偏好
 ai_analysis:

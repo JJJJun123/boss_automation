@@ -32,7 +32,7 @@ class ResumeAnalyzerV2:
             response = self.ai_client.call_api_with_system(
                 system_prompt, 
                 user_prompt,
-                model="deepseek-reasoner"
+                model="deepseek-chat"
             )
             
             self.logger.info(f"AI响应长度: {len(response)} 字符")

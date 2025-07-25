@@ -59,10 +59,10 @@ The project uses a dual-crawler architecture with multiple AI analysis models:
 
 ### Core Components
 
-1. **Dual-Engine Crawlers** (`crawler/`):
-   - **Selenium Engine** (`boss_spider.py`): Traditional, stable web scraping using undetected-chromedriver
-   - **Playwright MCP Engine** (`playwright_spider.py`, `mcp_client.py`): AI-driven browser automation through natural language commands
-   - Both engines provide unified data format through `browser_manager.py`
+1. **Playwright-Based Crawlers** (`crawler/`):
+   - **Real Playwright Engine** (`real_playwright_spider.py`): Modern, high-performance web scraping using native Playwright API (推荐)
+   - **Playwright MCP Engine** (`mcp_client.py`): AI-driven browser automation through MCP protocol (实验性)
+   - Unified interfaces for both engines
 
 2. **AI Analysis System** (`analyzer/`):
    - Factory pattern (`ai_client_factory.py`) supports multiple AI providers
@@ -84,7 +84,7 @@ The project uses a dual-crawler architecture with multiple AI analysis models:
 ### Data Flow
 
 1. User configures search parameters via web interface
-2. Selected crawler engine (Selenium/Playwright MCP) fetches job listings
+2. Selected crawler engine (Real Playwright/MCP) fetches job listings
 3. AI model analyzes job descriptions and scores them
 4. Results are displayed in real-time via WebSocket
 5. Data saved to `data/job_results.json`
@@ -101,21 +101,22 @@ GEMINI_API_KEY=xxx         # Optional
 ### User Preferences (config/user_preferences.yaml)
 - Search keywords, cities, job count limits
 - AI provider selection and minimum score threshold
-- Spider engine choice (selenium/playwright_mcp)
+- Spider engine choice (playwright/mcp)
 
 ## Important Implementation Details
 
-1. **MCP Integration**: The Playwright MCP client requires the MCP server to be installed via Claude Code
-2. **Cookie Management**: Both crawlers support cookie persistence in `data/cookies.json`
-3. **Anti-Detection**: Random delays, mouse movements, and scroll patterns implemented
-4. **Error Handling**: Comprehensive try-catch blocks with fallback strategies
+1. **Playwright Integration**: The Real Playwright engine provides high-performance, modern web automation
+2. **MCP Integration**: The MCP client requires the MCP server to be installed via Claude Code (optional)
+3. **Cookie Management**: Automatic cookie persistence and session management
+4. **Anti-Detection**: Advanced evasion techniques and human-like behavior simulation
+5. **Error Handling**: Comprehensive try-catch blocks with intelligent fallback strategies
 5. **Real-time Updates**: WebSocket emits progress at each stage of crawling and analysis
 
 ## Common Development Tasks
 
 When modifying the crawler engines:
-- Selenium crawler: Update `crawler/boss_spider.py`
-- Playwright MCP: Update `crawler/playwright_spider.py` and `crawler/mcp_client.py`
+- Real Playwright crawler: Update `crawler/real_playwright_spider.py`
+- MCP crawler: Update `crawler/mcp_client.py`
 
 When adding new AI providers:
 - Create new client in `analyzer/` following existing pattern

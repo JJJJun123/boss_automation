@@ -17,8 +17,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_manager import ConfigManager
-from crawler.boss_spider import BossSpider
-from crawler.playwright_spider import search_with_playwright_mcp
+from crawler.real_playwright_spider import search_with_real_playwright
 from analyzer.job_analyzer import JobAnalyzer
 
 
@@ -676,7 +675,7 @@ def serve_frontend():
                         city,
                         max_jobs: parseInt(document.getElementById('max_jobs').value) || 20,
                         max_analyze_jobs: parseInt(document.getElementById('max_analyze_jobs').value) || 10,
-                        spider_engine: 'playwright_mcp',
+                        spider_engine: 'playwright',
                         fetch_details: true
                     });
                     
@@ -1157,7 +1156,7 @@ def run_job_search_task(params):
         keyword = params.get('keyword', search_config['keyword'])
         max_jobs = params.get('max_jobs', search_config['max_jobs'])
         max_analyze_jobs = params.get('max_analyze_jobs', search_config['max_analyze_jobs'])
-        spider_engine = params.get('spider_engine', 'playwright_mcp')  # 默认Playwright MCP
+        spider_engine = params.get('spider_engine', 'playwright')  # 默认Playwright
         fetch_details = params.get('fetch_details', True)  # 默认获取详情
         selected_city = params.get('city', 'shanghai')  # 默认上海
         
@@ -1169,28 +1168,20 @@ def run_job_search_task(params):
         emit_progress(f"🔍 搜索设置: {keyword} | {city_name} | {max_jobs}个岗位", 10)
         emit_progress(f"🎭 使用爬虫引擎: {spider_engine.upper()}", 15)
         
-        # 2. 根据选择的引擎初始化爬虫
-        if spider_engine == 'playwright_mcp':
-            emit_progress("🎭 启动Playwright MCP引擎...", 20)
-            # 使用Playwright MCP进行搜索
-            jobs = search_with_playwright_mcp(keyword, city_code, max_jobs, fetch_details)
-        else:
-            emit_progress("🤖 启动Selenium引擎...", 20)
-            # 使用传统Selenium方式
-            current_spider = BossSpider()
-            if not current_spider.start():
-                raise Exception("Selenium爬虫启动失败")
-            
-            emit_progress("🔐 等待用户登录...", 25)
-            if not current_spider.login_with_manual_help():
-                raise Exception("登录失败")
-            
-            emit_progress("✅ 登录成功，开始搜索岗位...", 30)
-            jobs = current_spider.search_jobs(keyword, city_code, max_jobs, fetch_details)
-            
-            # 为Selenium获取的岗位添加引擎来源标识
-            for job in jobs:
-                job['engine_source'] = 'Selenium'
+        # 2. 使用Playwright引擎搜索岗位
+        emit_progress("🎭 启动Playwright引擎...", 20)
+        
+        # 城市代码映射到城市名称
+        city_map = {
+            "101280600": "shenzhen",    # 深圳
+            "101020100": "shanghai",    # 上海
+            "101010100": "beijing",     # 北京
+            "101210100": "hangzhou"     # 杭州
+        }
+        city_name = city_map.get(city_code, "shanghai")
+        
+        # 使用真正的Playwright进行搜索
+        jobs = search_with_real_playwright(keyword, city_name, max_jobs)
         
         emit_progress(f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
         

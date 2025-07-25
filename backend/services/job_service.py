@@ -5,9 +5,11 @@
 import logging
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 
-from crawler.boss_spider import BossSpider
+# 动态导入爬虫模块
+from crawler.real_playwright_spider import search_with_real_playwright
+from crawler.mcp_client import PlaywrightMCPSync
 from analyzer.job_analyzer import JobAnalyzer
 from config.config_manager import ConfigManager
 
@@ -21,7 +23,8 @@ class JobSearchService:
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.current_task: Optional[Dict] = None
-        self.current_spider: Optional[BossSpider] = None
+        self.current_spider: Optional[Any] = None  # 支持多种爬虫类型
+        self.spider_engine: str = "playwright"  # 默认使用playwright
         self.progress_callback: Optional[Callable] = None
     
     def set_progress_callback(self, callback: Callable):
@@ -33,6 +36,55 @@ class JobSearchService:
         if self.progress_callback:
             self.progress_callback(message, progress, data)
         logger.info(f"Progress: {message}")
+    
+    def _create_spider(self, engine: str = None) -> Any:
+        """创建爬虫实例"""
+        engine = engine or self.spider_engine
+        
+        if engine == "playwright":
+            # 使用真正的Playwright爬虫（通过函数接口）
+            return "playwright"  # 标记，实际使用函数调用
+        elif engine == "mcp":
+            # 使用Playwright MCP爬虫
+            spider = PlaywrightMCPSync(headless=False)
+            if spider.start():
+                return spider
+            else:
+                raise Exception("MCP爬虫启动失败")
+        else:
+            raise Exception(f"不支持的爬虫引擎: {engine}")
+    
+    def _search_jobs_with_spider(self, spider, keyword: str, city_code: str, max_jobs: int, fetch_details: bool = False) -> List[Dict]:
+        """使用指定爬虫搜索岗位"""
+        if spider == "playwright":
+            # 城市代码映射到城市名称
+            city_map = {
+                "101280600": "shenzhen",    # 深圳
+                "101020100": "shanghai",    # 上海
+                "101010100": "beijing",     # 北京
+                "101210100": "hangzhou"     # 杭州
+            }
+            city_name = city_map.get(city_code, "shanghai")
+            
+            # 使用real_playwright_spider的函数接口
+            jobs = search_with_real_playwright(keyword, city_name, max_jobs)
+            
+            # 为每个岗位添加引擎来源标识
+            for job in jobs:
+                job['engine_source'] = 'Real Playwright'
+            
+            return jobs
+        elif isinstance(spider, PlaywrightMCPSync):
+            # 使用MCP爬虫
+            jobs = spider.search_jobs(keyword, city_code, max_jobs)
+            
+            # 为每个岗位添加引擎来源标识
+            for job in jobs:
+                job['engine_source'] = 'Playwright MCP'
+            
+            return jobs
+        else:
+            raise Exception(f"未知的爬虫类型: {type(spider)}")
     
     def start_search_task(self, params: Dict = None) -> Dict:
         """启动搜索任务"""
@@ -60,32 +112,29 @@ class JobSearchService:
         """执行搜索任务的主逻辑"""
         try:
             self.current_task['status'] = 'running'
-            self.emit_progress("🚀 开始初始化爬虫...", 5)
             
-            # 1. 初始化爬虫
-            self.current_spider = BossSpider()
-            if not self.current_spider.start():
-                raise Exception("爬虫启动失败")
-            
-            self.emit_progress("🔐 等待用户登录...", 10)
-            
-            # 2. 登录处理
-            if not self.current_spider.login_with_manual_help():
-                raise Exception("登录失败")
-            
-            self.emit_progress("✅ 登录成功，开始搜索岗位...", 20)
-            
-            # 3. 获取配置
+            # 1. 获取配置
             search_config = self.config_manager.get_search_config()
             ai_config = self.config_manager.get_ai_config()
             
-            # 获取城市代码
+            # 从配置或参数中获取爬虫引擎设置
+            self.spider_engine = params.get('spider_engine') or search_config.get('spider_engine', 'playwright')
+            
+            self.emit_progress(f"🚀 初始化{self.spider_engine.upper()}爬虫引擎...", 5)
+            
+            # 2. 初始化爬虫
+            self.current_spider = self._create_spider(self.spider_engine)
+            
+            self.emit_progress(f"✅ {self.spider_engine.upper()}引擎启动成功", 15)
+            
+            # 3. 获取城市代码
             city_code = self._get_city_code(search_config)
             
-            self.emit_progress(f"🔍 搜索岗位: {search_config['keyword']}", 30)
+            self.emit_progress(f"🔍 搜索岗位: {search_config['keyword']}", 25)
             
             # 4. 搜索岗位
-            jobs = self.current_spider.search_jobs(
+            jobs = self._search_jobs_with_spider(
+                self.current_spider,
                 search_config['keyword'], 
                 city_code, 
                 search_config['max_jobs'],
@@ -203,7 +252,10 @@ class JobSearchService:
         """清理资源"""
         if self.current_spider:
             try:
-                self.current_spider.close()
+                # 只有MCP爬虫需要显式关闭
+                if isinstance(self.current_spider, PlaywrightMCPSync):
+                    self.current_spider.close()
+                # Playwright函数接口不需要显式清理
             except Exception as e:
                 logger.error(f"清理爬虫资源失败: {e}")
             self.current_spider = None
