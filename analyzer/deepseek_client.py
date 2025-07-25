@@ -67,6 +67,40 @@ class DeepSeekClient:
                 "summary": "无法分析此岗位"
             }
     
+    def call_api_with_system(self, system_prompt, user_prompt, model="deepseek-chat"):
+        """调用DeepSeek API（带系统提示）"""
+        if not self.api_key:
+            raise Exception("API Key未配置")
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.3
+        }
+        
+        response = requests.post(
+            self.base_url,
+            headers=self.headers,
+            json=payload,
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            raise Exception(f"API调用失败: {response.status_code} - {response.text}")
+    
     def call_api(self, prompt, model="deepseek-chat"):
         """调用DeepSeek API"""
         if not self.api_key:
@@ -88,7 +122,7 @@ class DeepSeekClient:
             self.base_url,
             headers=self.headers,
             json=payload,
-            timeout=30
+            timeout=60
         )
         
         if response.status_code == 200:

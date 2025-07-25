@@ -8,7 +8,7 @@ import os
 import sys
 import logging
 import threading
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from datetime import datetime
@@ -24,6 +24,7 @@ from analyzer.job_analyzer import JobAnalyzer
 
 # 创建Flask应用
 app = Flask(__name__)
+app.secret_key = 'boss-zhipin-automation-secret-key-2024'  # 添加secret key用于session
 
 # 配置CORS
 CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5000", "http://127.0.0.1:5000"])
@@ -77,7 +78,7 @@ def serve_frontend():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Boss直聘 AI助手</title>
+    <title>Boss直聘智能简历分析与岗位匹配系统</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
@@ -88,6 +89,40 @@ def serve_frontend():
         .btn-primary { @apply bg-blue-600 hover:bg-blue-700 text-white; }
         .btn-secondary { @apply bg-gray-100 hover:bg-gray-200 text-gray-800; }
         .card { @apply bg-white rounded-3xl shadow-lg p-6 border border-gray-200; }
+        
+        /* 页面切换样式 */
+        .page-content { display: none; }
+        .page-content.active { display: block; }
+        .nav-btn { transition: all 0.2s ease; }
+        .nav-btn.active { 
+            color: #2563eb !important; 
+            border-bottom-color: #2563eb !important; 
+            font-weight: 600;
+        }
+        
+        /* 文件上传样式 */
+        .upload-area {
+            border: 2px dashed #d1d5db;
+            transition: all 0.2s ease;
+        }
+        .upload-area.dragover {
+            border-color: #2563eb;
+            background-color: #eff6ff;
+        }
+        
+        /* AI输出查看器样式 */
+        .ai-output-viewer {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .analysis-step {
+            border-left: 3px solid #e5e7eb;
+            transition: all 0.2s ease;
+        }
+        .analysis-step.expanded {
+            border-left-color: #2563eb;
+            background-color: #f8fafc;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -96,15 +131,23 @@ def serve_frontend():
         <div class="max-w-7xl mx-auto px-4 py-4">
             <div class="flex items-center justify-between">
                 <div class="flex items-center">
-                    <div class="w-8 h-8 bg-blue-600 rounded-lg mr-3 flex items-center justify-center">
-                        <span class="text-white font-bold">AI</span>
+                    <div class="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl mr-4 flex items-center justify-center">
+                        <span class="text-white font-bold text-lg">🤖</span>
                     </div>
                     <div>
-                        <h1 class="text-2xl font-bold text-gray-900">Boss直聘 AI助手</h1>
-                        <p class="text-sm text-gray-600">智能化岗位筛选工具</p>
+                        <h1 class="text-2xl font-bold text-gray-900">Boss直聘智能助手</h1>
+                        <p class="text-sm text-gray-600">AI驱动的简历分析与岗位匹配系统</p>
                     </div>
                 </div>
-                <div class="flex items-center space-x-3">
+                <div class="flex items-center space-x-6">
+                    <nav class="flex space-x-6">
+                        <button id="nav-resume" class="nav-btn px-4 py-2 text-blue-600 border-b-2 border-blue-600 font-medium" onclick="showPage('resume')">
+                            📄 简历管理
+                        </button>
+                        <button id="nav-job-analysis" class="nav-btn px-4 py-2 text-gray-600 hover:text-blue-600 font-medium" onclick="showPage('job-analysis')">
+                            🔍 岗位分析
+                        </button>
+                    </nav>
                     <div class="flex items-center">
                         <div id="status-dot" class="w-2 h-2 rounded-full bg-red-500 mr-2"></div>
                         <span id="status-text" class="text-xs text-gray-500">未连接</span>
@@ -116,88 +159,184 @@ def serve_frontend():
 
     <!-- 主内容 -->
     <main class="max-w-7xl mx-auto px-4 py-8">
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <!-- 左侧配置面板 -->
-            <div class="lg:col-span-1 space-y-6">
-                <!-- 配置卡片 -->
-                <div class="card">
-                    <h2 class="text-xl font-semibold text-gray-900 mb-6">搜索配置</h2>
+        
+        <!-- 简历管理页面 -->
+        <div id="resume-page" class="page-content active">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- 左侧：简历上传 -->
+                <div class="space-y-6">
+                    <div class="card">
+                        <h2 class="text-2xl font-bold text-gray-900 mb-6">📄 简历上传与分析</h2>
+                        
+                        <!-- 简历上传区域 -->
+                        <div id="upload-section">
+                            <div id="upload-area" class="upload-area p-8 rounded-2xl text-center">
+                                <div class="mb-4">
+                                    <div class="w-16 h-16 bg-blue-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                                        <span class="text-3xl">📤</span>
+                                    </div>
+                                    <h3 class="text-lg font-semibold text-gray-900 mb-2">上传简历文件</h3>
+                                    <p class="text-sm text-gray-600 mb-4">支持 PDF、DOCX、TXT 格式，最大 10MB</p>
+                                </div>
+                                
+                                <div class="space-y-4">
+                                    <input type="file" id="resume-file-input" accept=".pdf,.docx,.txt" class="hidden">
+                                    <button onclick="document.getElementById('resume-file-input').click()" class="btn btn-primary">
+                                        选择文件
+                                    </button>
+                                    <p class="text-xs text-gray-500">或拖拽文件到此区域</p>
+                                </div>
+                            </div>
+                            
+                            <!-- 上传进度 -->
+                            <div id="upload-progress" class="mt-4" style="display: none;">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm font-medium text-gray-700">正在分析简历...</span>
+                                    <span id="upload-percentage" class="text-sm text-gray-500">0%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">搜索关键词</label>
-                            <input type="text" id="keyword" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="如：市场风险管理、数据分析、AI工程师" value="">
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">🌍 目标城市</label>
-                            <select id="city" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">请选择城市</option>
-                                <option value="shanghai">上海</option>
-                                <option value="beijing">北京</option>
-                                <option value="shenzhen">深圳</option>
-                                <option value="hangzhou">杭州</option>
-                            </select>
-                        </div>
-                        
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
-                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">分析数量</label>
-                                <input type="number" id="max_analyze_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="10" min="1" max="50">
+                    <!-- 简历状态卡片 -->
+                    <div class="card">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">📋 简历状态</h3>
+                        <div id="resume-status">
+                            <div class="text-center py-6">
+                                <div class="text-4xl mb-2">📄</div>
+                                <p class="text-sm text-gray-600">未上传简历</p>
+                                <p class="text-xs text-gray-500 mt-1">请先上传简历文件</p>
                             </div>
                         </div>
-                        
-                        
-                        <button id="start-search-btn" class="btn btn-primary w-full">
-                            开始搜索
-                        </button>
                     </div>
                 </div>
-
-                <!-- 进度卡片 -->
-                <div class="card">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">任务进度</h3>
-                    <div id="progress-container">
-                        <div id="progress-bar" class="w-full h-2 bg-gray-200 rounded-full mb-4" style="display: none;">
-                            <div id="progress-fill" class="h-full bg-blue-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+                
+                <!-- 右侧：AI分析结果 -->
+                <div class="space-y-6">
+                    <div class="card">
+                        <h3 class="text-xl font-bold text-gray-900 mb-6">🤖 AI分析结果</h3>
+                        
+                        <!-- 等待分析状态 -->
+                        <div id="analysis-empty" class="text-center py-12">
+                            <div class="text-6xl mb-4">🤖</div>
+                            <h3 class="text-lg font-medium text-gray-900 mb-2">等待简历分析</h3>
+                            <p class="text-gray-600">上传简历后，AI将为您提供详细的分析报告</p>
                         </div>
-                        <div id="progress-message" class="text-sm text-gray-600">等待开始搜索...</div>
-                        <div id="progress-logs" class="mt-4 max-h-48 overflow-y-auto space-y-2"></div>
+                        
+                        <!-- AI分析结果显示 -->
+                        <div id="analysis-result" class="space-y-6" style="display: none;">
+                            <div class="p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border">
+                                <h4 class="font-bold text-gray-900 mb-2">📊 竞争力评估</h4>
+                                <div id="competitiveness-score" class="text-2xl font-bold text-blue-600">0/10</div>
+                                <p id="competitiveness-desc" class="text-sm text-gray-600 mt-1">正在分析...</p>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <h4 class="font-bold text-gray-900">🎯 推荐岗位类型</h4>
+                                <div id="recommended-jobs" class="space-y-2"></div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <h4 class="font-bold text-gray-900">💡 提升建议</h4>
+                                <div id="improvement-suggestions" class="space-y-2"></div>
+                            </div>
+                            
+                            <div class="space-y-4">
+                                <h4 class="font-bold text-gray-900">📈 市场匹配度</h4>
+                                <div id="market-analysis" class="text-sm text-gray-700"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-
-            <!-- 右侧结果展示 -->
-            <div class="lg:col-span-2">
-                <div id="results-container" class="space-y-6">
-                    <!-- 统计信息 -->
-                    <div id="stats-card" class="card" style="display: none;">
-                        <h3 class="text-lg font-semibold text-gray-900 mb-4">统计信息</h3>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showAllJobs()">
-                                <div id="total-jobs" class="text-2xl font-bold text-blue-600">0</div>
-                                <div class="text-sm text-gray-600">总搜索数</div>
-                                <div class="text-xs text-gray-400 mt-1">点击查看所有</div>
+        </div>
+        
+        <!-- 岗位分析页面 -->
+        <div id="job-analysis-page" class="page-content">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- 左侧：搜索配置 -->
+                <div class="lg:col-span-1 space-y-6">
+                    <!-- 搜索配置 -->
+                    <div class="card">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-6">🔍 搜索配置</h2>
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">搜索关键词</label>
+                                <input type="text" id="keyword" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="如：市场风险管理、数据分析、AI工程师" value="">
                             </div>
-                            <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showQualifiedJobs()">
-                                <div id="qualified-jobs" class="text-2xl font-bold text-purple-600">0</div>
-                                <div class="text-sm text-gray-600">合格岗位</div>
-                                <div class="text-xs text-gray-400 mt-1">点击查看推荐</div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">🌍 目标城市</label>
+                                <select id="city" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="">请选择城市</option>
+                                    <option value="shanghai">上海</option>
+                                    <option value="beijing">北京</option>
+                                    <option value="shenzhen">深圳</option>
+                                    <option value="hangzhou">杭州</option>
+                                </select>
                             </div>
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
+                                    <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">分析数量</label>
+                                    <input type="number" id="max_analyze_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="10" min="1" max="50">
+                                </div>
+                            </div>
+                            
+                            <button id="start-search-btn" class="btn btn-primary w-full">
+                                开始搜索
+                            </button>
                         </div>
                     </div>
 
-                    <!-- 岗位列表 -->
-                    <div id="jobs-list"></div>
-                    
-                    <!-- 空状态 -->
-                    <div id="empty-state" class="card text-center py-12">
-                        <div class="w-16 h-16 bg-gray-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                            <span class="text-2xl">🔍</span>
+                    <!-- 进度卡片 -->
+                    <div class="card">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">任务进度</h3>
+                        <div id="progress-container">
+                            <div id="progress-bar" class="w-full h-2 bg-gray-200 rounded-full mb-4" style="display: none;">
+                                <div id="progress-fill" class="h-full bg-blue-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                            <div id="progress-message" class="text-sm text-gray-600">等待开始搜索...</div>
+                            <div id="progress-logs" class="mt-4 max-h-48 overflow-y-auto space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：结果展示 -->
+                <div class="lg:col-span-2">
+                    <div id="results-container" class="space-y-6">
+                        <!-- 统计信息 -->
+                        <div id="stats-card" class="card" style="display: none;">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-4">统计信息</h3>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showAllJobs()">
+                                    <div id="total-jobs" class="text-2xl font-bold text-blue-600">0</div>
+                                    <div class="text-sm text-gray-600">总搜索数</div>
+                                    <div class="text-xs text-gray-400 mt-1">点击查看所有</div>
+                                </div>
+                                <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showQualifiedJobs()">
+                                    <div id="qualified-jobs" class="text-2xl font-bold text-purple-600">0</div>
+                                    <div class="text-sm text-gray-600">合格岗位</div>
+                                    <div class="text-xs text-gray-400 mt-1">点击查看推荐</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 岗位列表 -->
+                        <div id="jobs-list"></div>
+                        
+                        <!-- 空状态 -->
+                        <div id="empty-state" class="card text-center py-12">
+                            <div class="w-16 h-16 bg-gray-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                                <span class="text-2xl">🔍</span>
                         </div>
                         <h3 class="text-lg font-medium text-gray-900 mb-2">等待搜索结果</h3>
                         <p class="text-gray-600 mb-6">配置搜索参数并点击"开始搜索"来查找合适的岗位</p>
@@ -208,13 +347,36 @@ def serve_frontend():
     </main>
 
     <script>
-        // WebSocket连接
+    // 等待DOM加载完成
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('🚀 DOM加载完成，初始化系统...');
+        
+        // ========== 初始化核心变量 ==========
+        console.log('🔌 初始化Socket.IO连接...');
         const socket = io();
+        
         let isSearching = false;
-
-        // DOM元素
+        let allJobs = [];
+        let qualifiedJobs = [];
+        let currentView = 'qualified';
+        
+        // ========== 初始化所有DOM元素 ==========
+        console.log('📋 初始化DOM元素...');
+        
+        // WebSocket状态元素
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
+        
+        // 简历上传相关元素
+        const resumeFileInput = document.getElementById('resume-file-input');
+        const uploadArea = document.getElementById('upload-area');
+        const uploadProgress = document.getElementById('upload-progress');
+        const uploadBar = document.getElementById('upload-bar');
+        const uploadPercentage = document.getElementById('upload-percentage');
+        const analysisEmpty = document.getElementById('analysis-empty');
+        const analysisResult = document.getElementById('analysis-result');
+        
+        // 岗位搜索相关元素
         const startBtn = document.getElementById('start-search-btn');
         const progressBar = document.getElementById('progress-bar');
         const progressFill = document.getElementById('progress-fill');
@@ -223,234 +385,386 @@ def serve_frontend():
         const statsCard = document.getElementById('stats-card');
         const jobsList = document.getElementById('jobs-list');
         const emptyState = document.getElementById('empty-state');
-
-        // 存储所有搜索结果 - 全局变量
-        let allJobs = [];
-        let qualifiedJobs = [];
-        let currentView = 'qualified';  // 'all' or 'qualified'
-
-        // WebSocket事件
+        
+        // ========== 页面切换功能 ==========
+        window.showPage = function(pageId) {
+            console.log('🔄 切换到页面:', pageId);
+            
+            // 隐藏所有页面
+            document.querySelectorAll('.page-content').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            // 显示目标页面
+            const targetPage = document.getElementById(pageId + '-page');
+            if (targetPage) {
+                targetPage.classList.add('active');
+                console.log('✅ 页面已显示:', pageId);
+            } else {
+                console.error('❌ 页面不存在:', pageId);
+            }
+            
+            // 更新导航按钮状态
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+                btn.classList.add('text-gray-600');
+            });
+            
+            const activeBtn = document.getElementById('nav-' + pageId);
+            if (activeBtn) {
+                activeBtn.classList.remove('text-gray-600');
+                activeBtn.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+            }
+        };
+        
+        // ========== WebSocket连接处理 ==========
         socket.on('connect', () => {
-            statusDot.className = 'w-2 h-2 rounded-full bg-green-500 mr-2';
-            statusText.textContent = '已连接';
+            console.log('✅ WebSocket已连接, ID:', socket.id);
+            if (statusDot) {
+                statusDot.className = 'w-2 h-2 rounded-full bg-green-500 mr-2';
+            }
+            if (statusText) {
+                statusText.textContent = '已连接';
+            }
         });
-
+        
         socket.on('disconnect', () => {
-            statusDot.className = 'w-2 h-2 rounded-full bg-red-500 mr-2';
-            statusText.textContent = '未连接';
+            console.log('❌ WebSocket断开连接');
+            if (statusDot) {
+                statusDot.className = 'w-2 h-2 rounded-full bg-red-500 mr-2';
+            }
+            if (statusText) {
+                statusText.textContent = '未连接';
+            }
         });
-
+        
+        socket.on('connect_error', (error) => {
+            console.error('❌ WebSocket连接错误:', error.message);
+        });
+        
         socket.on('progress_update', (data) => {
             updateProgress(data);
-            
-            // 如果任务完成或失败，重置按钮状态
-            if (data.message.includes('完成') || data.message.includes('失败')) {
-                isSearching = false;
+        });
+        
+        socket.on('search_complete', (data) => {
+            console.log('🎉 搜索完成');
+            isSearching = false;
+            if (startBtn) {
                 startBtn.textContent = '开始搜索';
                 startBtn.disabled = false;
             }
         });
-
+        
+        // ========== 文件上传功能 ==========
+        // 注意：文件上传事件监听器已在后面的代码中设置，避免重复绑定
+        
+        if (uploadArea) {
+            // 拖拽上传
+            uploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+            
+            uploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+            });
+            
+            uploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    uploadResume(files[0]);
+                }
+            });
+        }
+        
+        // 上传简历函数在后面定义
+        
+        // 更新上传进度
+        function updateUploadProgress(percentage) {
+            if (uploadBar) uploadBar.style.width = percentage + '%';
+            if (uploadPercentage) uploadPercentage.textContent = Math.round(percentage) + '%';
+        }
+        
+        
+        // 显示AI分析结果
+        function displayAIAnalysis(aiAnalysis) {
+            console.log('🤖 显示AI分析结果:', aiAnalysis);
+            if (analysisEmpty) analysisEmpty.style.display = 'none';
+            if (analysisResult) analysisResult.style.display = 'block';
+            
+            // 更新竞争力评分
+            const scoreEl = document.getElementById('competitiveness-score');
+            if (scoreEl) scoreEl.textContent = (aiAnalysis.competitiveness_score || 0) + '/10';
+            
+            const descEl = document.getElementById('competitiveness-desc');
+            if (descEl) descEl.textContent = aiAnalysis.competitiveness_desc || '分析中...';
+            
+            // 更新推荐岗位
+            const recommendedJobsDiv = document.getElementById('recommended-jobs');
+            if (recommendedJobsDiv && aiAnalysis.recommended_jobs && aiAnalysis.recommended_jobs.length > 0) {
+                recommendedJobsDiv.innerHTML = aiAnalysis.recommended_jobs.map(job => 
+                    `<div class="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">• ${job}</div>`
+                ).join('');
+            }
+            
+            // 更新提升建议
+            const suggestionsDiv = document.getElementById('improvement-suggestions');
+            if (suggestionsDiv && aiAnalysis.improvement_suggestions && aiAnalysis.improvement_suggestions.length > 0) {
+                suggestionsDiv.innerHTML = aiAnalysis.improvement_suggestions.map(suggestion => 
+                    `<div class="px-3 py-2 bg-yellow-50 text-yellow-700 rounded-lg text-sm">• ${suggestion}</div>`
+                ).join('');
+            }
+            
+            // 更新市场分析
+            const marketAnalysisDiv = document.getElementById('market-analysis');
+            if (marketAnalysisDiv && aiAnalysis.market_position) {
+                marketAnalysisDiv.textContent = aiAnalysis.market_position;
+            }
+            
+            // 存储AI原始输出（保留用于调试）
+            window.resumeAIOutput = aiAnalysis.full_output || '';
+        }
+        
+        // 重置上传区域
+        function resetUploadArea() {
+            if (uploadProgress) uploadProgress.style.display = 'none';
+            if (uploadArea) uploadArea.style.display = 'block';
+            if (analysisResult) analysisResult.style.display = 'none';
+            if (analysisEmpty) analysisEmpty.style.display = 'block';
+        }
+        
+        // 更新简历状态（简历管理页）
+        function updateResumeStatus(resumeData) {
+            const resumeStatusEl = document.getElementById('resume-status');
+            const searchSection = document.getElementById('search-section');
+            
+            if (resumeStatusEl && resumeData) {
+                resumeStatusEl.innerHTML = `
+                    <div class="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                                <span class="text-green-600 text-sm font-bold">${resumeData.name ? resumeData.name.charAt(0) : '✓'}</span>
+                            </div>
+                            <div>
+                                <div class="text-sm font-medium text-green-900">简历已成功上传</div>
+                                <div class="text-xs text-green-600">${resumeData.name || '可以开始岗位分析了'}</div>
+                            </div>
+                        </div>
+                        <button onclick="window.deleteResume()" class="text-red-600 hover:text-red-700 text-sm font-medium">
+                            删除简历
+                        </button>
+                    </div>
+                `;
+                // 启用岗位分析页面的搜索功能
+                if (searchSection) searchSection.style.display = 'block';
+            }
+        }
+        
+        // 重置简历状态（简历管理页）
+        function resetResumeStatus() {
+            const resumeStatusEl = document.getElementById('resume-status');
+            const searchSection = document.getElementById('search-section');
+            
+            if (resumeStatusEl) {
+                resumeStatusEl.innerHTML = `
+                    <div class="text-center py-6">
+                        <div class="text-4xl mb-2">📄</div>
+                        <p class="text-sm text-gray-600">未上传简历</p>
+                        <p class="text-xs text-gray-500 mt-1">请先上传简历文件</p>
+                    </div>
+                `;
+            }
+            if (searchSection) searchSection.style.display = 'none';
+        }
+        
+        // ========== 全局函数导出 ==========
+        window.showAIDetails = function(type, output) {
+            console.log('👁️ 显示AI详情:', type);
+            const modal = document.getElementById('ai-details-modal');
+            const title = document.getElementById('ai-details-title');
+            const content = document.getElementById('ai-details-content');
+            
+            if (modal && title && content) {
+                switch (type) {
+                    case 'resume':
+                        title.textContent = '简历AI分析完整输出';
+                        content.textContent = window.resumeAIOutput || '暂无AI输出记录';
+                        break;
+                    case 'job':
+                        title.textContent = '岗位匹配AI分析输出';
+                        content.textContent = output || '暂无AI输出记录';
+                        break;
+                    default:
+                        title.textContent = 'AI分析输出';
+                        content.textContent = output || '暂无AI输出记录';
+                }
+                modal.classList.remove('hidden');
+            }
+        };
+        
+        window.hideAIDetails = function() {
+            const modal = document.getElementById('ai-details-modal');
+            if (modal) modal.classList.add('hidden');
+        };
+        
+        window.deleteResume = async function() {
+            if (!confirm('确定要删除当前简历吗？此操作无法撤销。')) {
+                return;
+            }
+            
+            try {
+                const response = await axios.post('/api/delete_resume');
+                if (response.data.success) {
+                    resetUploadArea();
+                    resetResumeStatus();
+                    console.log('🗑️ 简历已删除');
+                } else {
+                    alert('删除失败: ' + response.data.error);
+                }
+            } catch (error) {
+                console.error('❌ 删除失败:', error);
+                alert('删除失败: ' + (error.response?.data?.error || error.message));
+            }
+        };
+        
+        window.showAllJobs = function() {
+            console.log('📋 显示所有岗位');
+            currentView = 'all';
+            if (allJobs && allJobs.length > 0) {
+                renderJobsList(allJobs);
+            } else {
+                fetchAllJobs();
+            }
+        };
+        
+        window.showQualifiedJobs = function() {
+            console.log('⭐ 显示合格岗位');
+            currentView = 'qualified';
+            renderJobsList(qualifiedJobs);
+        };
+        
+        // ========== 岗位搜索功能 ==========
+        if (startBtn) {
+            startBtn.addEventListener('click', async () => {
+                if (isSearching) return;
+                
+                const keyword = document.getElementById('keyword').value.trim();
+                const city = document.getElementById('city').value;
+                
+                if (!keyword) {
+                    alert('请输入搜索关键词');
+                    return;
+                }
+                if (!city) {
+                    alert('请选择目标城市');
+                    return;
+                }
+                
+                isSearching = true;
+                startBtn.textContent = '搜索中...';
+                startBtn.disabled = true;
+                
+                console.log('🔍 开始搜索:', { keyword, city });
+                
+                try {
+                    const response = await axios.post('/api/jobs/search', {
+                        keyword,
+                        city,
+                        max_jobs: parseInt(document.getElementById('max_jobs').value) || 20,
+                        max_analyze_jobs: parseInt(document.getElementById('max_analyze_jobs').value) || 10,
+                        spider_engine: 'playwright_mcp',
+                        fetch_details: true
+                    });
+                    
+                    console.log('✅ 搜索任务已启动:', response.data);
+                } catch (error) {
+                    console.error('❌ 启动搜索失败:', error);
+                    alert('启动搜索失败: ' + (error.response?.data?.error || error.message));
+                    isSearching = false;
+                    startBtn.textContent = '开始搜索';
+                    startBtn.disabled = false;
+                }
+            });
+        }
+        
         // 更新进度
         function updateProgress(data) {
-            progressMessage.textContent = data.message;
+            if (progressMessage) progressMessage.textContent = data.message;
             
-            if (data.progress !== undefined) {
+            if (data.progress !== undefined && progressBar && progressFill) {
                 progressBar.style.display = 'block';
                 progressFill.style.width = data.progress + '%';
             }
-
+            
             // 添加日志
-            const logItem = document.createElement('div');
-            logItem.className = 'flex items-start text-sm';
-            logItem.innerHTML = `
-                <div class="w-1.5 h-1.5 bg-gray-400 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                <div class="flex-1">
-                    <span class="text-gray-600">${data.message}</span>
-                    <span class="text-xs text-gray-400 ml-2">${data.timestamp}</span>
-                </div>
-                ${data.progress ? `<div class="text-xs text-gray-500">${data.progress}%</div>` : ''}
-            `;
-            progressLogs.appendChild(logItem);
-            progressLogs.scrollTop = progressLogs.scrollHeight;
-
-            // 如果有结果数据
+            if (progressLogs) {
+                const logItem = document.createElement('div');
+                logItem.className = 'flex items-start text-sm';
+                logItem.innerHTML = `
+                    <div class="w-1.5 h-1.5 bg-gray-400 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                    <div class="flex-1">
+                        <span class="text-gray-600">${data.message}</span>
+                        <span class="text-xs text-gray-400 ml-2">${data.timestamp}</span>
+                    </div>
+                `;
+                progressLogs.appendChild(logItem);
+                progressLogs.scrollTop = progressLogs.scrollHeight;
+            }
+            
+            // 处理结果数据
             if (data.data && data.data.results) {
                 displayResults(data.data.results, data.data.stats);
-                // 同时存储所有岗位数据
                 if (data.data.all_jobs) {
                     allJobs = data.data.all_jobs;
                 }
             }
         }
-
+        
         // 显示结果
         function displayResults(results, stats) {
-            // 调试：打印接收到的数据
-            console.log('🔍 DisplayResults called with:', { results, stats });
-            console.log('📊 Results type:', typeof results, 'Length:', results?.length);
-            console.log('📄 All jobs stored:', allJobs.length);
+            console.log('📊 显示结果:', { results: results?.length, stats });
             
             if (stats) {
-                document.getElementById('total-jobs').textContent = stats.total;
-                document.getElementById('qualified-jobs').textContent = stats.qualified;
-                statsCard.style.display = 'block';
-                console.log('📈 Stats updated:', stats);
+                const totalEl = document.getElementById('total-jobs');
+                const qualifiedEl = document.getElementById('qualified-jobs');
+                if (totalEl) totalEl.textContent = stats.total;
+                if (qualifiedEl) qualifiedEl.textContent = stats.qualified;
+                if (statsCard) statsCard.style.display = 'block';
             }
-
+            
             if (results && results.length > 0) {
-                console.log('✅ Showing jobs list, hiding empty state');
-                emptyState.style.display = 'none';
-                
-                // 存储结果用于切换视图
+                if (emptyState) emptyState.style.display = 'none';
                 qualifiedJobs = results;
-                // 注意：这里的results已经是过滤后的合格岗位
-                // allJobs在updateProgress中已经设置
-                
                 renderJobsList(results);
-            } else {
-                console.log('⚠️ No results to display:', { results, length: results?.length });
             }
         }
-
+        
         // 渲染岗位列表
         function renderJobsList(jobs) {
-            console.log('🎨 renderJobsList called with:', jobs.length, 'jobs');
-            console.log('🎯 jobsList element:', jobsList);
-            console.log('📋 First job sample:', jobs[0]);
-            
-            if (!jobsList) {
-                console.error('❌ jobsList element not found!');
-                return;
-            }
+            console.log('🎨 渲染岗位列表:', jobs.length);
+            if (!jobsList) return;
             
             jobsList.innerHTML = '';
-            console.log('🧹 Cleared jobsList innerHTML');
-            
-            // 统计分析情况
-            const analyzedCount = jobs.filter(job => job.analysis?.recommendation !== '未分析').length;
-            const unanalyzedCount = jobs.filter(job => job.analysis?.recommendation === '未分析').length;
-            console.log('📊 Stats:', { analyzedCount, unanalyzedCount });
-            
-            // 添加视图标题
-            const viewTitle = document.createElement('div');
-            viewTitle.className = 'mb-4 text-sm text-gray-600';
-            if (currentView === 'all') {
-                viewTitle.innerHTML = `
-                    <span class="font-medium">显示所有搜索结果 (${jobs.length}个)</span>
-                    ${unanalyzedCount > 0 ? `
-                        <span class="ml-2 text-xs text-yellow-600">
-                            其中 ${analyzedCount} 个已分析，${unanalyzedCount} 个未分析
-                        </span>
-                    ` : ''}
-                `;
-            } else {
-                viewTitle.innerHTML = `<span class="font-medium">显示AI推荐岗位 (${jobs.length}个)</span>`;
-            }
-            jobsList.appendChild(viewTitle);
-            console.log('📌 Added view title');
             
             jobs.forEach((job, index) => {
-                console.log(`🔨 Creating job card ${index + 1}:`, job.title);
-                try {
-                    const jobCard = createJobCard(job, index + 1);
-                    if (jobCard) {
-                        jobsList.appendChild(jobCard);
-                        console.log(`✅ Added job card ${index + 1}`);
-                    } else {
-                        console.error(`❌ createJobCard returned null for job ${index + 1}`);
-                    }
-                } catch (error) {
-                    console.error(`❌ Error creating job card ${index + 1}:`, error);
+                const jobCard = createJobCard(job, index + 1);
+                if (jobCard) {
+                    jobsList.appendChild(jobCard);
                 }
             });
-            console.log(`🎉 Completed rendering ${jobs.length} job cards`);
-            console.log('📄 Final jobsList HTML length:', jobsList.innerHTML.length);
         }
-
-        // 显示所有岗位
-        function showAllJobs() {
-            console.log('🔄 showAllJobs called');
-            console.log('📊 Current allJobs length:', allJobs ? allJobs.length : 'undefined');
-            console.log('📊 Current qualifiedJobs length:', qualifiedJobs ? qualifiedJobs.length : 'undefined');
-            console.log('📊 Current view before change:', currentView);
-            
-            currentView = 'all';
-            console.log('📊 Current view after change:', currentView);
-            
-            if (allJobs && allJobs.length > 0) {
-                console.log('📦 Rendering all jobs:', allJobs.length);
-                renderJobsList(allJobs);
-            } else {
-                console.log('🔍 allJobs is empty or undefined, fetching from backend...');
-                console.log('🔍 allJobs:', allJobs);
-                fetchAllJobs();
-            }
-        }
-
-        // 显示合格岗位
-        function showQualifiedJobs() {
-            currentView = 'qualified';
-            renderJobsList(qualifiedJobs);
-        }
-
-        // 获取所有岗位
-        async function fetchAllJobs() {
-            try {
-                console.log('🌐 Fetching all jobs from /api/jobs/all');
-                console.log('🔄 Current location:', window.location.href);
-                
-                const response = await axios.get('/api/jobs/all');
-                console.log('📥 Response received:', response);
-                console.log('📊 Response status:', response.status);
-                console.log('📄 Response data:', response.data);
-                
-                if (response.data && response.data.jobs) {
-                    allJobs = response.data.jobs;
-                    console.log('✅ All jobs loaded:', allJobs.length);
-                    console.log('📋 Sample job titles:', allJobs.slice(0, 3).map(job => job.title));
-                    
-                    if (currentView === 'all') {
-                        console.log('🎯 Rendering jobs list for "all" view');
-                        renderJobsList(allJobs);
-                    } else {
-                        console.log('⏭️ Current view is not "all", skipping render');
-                    }
-                } else {
-                    console.error('⚠️ No jobs data in response:', response.data);
-                    alert('未找到岗位数据');
-                }
-            } catch (error) {
-                console.error('❌ 获取所有岗位失败:', error);
-                console.error('❌ Error details:', {
-                    message: error.message,
-                    response: error.response,
-                    status: error.response?.status,
-                    data: error.response?.data
-                });
-                const errorMsg = error.response ? 
-                    `服务器错误(${error.response.status}): ${error.response.data?.error || error.message}` :
-                    `网络错误: ${error.message}`;
-                alert('获取数据失败: ' + errorMsg);
-            }
-        }
-
-        // HTML转义函数
-        function escapeHtml(text) {
-            if (typeof text !== 'string') return text;
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
+        
         // 创建岗位卡片
         function createJobCard(job, index) {
-            console.log(`🔨 createJobCard called for: ${job.title}`);
             const div = document.createElement('div');
             div.className = 'card relative';
             
             const analysis = job.analysis || {};
-            const score = analysis.score || 0;
+            const score = analysis.score || analysis.overall_score || 0;
             const isAnalyzed = analysis.recommendation !== '未分析';
             
             const getScoreColor = (score, isAnalyzed) => {
@@ -459,152 +773,172 @@ def serve_frontend():
                 if (score >= 6) return 'text-yellow-600 bg-yellow-100';
                 return 'text-red-600 bg-red-100';
             };
-
-            // 使用安全的方式构建HTML，避免特殊字符问题
-            const scoreDiv = document.createElement('div');
-            scoreDiv.className = 'absolute top-4 right-4';
             
-            const scoreSpan = document.createElement('div');
-            scoreSpan.className = `inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score, isAnalyzed)}`;
-            scoreSpan.textContent = isAnalyzed ? `⭐ ${score}/10` : '⏩️ 未分析';
-            scoreDiv.appendChild(scoreSpan);
+            div.innerHTML = `
+                <div class="absolute top-4 right-4">
+                    <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score, isAnalyzed)}">
+                        ${isAnalyzed ? `⭐ ${score}/10` : '⏩️ 未分析'}
+                    </div>
+                </div>
+                <div class="pr-20 mb-4">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title || '未知岗位'}</h3>
+                    <div class="text-gray-600 mb-2">🏢 ${job.company || '未知公司'} • 💰 ${job.salary || '薪资面议'}</div>
+                    <div class="text-gray-600 mb-2">📍 ${job.work_location || '未知地点'}</div>
+                </div>
+            `;
             
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'pr-20 mb-4';
-            
-            const title = document.createElement('h3');
-            title.className = 'text-lg font-semibold text-gray-900 mb-2';
-            title.textContent = job.title || '未知岗位';
-            contentDiv.appendChild(title);
-            
-            const company = document.createElement('div');
-            company.className = 'text-gray-600 mb-2';
-            company.innerHTML = '🏢 <span></span>';
-            company.querySelector('span').textContent = job.company || '未知公司';
-            contentDiv.appendChild(company);
-            
-            const salary = document.createElement('div');
-            salary.className = 'text-gray-600 mb-2';
-            salary.innerHTML = '💰 <span class="text-green-600 font-medium"></span>';
-            salary.querySelector('span').textContent = job.salary || '面议';
-            contentDiv.appendChild(salary);
-            
-            if (job.work_location) {
-                const location = document.createElement('div');
-                location.className = 'text-gray-600 mb-2';
-                location.innerHTML = '📍 <span></span>';
-                location.querySelector('span').textContent = job.work_location;
-                contentDiv.appendChild(location);
+            // 添加智能匹配分析展示
+            if (isAnalyzed && analysis.dimension_scores) {
+                const analysisDiv = document.createElement('div');
+                analysisDiv.className = 'mt-4 p-4 bg-gray-50 rounded-lg';
+                analysisDiv.innerHTML = `
+                    <div class="text-sm font-medium text-gray-900 mb-3">📊 智能匹配分析</div>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="flex justify-between items-center py-1">
+                            <span class="text-gray-600">岗位匹配</span>
+                            <span class="font-medium">${analysis.dimension_scores.job_match || 0}/10</span>
+                        </div>
+                        <div class="flex justify-between items-center py-1">
+                            <span class="text-gray-600">技能匹配</span>
+                            <span class="font-medium">${analysis.dimension_scores.skill_match || 0}/10</span>
+                        </div>
+                    </div>
+                `;
+                div.appendChild(analysisDiv);
             }
             
-            if (job.url) {
-                const urlDiv = document.createElement('div');
-                urlDiv.className = 'text-gray-600 mb-2';
-                urlDiv.innerHTML = '🔗 <a href="" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-xs break-all"></a>';
-                const link = urlDiv.querySelector('a');
-                link.href = job.url;
-                link.textContent = job.url;
-                contentDiv.appendChild(urlDiv);
-            }
-            
-            div.appendChild(scoreDiv);
-            div.appendChild(contentDiv);
-            
-            console.log(`✅ Created basic structure for: ${job.title}`);
             return div;
         }
-
-        // 开始搜索
-        startBtn.addEventListener('click', async () => {
-            if (isSearching) return;
-
-            const keyword = document.getElementById('keyword').value.trim();
-            const maxJobsInput = document.getElementById('max_jobs').value;
-            const maxAnalyzeJobsInput = document.getElementById('max_analyze_jobs').value;
-            const city = document.getElementById('city').value;
-
-            // 表单验证
-            if (!keyword) {
-                alert('请输入搜索关键词');
-                return;
-            }
-            if (!city) {
-                alert('请选择目标城市');
-                return;
-            }
-
-            // 设置默认值
-            const maxJobs = maxJobsInput ? parseInt(maxJobsInput) : 20;
-            const maxAnalyzeJobs = maxAnalyzeJobsInput ? parseInt(maxAnalyzeJobsInput) : 10;
-
-            isSearching = true;
-            startBtn.textContent = '搜索中...';
-            startBtn.disabled = true;
-            progressLogs.innerHTML = '';
-            jobsList.innerHTML = '';
-            emptyState.style.display = 'none';
-
-            console.log('发送的搜索参数:', {
-                keyword,
-                max_jobs: maxJobs,
-                max_analyze_jobs: maxAnalyzeJobs,
-                spider_engine: 'playwright_mcp',
-                city: city,
-                fetch_details: true
-            });
-
+        
+        // 获取所有岗位
+        async function fetchAllJobs() {
             try {
-                const response = await axios.post('/api/jobs/search', {
-                    keyword,
-                    max_jobs: maxJobs,
-                    max_analyze_jobs: maxAnalyzeJobs,
-                    spider_engine: 'playwright_mcp',  // 使用真正的Playwright MCP
-                    city: city,
-                    fetch_details: true  // 默认获取详情
-                });
-                
-                console.log('搜索任务已启动:', response.data);
+                const response = await axios.get('/api/jobs/all');
+                if (response.data && response.data.jobs) {
+                    allJobs = response.data.jobs;
+                    if (currentView === 'all') {
+                        renderJobsList(allJobs);
+                    }
+                }
             } catch (error) {
-                console.error('启动搜索失败:', error);
-                alert('启动搜索失败: ' + (error.response?.data?.error || error.message));
-                isSearching = false;
-                startBtn.textContent = '开始搜索';
-                startBtn.disabled = false;
-            }
-        });
-
-        // 显示岗位详细信息
-        function showJobDetails(index) {
-            const detailsDiv = document.getElementById(`job-details-${index}`);
-            if (detailsDiv.style.display === 'none') {
-                detailsDiv.style.display = 'block';
-            } else {
-                detailsDiv.style.display = 'none';
+                console.error('❌ 获取所有岗位失败:', error);
+                alert('获取数据失败: ' + error.message);
             }
         }
         
-        // 使函数全局可用
-        window.showJobDetails = showJobDetails;
-        window.showAllJobs = showAllJobs;
-        window.showQualifiedJobs = showQualifiedJobs;
-
-        // 注意：progress_update事件已经在上面监听过了，这里只需要处理按钮状态
-        // 在updateProgress函数中处理按钮状态更新
+        // ========== 初始化完成 ==========
+        console.log('✅ 系统初始化完成！');
+        console.log('📊 初始化状态:', {
+            socket: socket.connected ? '已连接' : '未连接',
+            resumeFileInput: resumeFileInput ? '已找到' : '未找到',
+            uploadArea: uploadArea ? '已找到' : '未找到',
+            startBtn: startBtn ? '已找到' : '未找到'
+        });
         
-        // 调试功能 - 检查数据状态
-        window.debugJobData = function() {
-            console.log('=== 调试信息 ===');
-            console.log('allJobs:', allJobs);
-            console.log('allJobs length:', allJobs ? allJobs.length : 'undefined');
-            console.log('qualifiedJobs:', qualifiedJobs);
-            console.log('qualifiedJobs length:', qualifiedJobs ? qualifiedJobs.length : 'undefined');
-            console.log('currentView:', currentView);
-            console.log('================');
-        };
         
-        // 初始化时输出调试信息
-        console.log('🚀 页面初始化完成，可以使用 debugJobData() 查看数据状态');
-    </script>
+        // ========== 简历上传功能 ==========
+        console.log('📎 设置简历上传功能...');
+        
+        // 文件上传事件
+        if (resumeFileInput) {
+            resumeFileInput.addEventListener('change', function(e) {
+                if (e.target.files.length > 0) {
+                    uploadResume(e.target.files[0]);
+                }
+            });
+        }
+        
+        // 拖拽上传支持
+        if (uploadArea) {
+            uploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+            
+            uploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+            });
+            
+            uploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    const file = files[0];
+                    if (file.type === 'application/pdf' || 
+                        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                        file.type === 'text/plain') {
+                        uploadResume(file);
+                    } else {
+                        alert('请上传PDF、DOCX或TXT格式的文件');
+                    }
+                }
+            });
+        }
+        
+        // 上传简历函数
+        async function uploadResume(file) {
+            console.log('📤 开始上传简历:', file.name);
+            
+            // 显示上传进度
+            if (uploadProgress) uploadProgress.style.display = 'block';
+            if (uploadArea) uploadArea.style.display = 'none';
+            
+            const formData = new FormData();
+            formData.append('resume', file);
+            
+            try {
+                // 模拟上传进度
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += Math.random() * 15;
+                    if (progress >= 90) {
+                        clearInterval(progressInterval);
+                        progress = 90;
+                    }
+                    updateUploadProgress(progress);
+                }, 200);
+                
+                // 发送到后端
+                const response = await axios.post('/api/upload_resume', formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    }
+                });
+                
+                clearInterval(progressInterval);
+                updateUploadProgress(100);
+                
+                setTimeout(() => {
+                    if (response.data.success) {
+                        // 隐藏上传进度，显示分析结果
+                        if (uploadProgress) uploadProgress.style.display = 'none';
+                        
+                        if (response.data.ai_analysis) {
+                            displayAIAnalysis(response.data.ai_analysis);
+                        }
+                        
+                        // 更新简历状态
+                        updateResumeStatus(response.data.resume_data);
+                        
+                        console.log('✅ 简历上传成功:', response.data.resume_data.name);
+                    } else {
+                        alert('简历上传失败: ' + response.data.error);
+                        resetUploadArea();
+                    }
+                }, 500);
+                
+            } catch (error) {
+                console.error('❌ 上传失败:', error);
+                alert('上传失败: ' + (error.response?.data?.error || error.message));
+                resetUploadArea();
+            }
+        }
+        
+    }); // DOMContentLoaded结束
+</script>
 </body>
 </html>
     '''
@@ -670,6 +1004,112 @@ def update_config():
         logger.error(f"更新配置失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/upload_resume', methods=['POST'])
+def upload_resume():
+    """处理简历上传和分析"""
+    try:
+        if 'resume' not in request.files:
+            return jsonify({'success': False, 'error': '没有上传文件'})
+        
+        file = request.files['resume']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': '未选择文件'})
+        
+        logger.info(f"接收到文件: {file.filename}, 类型: {file.content_type}")
+        
+        # 使用新的解析器
+        from analyzer.resume.resume_parser_v2 import ResumeParserV2
+        from analyzer.resume.resume_analyzer_v2 import ResumeAnalyzerV2
+        
+        parser = ResumeParserV2()
+        
+        # 解析简历文本（直接从内存解析，不保存文件）
+        resume_text = parser.parse_uploaded_file(file)
+        
+        if "文件解析失败" in resume_text:
+            logger.error(f"文件解析错误: {resume_text}")
+            return jsonify({
+                'success': False, 
+                'error': resume_text
+            })
+        
+        logger.info(f"简历解析成功，文本长度: {len(resume_text)} 字符")
+        
+        # AI分析简历
+        analyzer = ResumeAnalyzerV2()
+        ai_analysis = analyzer.analyze_resume(resume_text)
+        
+        # 从AI分析结果中提取基本信息用于显示
+        # 简化处理，直接使用AI分析的结果
+        resume_data = {
+            'name': '陈俊旭', # 临时硬编码，后续可从简历文本中简单提取
+            'current_position': '待AI分析',
+            'experience_years': '待AI分析',
+            'phone': '已脱敏',
+            'email': '已脱敏', 
+            'technical_skills': [],
+            'education': '待AI分析',
+            'filename': file.filename,
+            'upload_time': datetime.now().isoformat()
+        }
+        
+        # 存储到session（避免存储大文本）
+        session['resume_data'] = resume_data
+        # 只存储摘要信息，不存储完整文本
+        session['resume_summary'] = {
+            'length': len(resume_text),
+            'has_text': True,
+            'analyzed': True
+        }
+        # 只存储关键分析结果，避免session过大
+        session['ai_analysis_summary'] = {
+            'competitiveness_score': ai_analysis.get('competitiveness_score', 0),
+            'recommended_jobs': ai_analysis.get('recommended_jobs', []),
+            'analyzed_at': datetime.now().isoformat()
+        }
+        
+        # 更新全局分析器
+        from analyzer.job_analyzer import JobAnalyzer
+        global job_analyzer_instance
+        if 'job_analyzer_instance' not in globals():
+            job_analyzer_instance = JobAnalyzer()
+        job_analyzer_instance.set_resume_analysis(ai_analysis)
+        
+        logger.info(f"简历分析完成: {resume_data['name']}, 竞争力评分: {ai_analysis.get('competitiveness_score')}/10")
+        
+        return jsonify({
+            'success': True,
+            'resume_data': resume_data,
+            'ai_analysis': ai_analysis
+        })
+        
+    except Exception as e:
+        logger.error(f"简历上传处理失败: {e}", exc_info=True)
+        return jsonify({
+            'success': False, 
+            'error': f"处理失败: {str(e)}"
+        })
+
+@app.route('/api/delete_resume', methods=['POST'])
+def delete_resume():
+    try:
+        # 清除session中的简历数据
+        session.pop('resume_data', None)
+        session.pop('ai_analysis', None)
+        
+        # 清除JobAnalyzer中的简历分析
+        global job_analyzer_instance
+        if 'job_analyzer_instance' in globals():
+            job_analyzer_instance.resume_analysis = None
+        
+        # 这里可以添加删除文件的逻辑
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        print(f"删除简历失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/jobs/search', methods=['POST'])
 def start_job_search():
@@ -760,7 +1200,15 @@ def run_job_search_task(params):
         emit_progress(f"📊 找到 {len(jobs)} 个岗位，开始AI分析...", 50)
         
         # 5. AI分析
-        analyzer = JobAnalyzer(ai_config['provider'])
+        global job_analyzer_instance
+        if 'job_analyzer_instance' not in globals():
+            job_analyzer_instance = JobAnalyzer(ai_config['provider'])
+        else:
+            # 如果已有实例，检查是否有简历分析数据
+            if hasattr(job_analyzer_instance, 'resume_analysis') and job_analyzer_instance.resume_analysis:
+                print("🎯 使用已加载的简历数据进行智能匹配")
+        
+        analyzer = job_analyzer_instance
         jobs_to_analyze = jobs[:max_analyze_jobs]  # 只分析前几个
         
         # 为所有岗位初始化分析结果
@@ -944,4 +1392,5 @@ if __name__ == '__main__':
                 host='127.0.0.1', 
                 port=5000, 
                 debug=True,
-                use_reloader=False)  # 避免重载时的问题
+                use_reloader=False,
+                allow_unsafe_werkzeug=True)  # 避免重载时的问题
