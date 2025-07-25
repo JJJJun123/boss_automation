@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 
 # 动态导入爬虫模块
-from crawler.real_playwright_spider import search_with_real_playwright
+from crawler.unified_crawler_interface import unified_search_jobs, get_unified_crawler
 from crawler.mcp_client import PlaywrightMCPSync
 from analyzer.job_analyzer import JobAnalyzer
 from config.config_manager import ConfigManager
@@ -66,12 +66,9 @@ class JobSearchService:
             }
             city_name = city_map.get(city_code, "shanghai")
             
-            # 使用real_playwright_spider的函数接口
-            jobs = search_with_real_playwright(keyword, city_name, max_jobs)
-            
-            # 为每个岗位添加引擎来源标识
-            for job in jobs:
-                job['engine_source'] = 'Real Playwright'
+            # 使用统一爬虫接口
+            import asyncio
+            jobs = asyncio.run(unified_search_jobs(keyword, city_name, max_jobs, engine="enhanced_playwright"))
             
             return jobs
         elif isinstance(spider, PlaywrightMCPSync):

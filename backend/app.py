@@ -17,7 +17,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_manager import ConfigManager
-from crawler.real_playwright_spider import search_with_real_playwright
+from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
 from analyzer.job_analyzer import JobAnalyzer
 
 
@@ -279,15 +279,10 @@ def serve_frontend():
                                 </select>
                             </div>
                             
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
-                                    <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">分析数量</label>
-                                    <input type="number" id="max_analyze_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="10" min="1" max="50">
-                                </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
+                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
+                                <p class="text-xs text-gray-500 mt-1">系统将自动分析所有搜索到的岗位</p>
                             </div>
                             
                             <button id="start-search-btn" class="btn btn-primary w-full">
@@ -610,6 +605,63 @@ def serve_frontend():
             if (modal) modal.classList.add('hidden');
         };
         
+        // 清理和格式化文本
+        window.cleanJobText = function(text) {
+            if (!text) return '';
+            
+            // 首先进行基础清理
+            let cleaned = text.trim();
+            
+            // 移除重复的标题（如"工作职责:"后面又有"工作职责:"）
+            cleaned = cleaned.replace(/^(工作职责|任职资格|岗位职责|任职要求):\\s*(工作职责|任职资格|岗位职责|任职要求):/g, '$1:');
+            
+            // 移除开头的冒号和空白字符
+            cleaned = cleaned.replace(/^:\\s*/, '');
+            
+            // 彻底清理所有多余空格
+            // 1. 将多个连续空格替换为单个空格
+            cleaned = cleaned.replace(/[ \\t]+/g, ' ');
+            
+            // 2. 移除换行前后的空格
+            cleaned = cleaned.replace(/\\s*\\n\\s*/g, '\\n');
+            
+            // 3. 确保数字列表格式整齐
+            cleaned = cleaned.replace(/\\n?(\\d+、)/g, '\\n$1');
+            
+            // 4. 移除行首行尾的空格（对每行单独处理）
+            cleaned = cleaned.split('\\n').map(line => line.trim()).join('\\n');
+            
+            // 5. 合并多个连续换行
+            cleaned = cleaned.replace(/\\n{3,}/g, '\\n\\n');
+            
+            // 6. 移除开头和结尾的换行
+            cleaned = cleaned.replace(/^\\n+|\\n+$/g, '');
+            
+            return cleaned;
+        };
+        
+        // 切换岗位详情显示（展开/收起）
+        window.toggleJobDetail = function(elementId, fullText, buttonElement) {
+            const element = document.getElementById(elementId);
+            if (!element || !buttonElement) return;
+            
+            const isExpanded = buttonElement.textContent === '收起';
+            
+            // 清理文本格式
+            const cleanedText = window.cleanJobText(fullText);
+            
+            if (isExpanded) {
+                // 收起：显示截断文本
+                const truncatedText = cleanedText.length > 800 ? cleanedText.substring(0, 800) + '...' : cleanedText;
+                element.innerHTML = truncatedText;
+                buttonElement.textContent = '展开全文';
+            } else {
+                // 展开：显示完整文本
+                element.innerHTML = cleanedText;
+                buttonElement.textContent = '收起';
+            }
+        };
+        
         window.deleteResume = async function() {
             if (!confirm('确定要删除当前简历吗？此操作无法撤销。')) {
                 return;
@@ -674,7 +726,6 @@ def serve_frontend():
                         keyword,
                         city,
                         max_jobs: parseInt(document.getElementById('max_jobs').value) || 20,
-                        max_analyze_jobs: parseInt(document.getElementById('max_analyze_jobs').value) || 10,
                         spider_engine: 'playwright',
                         fetch_details: true
                     });
@@ -783,8 +834,110 @@ def serve_frontend():
                     <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title || '未知岗位'}</h3>
                     <div class="text-gray-600 mb-2">🏢 ${job.company || '未知公司'} • 💰 ${job.salary || '薪资面议'}</div>
                     <div class="text-gray-600 mb-2">📍 ${job.work_location || '未知地点'}</div>
+                    ${job.url ? `
+                        <div class="text-gray-600 mb-2">
+                            🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm">
+                                查看岗位详情
+                            </a>
+                        </div>
+                    ` : ''}
                 </div>
             `;
+            
+            // 添加工作职责和任职资格展示
+            if (job.job_description && job.job_description !== '具体要求请查看岗位详情' && 
+                !job.job_description.includes('基于文本解析的岗位描述')) {
+                const jobDetailsDiv = document.createElement('div');
+                jobDetailsDiv.className = 'mt-4 space-y-3';
+                
+                let jobDetailsHTML = '';
+                
+                // 处理工作职责和任职资格的分离显示
+                let jobDescription = '';
+                let jobRequirements = '';
+                
+                // 从job_description中提取工作职责部分
+                if (job.job_description && job.job_description.length > 20) {
+                    const descText = job.job_description;
+                    
+                    // 尝试分离工作职责和任职资格
+                    if (descText.includes('工作职责') && descText.includes('任职资格')) {
+                        const parts = descText.split(/任职资格|任职要求/);
+                        jobDescription = parts[0].replace(/^工作职责:?\\n?/, '').trim();
+                        jobRequirements = parts[1] ? parts[1].trim() : '';
+                    } else if (descText.includes('职责') && descText.includes('要求')) {
+                        const parts = descText.split(/要求|任职要求|任职资格/);
+                        jobDescription = parts[0].replace(/^职责:?\\n?/, '').trim();
+                        jobRequirements = parts[1] ? parts[1].trim() : '';
+                    } else {
+                        // 如果无法分离，将完整内容作为工作职责
+                        jobDescription = descText;
+                    }
+                }
+                
+                // 如果没有从job_description中提取到任职资格，使用job_requirements
+                if (!jobRequirements && job.job_requirements && job.job_requirements !== '具体要求请查看岗位详情') {
+                    if (job.job_requirements.includes('任职资格') || job.job_requirements.includes('任职要求')) {
+                        const parts = job.job_requirements.split(/任职资格|任职要求/);
+                        jobRequirements = parts[1] ? parts[1].trim() : parts[0].trim();
+                    } else {
+                        jobRequirements = job.job_requirements;
+                    }
+                }
+                
+                // 工作职责
+                if (jobDescription && jobDescription.length > 20) {
+                    // 清理文本格式
+                    const cleanedJobDesc = window.cleanJobText(jobDescription);
+                    const isLong = cleanedJobDesc.length > 800;
+                    const displayText = isLong ? cleanedJobDesc.substring(0, 800) : cleanedJobDesc;
+                    const jobId = 'job_' + Math.random().toString(36).substr(2, 9);
+                    
+                    jobDetailsHTML += `
+                        <div class="bg-blue-50 p-3 rounded-lg">
+                            <div class="text-sm font-medium text-blue-900 mb-2">💼 工作职责</div>
+                            <div class="text-xs text-blue-800 whitespace-pre-wrap" id="${jobId}_desc">
+                                ${displayText}${isLong ? '...' : ''}
+                            </div>
+                            ${isLong ? `
+                                <button onclick="toggleJobDetail('${jobId}_desc', '${jobDescription.replace(/'/g, "\\'")}', this)" 
+                                        class="text-xs text-blue-600 hover:text-blue-800 mt-2 underline">
+                                    展开全文
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+                
+                // 任职资格
+                if (jobRequirements && jobRequirements.length > 20) {
+                    // 清理文本格式
+                    const cleanedJobReq = window.cleanJobText(jobRequirements);
+                    const isLong = cleanedJobReq.length > 800;
+                    const displayText = isLong ? cleanedJobReq.substring(0, 800) : cleanedJobReq;
+                    const reqId = 'req_' + Math.random().toString(36).substr(2, 9);
+                    
+                    jobDetailsHTML += `
+                        <div class="bg-green-50 p-3 rounded-lg">
+                            <div class="text-sm font-medium text-green-900 mb-2">🎯 任职资格</div>
+                            <div class="text-xs text-green-800 whitespace-pre-wrap" id="${reqId}_desc">
+                                ${displayText}${isLong ? '...' : ''}
+                            </div>
+                            ${isLong ? `
+                                <button onclick="toggleJobDetail('${reqId}_desc', '${jobRequirements.replace(/'/g, "\\'")}', this)" 
+                                        class="text-xs text-green-600 hover:text-green-800 mt-2 underline">
+                                    展开全文
+                                </button>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+                
+                if (jobDetailsHTML) {
+                    jobDetailsDiv.innerHTML = jobDetailsHTML;
+                    div.appendChild(jobDetailsDiv);
+                }
+            }
             
             // 添加智能匹配分析展示
             if (isAnalyzed && analysis.dimension_scores) {
@@ -1155,7 +1308,6 @@ def run_job_search_task(params):
         # 使用前端传来的参数覆盖配置文件中的值
         keyword = params.get('keyword', search_config['keyword'])
         max_jobs = params.get('max_jobs', search_config['max_jobs'])
-        max_analyze_jobs = params.get('max_analyze_jobs', search_config['max_analyze_jobs'])
         spider_engine = params.get('spider_engine', 'playwright')  # 默认Playwright
         fetch_details = params.get('fetch_details', True)  # 默认获取详情
         selected_city = params.get('city', 'shanghai')  # 默认上海
@@ -1180,8 +1332,9 @@ def run_job_search_task(params):
         }
         city_name = city_map.get(city_code, "shanghai")
         
-        # 使用真正的Playwright进行搜索
-        jobs = search_with_real_playwright(keyword, city_name, max_jobs)
+        # 使用统一爬虫接口进行搜索（使用real_playwright引擎以获取详情页信息）
+        import asyncio
+        jobs = asyncio.run(unified_search_jobs(keyword, city_name, max_jobs, engine="real_playwright"))
         
         emit_progress(f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
         
@@ -1200,47 +1353,36 @@ def run_job_search_task(params):
                 print("🎯 使用已加载的简历数据进行智能匹配")
         
         analyzer = job_analyzer_instance
-        jobs_to_analyze = jobs[:max_analyze_jobs]  # 只分析前几个
         
         # 为所有岗位初始化分析结果
         all_jobs_with_analysis = []
         
-        # 先分析前max_analyze_jobs个岗位
+        # 分析所有岗位
         for i, job in enumerate(jobs):
-            if i < max_analyze_jobs:
-                # 分析前几个岗位
-                progress = 50 + (i / max_analyze_jobs) * 30
-                emit_progress(f"🤖 分析第 {i+1}/{max_analyze_jobs} 个岗位...", progress)
-                
-                try:
-                    analysis_result = analyzer.ai_client.analyze_job_match(
-                        job, analyzer.user_requirements
-                    )
-                    job['analysis'] = analysis_result
-                except Exception as e:
-                    logger.error(f"分析岗位失败: {e}")
-                    job['analysis'] = {
-                        "score": 0,
-                        "recommendation": "分析失败",
-                        "reason": f"分析过程中出错: {e}",
-                        "summary": "无法分析此岗位"
-                    }
-            else:
-                # 未分析的岗位给予默认分析结果
+            # 分析每个岗位
+            progress = 50 + (i / len(jobs)) * 30
+            emit_progress(f"🤖 分析第 {i+1}/{len(jobs)} 个岗位...", progress)
+            
+            try:
+                analysis_result = analyzer.ai_client.analyze_job_match(
+                    job, analyzer.user_requirements
+                )
+                job['analysis'] = analysis_result
+            except Exception as e:
+                logger.error(f"分析岗位失败: {e}")
                 job['analysis'] = {
                     "score": 0,
-                    "recommendation": "未分析",
-                    "reason": "超出分析数量限制，未进行AI分析",
-                    "summary": "该岗位未进行详细分析"
+                    "recommendation": "分析失败",
+                    "reason": f"分析过程中出错: {e}",
+                    "summary": "无法分析此岗位"
                 }
             
             all_jobs_with_analysis.append(job)
         
         # 6. 过滤和排序
         emit_progress("🎯 过滤和排序结果...", 85)
-        # 只从分析过的岗位中筛选
-        analyzed_jobs = [job for job in all_jobs_with_analysis if job['analysis']['recommendation'] != "未分析"]
-        filtered_jobs = analyzer.filter_and_sort_jobs(analyzed_jobs, ai_config['min_score'])
+        # 筛选合格岗位
+        filtered_jobs = analyzer.filter_and_sort_jobs(all_jobs_with_analysis, ai_config['min_score'])
         
         # 7. 保存结果
         emit_progress("💾 保存结果...", 95)
@@ -1253,9 +1395,9 @@ def run_job_search_task(params):
             'status': 'completed',
             'end_time': datetime.now(),
             'results': filtered_jobs,
-            'analyzed_jobs': all_jobs_with_analysis,  # 存储所有岗位（包括未分析的）
+            'analyzed_jobs': all_jobs_with_analysis,  # 存储所有岗位
             'total_jobs': len(jobs),
-            'analyzed_jobs_count': len(analyzed_jobs),
+            'analyzed_jobs_count': len(all_jobs_with_analysis),
             'qualified_jobs': len(filtered_jobs)
         })
         
@@ -1264,7 +1406,7 @@ def run_job_search_task(params):
             'all_jobs': all_jobs_with_analysis,  # 返回所有岗位（包括未分析的）
             'stats': {
                 'total': len(all_jobs_with_analysis),  # 总搜索数是所有搜索到的岗位
-                'analyzed': len(analyzed_jobs),
+                'analyzed': len(all_jobs_with_analysis),  # 现在所有岗位都被分析
                 'qualified': len(filtered_jobs)
             }
         })
