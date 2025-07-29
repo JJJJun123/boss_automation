@@ -797,23 +797,31 @@ def serve_frontend():
                 if (statsCard) statsCard.style.display = 'block';
             }
             
-            // 显示市场分析报告
-            if (marketAnalysis) {
-                displayMarketAnalysis(marketAnalysis);
-            } else {
-                console.warn('⚠️ 市场分析数据为空:', marketAnalysis);
-            }
-            
             if (results && results.length > 0) {
                 if (emptyState) emptyState.style.display = 'none';
                 qualifiedJobs = results;
+                
+                // 先渲染岗位列表（清空容器）
                 renderJobsList(results);
+                
+                // 然后显示市场分析报告（插入到列表前面）
+                if (marketAnalysis) {
+                    displayMarketAnalysis(marketAnalysis);
+                } else {
+                    console.warn('⚠️ 市场分析数据为空:', marketAnalysis);
+                }
             }
         }
         
         // 显示市场分析报告
         function displayMarketAnalysis(analysis) {
             console.log('📊 显示市场分析:', analysis);
+            console.log('📊 分析数据详情:', {
+                common_skills: analysis?.common_skills?.length || 0,
+                keyword_cloud: analysis?.keyword_cloud?.length || 0,
+                differentiation_analysis: analysis?.differentiation_analysis?.analysis?.length || 0,
+                total_jobs_analyzed: analysis?.total_jobs_analyzed || 0
+            });
             
             if (!analysis || typeof analysis !== 'object') {
                 console.error('❌ 市场分析数据无效:', analysis);
@@ -828,10 +836,19 @@ def serve_frontend():
                 marketAnalysisEl.id = 'market-analysis';
                 marketAnalysisEl.className = 'bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-6 mb-6 shadow-sm';
                 
-                // 插入到岗位列表之前
-                const jobsContainer = document.querySelector('.space-y-4');
-                if (jobsContainer && jobsContainer.parentNode) {
-                    jobsContainer.parentNode.insertBefore(marketAnalysisEl, jobsContainer);
+                // 正确插入到jobs-list容器内的最前面
+                const jobsList = document.getElementById('jobs-list');
+                if (jobsList) {
+                    // 总是插入到最前面
+                    if (jobsList.firstChild) {
+                        jobsList.insertBefore(marketAnalysisEl, jobsList.firstChild);
+                    } else {
+                        jobsList.appendChild(marketAnalysisEl);
+                    }
+                    console.log('✅ 市场分析容器已插入到jobs-list最前面');
+                } else {
+                    console.error('❌ 未找到jobs-list容器');
+                    return;
                 }
             }
             
@@ -903,8 +920,24 @@ def serve_frontend():
             console.log('🎨 渲染岗位列表:', jobs.length);
             if (!jobsList) return;
             
+            // 保留市场分析容器内容（如果存在）
+            const marketAnalysisEl = document.getElementById('market-analysis');
+            let marketAnalysisHTML = '';
+            if (marketAnalysisEl) {
+                marketAnalysisHTML = marketAnalysisEl.outerHTML;
+                console.log('📊 保存市场分析内容用于重新插入');
+            }
+            
+            // 清空容器
             jobsList.innerHTML = '';
             
+            // 重新插入市场分析（如果存在）
+            if (marketAnalysisHTML) {
+                jobsList.innerHTML = marketAnalysisHTML;
+                console.log('✅ 市场分析已重新插入到列表顶部');
+            }
+            
+            // 添加岗位卡片
             jobs.forEach((job, index) => {
                 const jobCard = createJobCard(job, index + 1);
                 if (jobCard) {
