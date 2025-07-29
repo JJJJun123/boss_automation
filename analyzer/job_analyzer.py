@@ -7,9 +7,21 @@ import asyncio
 
 
 class JobAnalyzer:
-    def __init__(self, ai_provider=None):
+    def __init__(self, ai_provider=None, model_name=None):
         self.ai_provider = ai_provider or os.getenv('AI_PROVIDER', 'deepseek')
-        self.ai_client = AIClientFactory.create_client(self.ai_provider)
+        self.model_name = model_name
+        
+        # 如果提供了模型名称，从中推导出provider
+        if model_name:
+            if 'deepseek' in model_name.lower():
+                self.ai_provider = 'deepseek'
+            elif 'claude' in model_name.lower():
+                self.ai_provider = 'claude'
+            elif 'gemini' in model_name.lower():
+                self.ai_provider = 'gemini'
+        
+        # 创建AI客户端，传递模型名称
+        self.ai_client = AIClientFactory.create_client(self.ai_provider, model_name=model_name)
         self.user_requirements = self.get_default_requirements()
         self.resume_analysis = None  # 存储简历分析结果
         
@@ -18,6 +30,8 @@ class JobAnalyzer:
         self.market_analyzer = MarketAnalyzer(ai_provider=self.ai_provider)
         
         print(f"🤖 使用AI服务: {self.ai_provider.upper()}")
+        if model_name:
+            print(f"🎯 指定模型: {model_name}")
         print(f"📊 启用市场整体分析引擎")
     
     def get_default_requirements(self):

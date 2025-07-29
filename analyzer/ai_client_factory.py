@@ -8,24 +8,34 @@ load_dotenv()
 
 class AIClientFactory:
     @staticmethod
-    def create_client(provider=None):
+    def create_client(provider=None, model_name=None):
         """创建AI客户端工厂"""
         provider = provider or os.getenv('AI_PROVIDER', 'deepseek')
         
+        # 从配置管理器读取模型配置
+        try:
+            from config.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            if not model_name:
+                model_name = config_manager.get_app_config(f'ai.models.{provider.lower()}.model_name')
+        except Exception:
+            pass  # 如果配置读取失败，使用默认值
+        
         if provider.lower() == 'deepseek':
             from .deepseek_client import DeepSeekClient
-            return DeepSeekClient()
+            return DeepSeekClient(model_name=model_name)
         elif provider.lower() == 'claude':
-            return ClaudeClient()
+            return ClaudeClient(model_name=model_name)
         elif provider.lower() == 'gemini':
-            return GeminiClient()
+            return GeminiClient(model_name=model_name)
         else:
             raise ValueError(f"不支持的AI provider: {provider}")
 
 
 class ClaudeClient:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, model_name=None):
         self.api_key = api_key or os.getenv('CLAUDE_API_KEY')
+        self.model_name = model_name or "claude-3-haiku-20240307"  # 默认使用Haiku模型
         self.base_url = "https://api.anthropic.com/v1/messages"
         self.headers = {
             "x-api-key": self.api_key,
@@ -35,6 +45,8 @@ class ClaudeClient:
         
         if not self.api_key:
             print("⚠️ 警告: 未设置CLAUDE_API_KEY")
+        
+        print(f"🤖 Claude客户端初始化完成，使用模型: {self.model_name}")
     
     def analyze_job_match(self, job_info, user_requirements):
         """分析岗位匹配度"""
@@ -84,7 +96,7 @@ class ClaudeClient:
             raise Exception("Claude API Key未配置")
         
         payload = {
-            "model": "claude-3-haiku-20240307",
+            "model": self.model_name,
             "max_tokens": 1000,
             "messages": [
                 {
@@ -115,12 +127,15 @@ class ClaudeClient:
 
 
 class GeminiClient:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, model_name=None):
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+        self.model_name = model_name or "gemini-pro"  # 默认使用gemini-pro
+        self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
         
         if not self.api_key:
             print("⚠️ 警告: 未设置GEMINI_API_KEY")
+        
+        print(f"🤖 Gemini客户端初始化完成，使用模型: {self.model_name}")
     
     def analyze_job_match(self, job_info, user_requirements):
         """分析岗位匹配度"""

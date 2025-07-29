@@ -12,8 +12,21 @@ load_dotenv(secrets_file)
 
 
 class DeepSeekClient:
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, model_name=None):
         self.api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
+        
+        # 从配置读取模型名称，支持动态配置
+        if model_name:
+            self.model_name = model_name
+        else:
+            # 尝试从配置文件读取，失败则使用默认值
+            try:
+                from config.config_manager import ConfigManager
+                config_manager = ConfigManager()
+                self.model_name = config_manager.get_app_config('ai.models.deepseek.model_name', 'deepseek-chat')
+            except Exception:
+                self.model_name = 'deepseek-chat'  # 最后的默认值
+        
         self.base_url = "https://api.deepseek.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -22,6 +35,8 @@ class DeepSeekClient:
         
         if not self.api_key:
             print("⚠️ 警告: 未设置DEEPSEEK_API_KEY，请在.env文件中配置")
+        
+        print(f"🤖 DeepSeek客户端初始化完成，使用模型: {self.model_name}")
     
     def analyze_job_match(self, job_info, user_requirements):
         """分析岗位匹配度"""
@@ -72,13 +87,13 @@ class DeepSeekClient:
                 "summary": "无法分析此岗位"
             }
     
-    def call_api_with_system(self, system_prompt, user_prompt, model="deepseek-chat"):
+    def call_api_with_system(self, system_prompt, user_prompt, model=None):
         """调用DeepSeek API（带系统提示）"""
         if not self.api_key:
             raise Exception("API Key未配置")
         
         payload = {
-            "model": model,
+            "model": model or self.model_name,
             "messages": [
                 {
                     "role": "system",
@@ -106,13 +121,13 @@ class DeepSeekClient:
         else:
             raise Exception(f"API调用失败: {response.status_code} - {response.text}")
     
-    def call_api(self, prompt, model="deepseek-chat"):
+    def call_api(self, prompt, model=None):
         """调用DeepSeek API"""
         if not self.api_key:
             raise Exception("API Key未配置")
         
         payload = {
-            "model": model,
+            "model": model or self.model_name,
             "messages": [
                 {
                     "role": "user",
@@ -204,13 +219,13 @@ class DeepSeekClient:
             "summary": summary
         }
     
-    async def analyze_async(self, prompt, model="deepseek-chat"):
+    async def analyze_async(self, prompt, model=None):
         """异步调用DeepSeek API"""
         if not self.api_key:
             raise Exception("API Key未配置")
         
         payload = {
-            "model": model,
+            "model": model or self.model_name,
             "messages": [
                 {
                     "role": "user",

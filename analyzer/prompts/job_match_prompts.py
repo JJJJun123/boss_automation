@@ -15,7 +15,6 @@ class JobMatchPrompts:
 你的分析必须：
 - 客观公正，基于具体事实和数据
 - 严格评分，避免评分过高或过于宽松
-- 必须找出候选人与岗位的不匹配点
 - 多维度考量，不仅看技能匹配，还要考虑发展潜力
 - 前瞻性思考，结合行业发展趋势
 - 实用性强，提供可行的建议和改进方案
@@ -49,7 +48,7 @@ class JobMatchPrompts:
 - 工作地点：{job_info.get('location', '未提供')}
 - 岗位标签：{', '.join(job_info.get('tags', []))}
 - 公司信息：{job_info.get('company_info', '未提供')}
-- 岗位描述：{job_info.get('job_description', '未提供')[:500]}...
+- 岗位描述：{job_info.get('job_description', '未提供')}...
 
 请从以下8个维度进行深度匹配分析，每个维度给出1-10分评分。
 

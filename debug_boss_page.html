@@ -1,0 +1,90 @@
+<!DOCTYPE html><html><head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+        <title>请稍候</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                width: 100%;
+                height: 100%;
+            }
+            @keyframes bossLoading {
+                0% {
+                    transform: translate3d(0, 0, 0);
+                }
+                50% {
+                    transform: translate3d(0, -10px, 0);
+                }
+            }
+            .data-tips {
+                text-align: center;
+                height: 100%;
+                position: relative;
+                background: #fff;
+                top: 50%;
+                margin-top: -37px;
+            }
+            .data-tips .boss-loading {
+                width: 100%;
+            }
+            .data-tips .boss-loading p {
+                margin-top: 10px;
+                color: #9fa3b0;
+            }
+            .boss-loading .component-b,
+            .boss-loading .component-s1,
+            .boss-loading .component-o,
+            .boss-loading .component-s2 {
+                display: inline-block;
+                width: 40px;
+                height: 42px;
+                line-height: 42px;
+                font-family: Helvetica Neue,Helvetica,Arial,Hiragino Sans GB,Hiragino Sans GB W3,Microsoft YaHei UI,Microsoft YaHei,WenQuanYi Micro Hei,sans-serif;
+                font-weight: bolder;
+                font-size: 40px;
+                color: #eceef2;
+                vertical-align: top;
+                -webkit-animation-fill-mode: both;
+                -webkit-animation: bossLoading 0.6s infinite linear alternate;
+                -moz-animation: bossLoading 0.6s infinite linear alternate;
+                animation: bossLoading 0.6s infinite linear alternate;
+            }
+            .boss-loading .component-o {
+                -webkit-animation-delay: 0.1s;
+                -moz-animation-delay: 0.1s;
+                animation-delay: 0.1s;
+            }
+            .boss-loading .component-s1 {
+                -webkit-animation-delay: 0.2s;
+                -moz-animation-delay: 0.2s;
+                animation-delay: 0.2s;
+            }
+            .boss-loading .component-s2 {
+                -webkit-animation-delay: 0.3s;
+                -moz-animation-delay: 0.3s;
+                animation-delay: 0.3s;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="data-tips">
+            <div class="tip-inner">
+                <div class="boss-loading">
+                    <span class="component-b">B</span><span class="component-o">O</span><span class="component-s1">S</span><span class="component-s2">S</span>
+                    <p class="gray">正在加载中...</p>
+                </div>
+            </div>
+        </div>
+        <script src="https://hm.baidu.com/hm.js?194df3105ad7148dcf2b98a91b5e727a"></script><script src="https://z.zhipin.com/H5/js/plugins/web-report.min-1.38.js"></script>
+        <script>
+        try{var isProd=window.location.href.indexOf(".zhipin.com")>-1&&window.location.href.indexOf("pre-www")===-1;performanceReport({action:"action_js_monitor",appKey:isProd?"ObsSRskiryhn60pf":"4Dcq7jBIr5VWWi1Q"})}catch(e){};
+        </script>
+        <script src="apm-report.js"></script>
+        <script>
+            var securityPageName="securityCheck";!function(){var e=new Image,t=window.location.href.split("srcReferer").length-1;e.src="https://t.zhipin.com/f.gif?pk="+securityPageName+"&len="+t+"&r="+document.referrer}(),function(){var e,t=0,n=(new Date).getTime();function c(c){var o,r,i,a,s,u="localhost"===(o=location.hostname)||/^(\d+\.){3}\d+$/.test(o)?o:"."+o.split(".").slice(-2).join("."),l=function(e){var t=new RegExp("(^|&)"+e+"=([^&]*)(&|$)"),n=window.location.search.substr(1).match(t);return null!=n?unescape(n[2]):null},d=function(e,t,n,c,o){var r=e+"="+encodeURIComponent(t);n&&(r+=";expires="+new Date(n).toGMTString());r=c?r+";domain="+c:r,r=o?r+";path="+o:r,document.cookie=r},m={config:{url:"",whiteHostList:["m.zhipin.com","www.zhipin.com","pre-www.zhipin.com"],blackPathList:["security-check.html","security-check1.html"]},setStrategy:function(){var e=m.config.url;if(!0===(m.isIllegalPath(e)||m.isBlackHost(e)||m.hasBlackPath(e))){m.config.url="/";try{ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:30011,message:"callbackUrl和srcReferer里包含的host不是白名单的host，或者存在循环跳转，或者 不是/开头的绝对路径",url:e}})}catch(e){}}return m.config.url},isAbsolutePathStartable:function(e){return e.indexOf("//")<0&&0===e.indexOf("/")},isBlackHost:function(e){var t=!1;return e.replace(/^(https?)?(:?\/\/+)([^\/?]*)(.*)?$/,(function(n,c,o,r,i){return(t=!m.isHostInWhiteList(r))?"/":e})),t},hasBlackPath:function(e){for(var t=!1,n=m.config.blackPathList,c=0;c<n.length;c++)if(e.indexOf(n[c])>-1){t=!0;break}return t},isIllegalPath:function(e){var t=!1,n=/^(https?)?(:?\/\/+)([^\/?]*)(.*)?$/.test(e),c=/^\//.test(e);return n||c||(t=!0),t},isHostInWhiteList:function(e){return m.config.whiteHostList.indexOf(e)>-1},filter:function(e){return m.config.url=e||"/",m.setStrategy()}},f=function(e){var t=m.filter(e);if(t.indexOf("napi")>-1&&t.indexOf("zpssr")>-1){t=t.replace(/\/napi\/zpssr(site|youle|tools)/,"");try{ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:30006,message:"跳转地址以/napi/zpssr开头的路径",url:e}})}catch(e){}}window.location.replace(t)},p=(window.location.href,l("seed")||""),h=l("ts")||"",y=l("name")||"",g=l("callbackUrl")||"",w=l("srcReferer")||"";if("null"===y||!p||!y)try{ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:3e4,message:"地址栏参数中 seed/name/ts 中有任一值为空",fileName:y,seed:p,ts:h,callbackUrl:g,srcReferer:w}})}catch(e){}if(!g)try{ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:30005,message:"地址栏中callbackUrl不存在",callbackUrl:g,srcReferer:w}})}catch(e){}if(p&&h&&y){var v=setInterval((function(){++t>5&&clearInterval(v),(new Image).src="https://t.zhipin.com/f.gif?pk="+securityPageName+"&ca=securityCheckTimer_"+Math.round(((new Date).getTime()-n)/1e3)+"&r="+document.referrer}),1e4);r="security-js/"+y+".js",i=function(){var e=(new Date).getTime()+2304e5,t="",o={},r=window.ABC||c.contentWindow.ABC;try{(!r||"function"!=typeof r)&&ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:30003,message:"ABC不存在或者不是1个函数",fileName:y,seed:p,ts:h,existABC:!!r,isFunction:"function"==typeof r}})}catch(e){}try{t=(new r).z(p,parseInt(h)+60*(480+(new Date).getTimezoneOffset())*1e3)}catch(e){try{ApmReportUtil.report({actionName:"boss_safe_verify",actionType:"security_check",json:{code:30004,message:"无法生成__zp_stoken__所需要的值",fileName:y,seed:p,ts:h,error:e}})}catch(e){}}t&&g?(d("__zp_stoken__",t,e,u,"/"),void 0!==window.wst&&"function"==typeof wst.postMessage&&(o={name:"setWKCookie",params:{url:u,name:"__zp_stoken__",value:encodeURIComponent(t),expiredate:e,path:"/"}},window.wst.postMessage(JSON.stringify(o))),function(e,t){t||e.indexOf("security-check.html")>-1?f(t):f(e),(new Image).src="https://t.zhipin.com/f.gif?pk="+securityPageName+"&ca=securityCheckJump_"+Math.round(((new Date).getTime()-n)/1e3)+"&r="+document.referrer}(w,g)):((new Image).src="https://t.zhipin.com/f.gif?pk="+securityPageName+"&ca=securityCheckNoCode_"+Math.round(((new Date).getTime()-n)/1e3)+"&r="+document.referrer,f("/"))},a=function(e){},(s=document.createElement("script")).setAttribute("type","text/javascript"),s.setAttribute("charset","UTF-8"),s.onload=s.onreadystatechange=function(){e&&"loaded"!=this.readyState&&"complete"!=this.readyState||i()},s.onerror=function(e){"function"==typeof a&&a(e)},s.setAttribute("src",r),"IFRAME"!=c.tagName?c.appendChild(s):c.contentDocument?c.contentDocument.body?c.contentDocument.body.appendChild(s):c.contentDocument.documentElement.appendChild(s):c.document&&(c.document.body?c.document.body.appendChild(s):c.document.documentElement.appendChild(s))}}window.navigator.userAgent.indexOf("MSIE ")>-1&&(e=!0);var o=!(!window.attachEvent||window.opera),r=/webkit\/(\d+)/i.test(navigator.userAgent)&&RegExp.$1<525,i=[],a=function(){for(var e=0;e<i.length;e++)i[e]()};!function(e){if(!o&&!r&&document.addEventListener)return document.addEventListener("DOMContentLoaded",e,!1);if(!(i.push(e)>1))if(o)!function(){try{document.documentElement.doScroll("left"),a()}catch(e){setTimeout(arguments.callee,0)}}();else if(r)var t=setInterval((function(){/^(loaded|complete)$/.test(document.readyState)&&(clearInterval(t),a())}),0)}((function(){var e=document.createElement("iframe");e.style.height=0,e.style.width=0,e.style.margin=0,e.style.padding=0,e.style.border="0 none",e.name="zhipinFrame",e.src="about:blank",document.onreadystatechange=function(){"complete"===document.readyState&&c(e)},(document.body||document.documentElement).appendChild(e)}))}();var _hmt=_hmt||[];!function(){var e=document.createElement("script");e.src="https://hm.baidu.com/hm.js?194df3105ad7148dcf2b98a91b5e727a";var t=document.getElementsByTagName("script")[0];t.parentNode.insertBefore(e,t)}();
+        </script>
+    
+
+<iframe name="zhipinFrame" src="about:blank" style="height: 0px; width: 0px; margin: 0px; padding: 0px; border: 0px none;"></iframe></body></html>

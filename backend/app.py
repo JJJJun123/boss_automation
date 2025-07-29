@@ -285,6 +285,18 @@ def serve_frontend():
                                 <p class="text-xs text-gray-500 mt-1">系统将自动分析所有搜索到的岗位</p>
                             </div>
                             
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">🤖 AI分析模型</label>
+                                <select id="ai_model" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="deepseek-chat">DeepSeek Chat (经济实用)</option>
+                                    <option value="deepseek-reasoner" selected>DeepSeek Reasoner (推理增强)</option>
+                                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (高质量)</option>
+                                    <option value="claude-3-sonnet-20240229">Claude 3 Sonnet (最高质量)</option>
+                                    <option value="gemini-pro">Gemini Pro (平衡选择)</option>
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">不同模型的成本和质量不同，推荐使用DeepSeek Reasoner</p>
+                            </div>
+                            
                             <button id="start-search-btn" class="btn btn-primary w-full">
                                 开始搜索
                             </button>
@@ -755,6 +767,7 @@ def serve_frontend():
                 
                 const keyword = document.getElementById('keyword').value.trim();
                 const city = document.getElementById('city').value;
+                const aiModel = document.getElementById('ai_model').value;
                 
                 if (!keyword) {
                     alert('请输入搜索关键词');
@@ -769,7 +782,7 @@ def serve_frontend():
                 startBtn.textContent = '搜索中...';
                 startBtn.disabled = true;
                 
-                console.log('🔍 开始搜索:', { keyword, city });
+                console.log('🔍 开始搜索:', { keyword, city, aiModel });
                 
                 try {
                     const response = await axios.post('/api/jobs/search', {
@@ -777,7 +790,8 @@ def serve_frontend():
                         city,
                         max_jobs: parseInt(document.getElementById('max_jobs').value) || 20,
                         spider_engine: 'playwright',
-                        fetch_details: true
+                        fetch_details: true,
+                        ai_model: aiModel  // 传递用户选择的AI模型
                     });
                     
                     console.log('✅ 搜索任务已启动:', response.data);
@@ -1449,6 +1463,7 @@ def run_job_search_task(params):
         spider_engine = params.get('spider_engine', 'playwright')  # 默认Playwright
         fetch_details = params.get('fetch_details', True)  # 默认获取详情
         selected_city = params.get('city', 'shanghai')  # 默认上海
+        ai_model = params.get('ai_model')  # 用户选择的AI模型
         
         # 获取城市代码
         city_codes = search_config['city_codes']
@@ -1481,12 +1496,30 @@ def run_job_search_task(params):
         
         emit_progress(f"📊 找到 {len(jobs)} 个岗位，开始AI分析...", 50)
         
-        # 5. AI分析
+        # 5. AI分析 - 支持动态模型选择
         global job_analyzer_instance
-        if 'job_analyzer_instance' not in globals():
-            job_analyzer_instance = JobAnalyzer(ai_config['provider'])
+        
+        # 如果用户指定了AI模型，或者没有现有实例，创建新的分析器
+        if ai_model or 'job_analyzer_instance' not in globals():
+            print(f"🔄 创建新的JobAnalyzer实例，模型: {ai_model or ai_config['provider']}")
+            
+            # 保存之前的简历分析数据（如果有）
+            previous_resume_analysis = None
+            if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
+                previous_resume_analysis = job_analyzer_instance.resume_analysis
+            
+            # 创建新实例
+            if ai_model:
+                job_analyzer_instance = JobAnalyzer(model_name=ai_model)
+            else:
+                job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
+            
+            # 恢复简历分析数据
+            if previous_resume_analysis:
+                job_analyzer_instance.resume_analysis = previous_resume_analysis
+                print("🎯 已恢复简历数据到新的分析器实例")
         else:
-            # 如果已有实例，检查是否有简历分析数据
+            # 使用现有实例
             if hasattr(job_analyzer_instance, 'resume_analysis') and job_analyzer_instance.resume_analysis:
                 print("🎯 使用已加载的简历数据进行智能匹配")
         
