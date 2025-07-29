@@ -1,7 +1,9 @@
 from .ai_client_factory import AIClientFactory
 from .prompts import JobMatchPrompts
+from .job_requirement_summarizer import JobRequirementSummarizer, JobRequirementSummary
 import os
 import json
+import asyncio
 
 
 class JobAnalyzer:
@@ -10,7 +12,13 @@ class JobAnalyzer:
         self.ai_client = AIClientFactory.create_client(self.ai_provider)
         self.user_requirements = self.get_default_requirements()
         self.resume_analysis = None  # 存储简历分析结果
+        
+        # 初始化市场分析器（替代原有的单岗位总结器）
+        from analyzer.market_analyzer import MarketAnalyzer
+        self.market_analyzer = MarketAnalyzer(ai_provider=self.ai_provider)
+        
         print(f"🤖 使用AI服务: {self.ai_provider.upper()}")
+        print(f"📊 启用市场整体分析引擎")
     
     def get_default_requirements(self):
         """获取默认的用户要求（从配置文件读取，若无则使用硬编码）"""
@@ -81,6 +89,25 @@ class JobAnalyzer:
         analyzed_jobs = []
         
         print(f"🤖 开始AI分析 {len(jobs_list)} 个岗位...")
+        
+        # 第一步：生成市场整体分析（新功能）
+        print(f"📊 步骤1: 生成市场整体分析...")
+        try:
+            # 使用市场分析器分析所有岗位
+            self.market_analysis = asyncio.run(self.market_analyzer.analyze_market_trends(jobs_list))
+            
+            print(f"✅ 市场分析完成，分析了 {self.market_analysis.total_jobs_analyzed} 个岗位")
+            
+            # 显示分析摘要
+            if self.market_analysis.common_skills:
+                print(f"🔝 最常见技能: {', '.join([s['name'] for s in self.market_analysis.common_skills[:3]])}")
+            
+        except Exception as e:
+            print(f"⚠️ 市场分析失败: {e}")
+            self.market_analysis = None
+        
+        # 第二步：进行匹配度分析
+        print(f"🤖 步骤2: 进行智能匹配分析...")
         
         # 检查是否有简历分析结果
         if self.resume_analysis:
@@ -156,7 +183,7 @@ class JobAnalyzer:
             reverse=True
         )
         
-        print(f"🎯 过滤结果: {len(filtered_jobs)}/{len(analyzed_jobs)} 个岗位达到最低评分标准({min_score}分)")
+        print(f"🎯 过滤结果: {len(sorted_jobs)}/{len(analyzed_jobs)} 个岗位达到最低评分标准({min_score}分)")
         
         return sorted_jobs
     
@@ -171,6 +198,18 @@ class JobAnalyzer:
             'strengths': self.resume_analysis.get('strengths', []),
             'improvement_suggestions': self.resume_analysis.get('improvement_suggestions', [])
         }
+    
+    def get_market_analysis(self):
+        """获取市场分析结果"""
+        if hasattr(self, 'market_analysis') and self.market_analysis:
+            return {
+                'common_skills': self.market_analysis.common_skills,
+                'keyword_cloud': self.market_analysis.keyword_cloud,
+                'differentiation_analysis': self.market_analysis.differentiation_analysis,
+                'total_jobs_analyzed': self.market_analysis.total_jobs_analyzed
+            }
+        return None
+    
     
     def _analyze_single_job_match(self, job):
         """分析单个岗位与简历的匹配度"""

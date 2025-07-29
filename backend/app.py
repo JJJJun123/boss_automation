@@ -281,7 +281,7 @@ def serve_frontend():
                             
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
-                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="20" min="1" max="100">
+                                <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="80" min="1" max="100">
                                 <p class="text-xs text-gray-500 mt-1">系统将自动分析所有搜索到的岗位</p>
                             </div>
                             
@@ -609,24 +609,32 @@ def serve_frontend():
         window.cleanJobText = function(text) {
             if (!text) return '';
             
-            // 首先进行基础清理
-            let cleaned = text.trim();
+            // 首先处理所有类型的空白字符
+            // 包括：普通空格、全角空格(　)、不间断空格(&nbsp;)、制表符等
+            let cleaned = text
+                .replace(/[\u3000\u00A0]/g, ' ')  // 全角空格和不间断空格转为普通空格
+                .replace(/&nbsp;/g, ' ')           // HTML实体空格
+                .replace(/\t/g, ' ')               // 制表符转为空格
+                .trim();
+            
+            // 移除每行开头的所有空白字符（包括全角空格）
+            cleaned = cleaned.replace(/^[\s\u3000\u00A0\t]+/gm, '');
             
             // 移除重复的标题（如"工作职责:"后面又有"工作职责:"）
-            cleaned = cleaned.replace(/^(工作职责|任职资格|岗位职责|任职要求):\\s*(工作职责|任职资格|岗位职责|任职要求):/g, '$1:');
+            cleaned = cleaned.replace(/^(工作职责|任职资格|岗位职责|任职要求)[:：]\\s*(工作职责|任职资格|岗位职责|任职要求)[:：]/g, '$1：');
             
             // 移除开头的冒号和空白字符
-            cleaned = cleaned.replace(/^:\\s*/, '');
+            cleaned = cleaned.replace(/^[:：]\\s*/, '');
             
             // 彻底清理所有多余空格
             // 1. 将多个连续空格替换为单个空格
-            cleaned = cleaned.replace(/[ \\t]+/g, ' ');
+            cleaned = cleaned.replace(/[ ]+/g, ' ');
             
             // 2. 移除换行前后的空格
             cleaned = cleaned.replace(/\\s*\\n\\s*/g, '\\n');
             
             // 3. 确保数字列表格式整齐
-            cleaned = cleaned.replace(/\\n?(\\d+、)/g, '\\n$1');
+            cleaned = cleaned.replace(/\\n?(\\d+[、.)）])/g, '\\n$1');
             
             // 4. 移除行首行尾的空格（对每行单独处理）
             cleaned = cleaned.split('\\n').map(line => line.trim()).join('\\n');
@@ -636,6 +644,9 @@ def serve_frontend():
             
             // 6. 移除开头和结尾的换行
             cleaned = cleaned.replace(/^\\n+|\\n+$/g, '');
+            
+            // 7. 特殊处理：如果整个文本以大量空格开头（常见于爬取数据）
+            cleaned = cleaned.replace(/^\\s{10,}/g, '');
             
             return cleaned;
         };
@@ -767,7 +778,7 @@ def serve_frontend():
             
             // 处理结果数据
             if (data.data && data.data.results) {
-                displayResults(data.data.results, data.data.stats);
+                displayResults(data.data.results, data.data.stats, data.data.market_analysis);
                 if (data.data.all_jobs) {
                     allJobs = data.data.all_jobs;
                 }
@@ -775,8 +786,8 @@ def serve_frontend():
         }
         
         // 显示结果
-        function displayResults(results, stats) {
-            console.log('📊 显示结果:', { results: results?.length, stats });
+        function displayResults(results, stats, marketAnalysis) {
+            console.log('📊 显示结果:', { results: results?.length, stats, marketAnalysis });
             
             if (stats) {
                 const totalEl = document.getElementById('total-jobs');
@@ -786,11 +797,105 @@ def serve_frontend():
                 if (statsCard) statsCard.style.display = 'block';
             }
             
+            // 显示市场分析报告
+            if (marketAnalysis) {
+                displayMarketAnalysis(marketAnalysis);
+            } else {
+                console.warn('⚠️ 市场分析数据为空:', marketAnalysis);
+            }
+            
             if (results && results.length > 0) {
                 if (emptyState) emptyState.style.display = 'none';
                 qualifiedJobs = results;
                 renderJobsList(results);
             }
+        }
+        
+        // 显示市场分析报告
+        function displayMarketAnalysis(analysis) {
+            console.log('📊 显示市场分析:', analysis);
+            
+            if (!analysis || typeof analysis !== 'object') {
+                console.error('❌ 市场分析数据无效:', analysis);
+                return;
+            }
+            
+            // 查找或创建市场分析容器
+            let marketAnalysisEl = document.getElementById('market-analysis');
+            if (!marketAnalysisEl) {
+                // 在岗位列表之前创建市场分析容器
+                marketAnalysisEl = document.createElement('div');
+                marketAnalysisEl.id = 'market-analysis';
+                marketAnalysisEl.className = 'bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-6 mb-6 shadow-sm';
+                
+                // 插入到岗位列表之前
+                const jobsContainer = document.querySelector('.space-y-4');
+                if (jobsContainer && jobsContainer.parentNode) {
+                    jobsContainer.parentNode.insertBefore(marketAnalysisEl, jobsContainer);
+                }
+            }
+            
+            // 构建市场分析内容
+            let analysisHTML = `
+                <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span class="text-2xl mr-2">📊</span>
+                    市场整体分析报告
+                    <span class="text-sm font-normal text-gray-600 ml-2">
+                        (基于 ${analysis.total_jobs_analyzed || 0} 个岗位)
+                    </span>
+                </h3>
+            `;
+            
+            // 共同技能要求
+            if (analysis.common_skills && analysis.common_skills.length > 0) {
+                analysisHTML += `
+                    <div class="mb-4">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">🔧 共同技能要求</h4>
+                        <div class="space-y-1">
+                            ${analysis.common_skills.slice(0, 5).map(skill => `
+                                <div class="flex items-center text-sm">
+                                    <span class="text-gray-700 flex-1">${skill.name}</span>
+                                    <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                        ${skill.percentage}%
+                                    </span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 关键词云
+            if (analysis.keyword_cloud && analysis.keyword_cloud.length > 0) {
+                analysisHTML += `
+                    <div class="mb-4">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">☁️ 热门关键词</h4>
+                        <div class="flex flex-wrap gap-2">
+                            ${analysis.keyword_cloud.slice(0, 10).map(keyword => `
+                                <span class="text-xs bg-white px-3 py-1 rounded-full border border-gray-200">
+                                    ${keyword.word} 
+                                    <span class="text-gray-500">(${keyword.count})</span>
+                                </span>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 差异化分析
+            if (analysis.differentiation_analysis && analysis.differentiation_analysis.analysis) {
+                analysisHTML += `
+                    <div class="mb-2">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">🎯 差异化分析</h4>
+                        <div class="text-sm text-gray-600 whitespace-pre-wrap">
+                            ${analysis.differentiation_analysis.analysis}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            marketAnalysisEl.innerHTML = analysisHTML;
+            marketAnalysisEl.style.display = 'block';
         }
         
         // 渲染岗位列表
@@ -844,100 +949,60 @@ def serve_frontend():
                 </div>
             `;
             
-            // 添加工作职责和任职资格展示
-            if (job.job_description && job.job_description !== '具体要求请查看岗位详情' && 
-                !job.job_description.includes('基于文本解析的岗位描述')) {
+            // 添加岗位要求展示（合并工作职责和任职资格）
+            if ((job.job_description && job.job_description !== '具体要求请查看岗位详情' && 
+                !job.job_description.includes('基于文本解析的岗位描述')) ||
+                (job.job_requirements && job.job_requirements !== '具体要求请查看岗位详情')) {
+                
                 const jobDetailsDiv = document.createElement('div');
-                jobDetailsDiv.className = 'mt-4 space-y-3';
+                jobDetailsDiv.className = 'mt-4';
                 
-                let jobDetailsHTML = '';
+                // 合并工作职责和任职资格内容
+                let combinedContent = '';
                 
-                // 处理工作职责和任职资格的分离显示
-                let jobDescription = '';
-                let jobRequirements = '';
-                
-                // 从job_description中提取工作职责部分
+                // 添加工作职责内容
                 if (job.job_description && job.job_description.length > 20) {
-                    const descText = job.job_description;
-                    
-                    // 尝试分离工作职责和任职资格
-                    if (descText.includes('工作职责') && descText.includes('任职资格')) {
-                        const parts = descText.split(/任职资格|任职要求/);
-                        jobDescription = parts[0].replace(/^工作职责:?\\n?/, '').trim();
-                        jobRequirements = parts[1] ? parts[1].trim() : '';
-                    } else if (descText.includes('职责') && descText.includes('要求')) {
-                        const parts = descText.split(/要求|任职要求|任职资格/);
-                        jobDescription = parts[0].replace(/^职责:?\\n?/, '').trim();
-                        jobRequirements = parts[1] ? parts[1].trim() : '';
-                    } else {
-                        // 如果无法分离，将完整内容作为工作职责
-                        jobDescription = descText;
+                    combinedContent += job.job_description;
+                }
+                
+                // 添加任职资格内容（如果存在且不重复）
+                if (job.job_requirements && job.job_requirements.length > 20) {
+                    // 如果工作职责中没有包含任职资格内容，则添加
+                    if (!combinedContent.includes(job.job_requirements.substring(0, 50))) {
+                        if (combinedContent) {
+                            combinedContent += '\\n\\n';
+                        }
+                        combinedContent += job.job_requirements;
                     }
                 }
                 
-                // 如果没有从job_description中提取到任职资格，使用job_requirements
-                if (!jobRequirements && job.job_requirements && job.job_requirements !== '具体要求请查看岗位详情') {
-                    if (job.job_requirements.includes('任职资格') || job.job_requirements.includes('任职要求')) {
-                        const parts = job.job_requirements.split(/任职资格|任职要求/);
-                        jobRequirements = parts[1] ? parts[1].trim() : parts[0].trim();
-                    } else {
-                        jobRequirements = job.job_requirements;
-                    }
-                }
-                
-                // 工作职责
-                if (jobDescription && jobDescription.length > 20) {
+                if (combinedContent) {
                     // 清理文本格式
-                    const cleanedJobDesc = window.cleanJobText(jobDescription);
-                    const isLong = cleanedJobDesc.length > 800;
-                    const displayText = isLong ? cleanedJobDesc.substring(0, 800) : cleanedJobDesc;
-                    const jobId = 'job_' + Math.random().toString(36).substr(2, 9);
+                    const cleanedContent = window.cleanJobText(combinedContent);
+                    const isLong = cleanedContent.length > 800;
+                    const displayText = isLong ? cleanedContent.substring(0, 800) : cleanedContent;
+                    const detailId = 'detail_' + Math.random().toString(36).substr(2, 9);
                     
-                    jobDetailsHTML += `
-                        <div class="bg-blue-50 p-3 rounded-lg">
-                            <div class="text-sm font-medium text-blue-900 mb-2">💼 工作职责</div>
-                            <div class="text-xs text-blue-800 whitespace-pre-wrap" id="${jobId}_desc">
+                    const jobDetailsHTML = `
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm font-medium text-gray-900 mb-2">📋 岗位要求</div>
+                            <div class="text-xs text-gray-700 whitespace-pre-wrap" id="${detailId}_desc">
                                 ${displayText}${isLong ? '...' : ''}
                             </div>
                             ${isLong ? `
-                                <button onclick="toggleJobDetail('${jobId}_desc', '${jobDescription.replace(/'/g, "\\'")}', this)" 
-                                        class="text-xs text-blue-600 hover:text-blue-800 mt-2 underline">
+                                <button onclick="toggleJobDetail('${detailId}_desc', '${cleanedContent.replace(/'/g, "\\'")}', this)" 
+                                        class="text-xs text-gray-600 hover:text-gray-800 mt-2 underline">
                                     展开全文
                                 </button>
                             ` : ''}
                         </div>
                     `;
-                }
-                
-                // 任职资格
-                if (jobRequirements && jobRequirements.length > 20) {
-                    // 清理文本格式
-                    const cleanedJobReq = window.cleanJobText(jobRequirements);
-                    const isLong = cleanedJobReq.length > 800;
-                    const displayText = isLong ? cleanedJobReq.substring(0, 800) : cleanedJobReq;
-                    const reqId = 'req_' + Math.random().toString(36).substr(2, 9);
                     
-                    jobDetailsHTML += `
-                        <div class="bg-green-50 p-3 rounded-lg">
-                            <div class="text-sm font-medium text-green-900 mb-2">🎯 任职资格</div>
-                            <div class="text-xs text-green-800 whitespace-pre-wrap" id="${reqId}_desc">
-                                ${displayText}${isLong ? '...' : ''}
-                            </div>
-                            ${isLong ? `
-                                <button onclick="toggleJobDetail('${reqId}_desc', '${jobRequirements.replace(/'/g, "\\'")}', this)" 
-                                        class="text-xs text-green-600 hover:text-green-800 mt-2 underline">
-                                    展开全文
-                                </button>
-                            ` : ''}
-                        </div>
-                    `;
-                }
-                
-                if (jobDetailsHTML) {
                     jobDetailsDiv.innerHTML = jobDetailsHTML;
                     div.appendChild(jobDetailsDiv);
                 }
             }
+            
             
             // 添加智能匹配分析展示
             if (isAnalyzed && analysis.dimension_scores) {
@@ -1357,27 +1422,40 @@ def run_job_search_task(params):
         # 为所有岗位初始化分析结果
         all_jobs_with_analysis = []
         
-        # 分析所有岗位
-        for i, job in enumerate(jobs):
-            # 分析每个岗位
-            progress = 50 + (i / len(jobs)) * 30
-            emit_progress(f"🤖 分析第 {i+1}/{len(jobs)} 个岗位...", progress)
+        # 使用新的批量分析方法（包含AI岗位要求总结和成本优化）
+        emit_progress("🧠 启动AI岗位要求总结和智能分析...", 50)
+        
+        try:
+            # 使用新的分析方法（包含岗位要求总结）
+            all_jobs_with_analysis = analyzer.analyze_jobs(jobs)
             
-            try:
-                analysis_result = analyzer.ai_client.analyze_job_match(
-                    job, analyzer.user_requirements
-                )
-                job['analysis'] = analysis_result
-            except Exception as e:
-                logger.error(f"分析岗位失败: {e}")
-                job['analysis'] = {
-                    "score": 0,
-                    "recommendation": "分析失败",
-                    "reason": f"分析过程中出错: {e}",
-                    "summary": "无法分析此岗位"
-                }
+            # 市场分析已完成，不再需要单独的成本报告
+            emit_progress(f"📊 市场分析完成", 80)
             
-            all_jobs_with_analysis.append(job)
+        except Exception as e:
+            logger.error(f"新分析方法失败，降级到传统分析: {e}")
+            # 重新初始化，避免重复数据
+            all_jobs_with_analysis = []
+            # 降级到传统分析方法
+            for i, job in enumerate(jobs):
+                progress = 50 + (i / len(jobs)) * 30
+                emit_progress(f"🤖 分析第 {i+1}/{len(jobs)} 个岗位...", progress)
+                
+                try:
+                    analysis_result = analyzer.ai_client.analyze_job_match(
+                        job, analyzer.user_requirements
+                    )
+                    job['analysis'] = analysis_result
+                except Exception as e:
+                    logger.error(f"分析岗位失败: {e}")
+                    job['analysis'] = {
+                        "score": 0,
+                        "recommendation": "分析失败",
+                        "reason": f"分析过程中出错: {e}",
+                        "summary": "无法分析此岗位"
+                    }
+                
+                all_jobs_with_analysis.append(job)
         
         # 6. 过滤和排序
         emit_progress("🎯 过滤和排序结果...", 85)
@@ -1390,7 +1468,10 @@ def run_job_search_task(params):
         from utils.data_saver import save_all_job_results
         save_all_job_results(all_jobs_with_analysis, filtered_jobs)  # 保存所有岗位
         
-        # 8. 完成
+        # 8. 获取市场分析结果
+        market_analysis = analyzer.get_market_analysis() if analyzer else None
+        
+        # 9. 完成
         current_job.update({
             'status': 'completed',
             'end_time': datetime.now(),
@@ -1398,16 +1479,18 @@ def run_job_search_task(params):
             'analyzed_jobs': all_jobs_with_analysis,  # 存储所有岗位
             'total_jobs': len(jobs),
             'analyzed_jobs_count': len(all_jobs_with_analysis),
-            'qualified_jobs': len(filtered_jobs)
+            'qualified_jobs': len(filtered_jobs),
+            'market_analysis': market_analysis  # 保存市场分析
         })
         
         emit_progress(f"✅ 任务完成! 找到 {len(filtered_jobs)} 个合适岗位", 100, {
             'results': filtered_jobs,
-            'all_jobs': all_jobs_with_analysis,  # 返回所有岗位（包括未分析的）
+            'all_jobs': all_jobs_with_analysis,  # 返回所有岗位
+            'market_analysis': market_analysis,  # 传递市场分析
             'stats': {
-                'total': len(all_jobs_with_analysis),  # 总搜索数是所有搜索到的岗位
-                'analyzed': len(all_jobs_with_analysis),  # 现在所有岗位都被分析
-                'qualified': len(filtered_jobs)
+                'total': len(jobs),  # 使用原始抓取的岗位数量
+                'analyzed': len(all_jobs_with_analysis),  # 分析的岗位数量
+                'qualified': len(filtered_jobs)  # 合格的岗位数量
             }
         })
         

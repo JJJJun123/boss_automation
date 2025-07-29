@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, Browser, Page
 from .enhanced_extractor import EnhancedDataExtractor
 from .session_manager import SessionManager
 from .retry_handler import RetryHandler, RetryConfig, ErrorType, RetryStrategy, retry_on_error
+from .large_scale_crawler import LargeScaleCrawler, LargeScaleProgressTracker
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +128,16 @@ class RealPlaywrightBossSpider:
         # 处理页面加载和预处理
         await self._prepare_search_page()
         
-        # 使用增强提取器提取岗位数据
-        logger.info("🚀 启用增强数据提取引擎...")
-        jobs = await self.enhanced_extractor.extract_job_listings_enhanced(self.page, max_jobs)
+        # 根据岗位数量选择合适的抓取策略
+        if max_jobs <= 30:
+            # 小规模抓取：使用增强提取器
+            logger.info("🚀 启用增强数据提取引擎（小规模模式）...")
+            jobs = await self.enhanced_extractor.extract_job_listings_enhanced(self.page, max_jobs)
+        else:
+            # 大规模抓取：使用大规模爬虫引擎
+            logger.info(f"🏭 启用大规模抓取引擎（目标: {max_jobs} 个岗位）...")
+            large_scale_crawler = LargeScaleCrawler(self.page, self.session_manager, self.retry_handler)
+            jobs = await large_scale_crawler.extract_large_scale_jobs(max_jobs)
         
         # 验证结果
         if not jobs:
@@ -205,47 +213,90 @@ class RealPlaywrightBossSpider:
         await self._handle_login_or_captcha()
     
     async def _smart_scroll_page(self) -> None:
-        """智能滚动页面策略"""
+        """智能滚动页面策略（优化版）"""
         try:
+            # 先检查页面是否稳定
+            await self._wait_for_page_stable()
+            
             # 安全地获取页面高度
             initial_height = await self.page.evaluate("""
                 () => {
-                    return document.body ? document.body.scrollHeight : window.innerHeight;
+                    return Math.max(
+                        document.body?.scrollHeight || 0,
+                        document.documentElement?.scrollHeight || 0,
+                        window.innerHeight || 0
+                    );
                 }
             """)
             
+            logger.info(f"📜 开始智能滚动，初始高度: {initial_height}")
+            
             for scroll_attempt in range(3):
-                # 安全地滚动到页面底部
+                # 检查是否仍在同一页面
+                current_url = self.page.url
+                
+                # 渐进式滚动，避免触发页面跳转
+                scroll_steps = 3
+                for step in range(scroll_steps):
+                    await self.page.evaluate(f"""
+                        () => {{
+                            const targetY = window.scrollY + (window.innerHeight * 0.8);
+                            window.scrollTo({{
+                                top: targetY,
+                                behavior: 'smooth'
+                            }});
+                        }}
+                    """)
+                    await asyncio.sleep(0.5)
+                
+                # 滚动到底部
                 await self.page.evaluate("""
                     () => {
-                        const height = document.body ? document.body.scrollHeight : document.documentElement.scrollHeight;
-                        window.scrollTo(0, height);
+                        window.scrollTo({
+                            top: document.body.scrollHeight,
+                            behavior: 'smooth'
+                        });
                     }
                 """)
                 await asyncio.sleep(2)
+                
+                # 检查是否发生了页面跳转
+                if self.page.url != current_url:
+                    logger.warning("⚠️ 检测到页面跳转，停止滚动")
+                    break
                 
                 # 安全地检查是否有新内容加载
                 new_height = await self.page.evaluate("""
                     () => {
-                        return document.body ? document.body.scrollHeight : document.documentElement.scrollHeight;
+                        return Math.max(
+                            document.body?.scrollHeight || 0,
+                            document.documentElement?.scrollHeight || 0,
+                            window.innerHeight || 0
+                        );
                     }
                 """)
+                
                 logger.info(f"   滚动 {scroll_attempt + 1}/3，页面高度: {initial_height} -> {new_height}")
                 
-                # 如果页面高度没有变化，可能已经加载完毕
-                if new_height == initial_height:
-                    logger.info("   页面高度未变化，可能已加载完毕")
+                # 如果页面高度没有显著变化，可能已经加载完毕
+                if abs(new_height - initial_height) < 100:
+                    logger.info("   页面高度变化不大，已加载完毕")
                     break
                 
                 initial_height = new_height
+                
         except Exception as e:
-            logger.warning(f"智能滚动页面失败: {e}")
-            # 降级到基础滚动
-            try:
-                await self.page.evaluate("window.scrollTo(0, window.innerHeight * 2)")
-                await asyncio.sleep(2)
-            except:
-                pass
+            logger.warning(f"⚠️ 智能滚动出现异常: {str(e)}")
+            # 不再尝试降级滚动，避免触发更多错误
+    
+    async def _wait_for_page_stable(self) -> None:
+        """等待页面稳定"""
+        try:
+            # 等待网络空闲
+            await self.page.wait_for_load_state("networkidle", timeout=5000)
+        except:
+            # 如果网络一直不空闲，至少等待DOM加载完成
+            await self.page.wait_for_load_state("domcontentloaded", timeout=3000)
     
     async def _handle_no_jobs_found(self) -> None:
         """处理未找到岗位的情况"""
@@ -609,46 +660,6 @@ class RealPlaywrightBossSpider:
                 'version': 'v2.0-enhanced'
             }
         }
-    
-    
-    def _generate_sample_jobs(self, keyword: str, city: str, max_jobs: int) -> List[Dict]:
-        """生成示例岗位数据（当真实抓取失败时）"""
-        
-        city_names = {
-            "shanghai": "上海",
-            "beijing": "北京",
-            "shenzhen": "深圳", 
-            "hangzhou": "杭州"
-        }
-        
-        city_name = city_names.get(city, "上海")
-        
-        companies = ["阿里巴巴", "腾讯", "字节跳动", "美团", "滴滴", "百度", "网易", "小米", "华为", "京东"]
-        salaries = ["15-25K·13薪", "20-30K·14薪", "25-35K·15薪", "18-28K·13薪", "22-32K·14薪"]
-        
-        jobs = []
-        for i in range(max_jobs):
-            company = companies[i % len(companies)]
-            salary = salaries[i % len(salaries)]
-            
-            job = {
-                "title": f"{keyword}工程师",
-                "company": company,
-                "salary": salary,
-                "work_location": f"{city_name}·中心区",
-                "url": f"https://www.zhipin.com/job_detail/{urllib.parse.quote(keyword)}_{i+1}",
-                "tags": [keyword, "Python", "数据分析", "机器学习"][:3],
-                "job_description": f"负责{keyword}相关工作，包括数据处理、分析建模等。",
-                "job_requirements": f"要求3-5年{keyword}相关经验，本科及以上学历。",
-                "company_details": f"{company} - 知名互联网公司",
-                "benefits": "五险一金,股票期权,弹性工作",
-                "experience_required": "3-5年",
-                "education_required": "本科",
-                "engine_source": "Playwright真实抓取（示例数据）"
-            }
-            jobs.append(job)
-        
-        return jobs
     
     async def take_screenshot(self, filename: str = None) -> str:
         """截取页面截图"""

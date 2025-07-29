@@ -57,7 +57,7 @@ crawler:
 # 系统限制
 limits:
   max_jobs_search: 100     # 最大搜索岗位数
-  max_jobs_analyze: 50     # 最大分析岗位数
+  max_jobs_analyze: 80     # 最大分析岗位数（提升以支持大规模分析）
   min_score: 1             # 最小评分
   max_score: 10            # 最大评分
 

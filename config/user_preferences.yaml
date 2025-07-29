@@ -25,9 +25,9 @@ search:
     - "hangzhou"
   
   # 搜索数量设置
-  max_jobs: 20           # 搜索岗位总数
-  max_analyze_jobs: 10   # AI分析岗位数
-  fetch_details: false   # 是否获取岗位详细信息（会增加抓取时间）
+  max_jobs: 80           # 搜索岗位总数（支持50-100+岗位）
+  max_analyze_jobs: 50   # AI分析岗位数（智能批量分析）
+  fetch_details: true    # 获取岗位详细信息（AI要求总结需要）
   
   # 爬虫引擎选择
   spider_engine: "playwright"  # playwright（推荐）或 mcp（实验性）

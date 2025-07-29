@@ -1,6 +1,8 @@
 import requests
 import json
 import os
+import asyncio
+import aiohttp
 from dotenv import load_dotenv
 
 # 加载配置文件中的环境变量
@@ -201,3 +203,34 @@ class DeepSeekClient:
             "reason": reason,
             "summary": summary
         }
+    
+    async def analyze_async(self, prompt, model="deepseek-chat"):
+        """异步调用DeepSeek API"""
+        if not self.api_key:
+            raise Exception("API Key未配置")
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.3
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.base_url,
+                headers=self.headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result['choices'][0]['message']['content']
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"API调用失败: {response.status} - {error_text}")
