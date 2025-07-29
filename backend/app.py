@@ -651,7 +651,7 @@ def serve_frontend():
             return cleaned;
         };
         
-        // 切换岗位详情显示（展开/收起）
+        // 切换岗位详情显示（展开/收起）- 原版本
         window.toggleJobDetail = function(elementId, fullText, buttonElement) {
             const element = document.getElementById(elementId);
             if (!element || !buttonElement) return;
@@ -670,6 +670,45 @@ def serve_frontend():
                 // 展开：显示完整文本
                 element.innerHTML = cleanedText;
                 buttonElement.textContent = '收起';
+            }
+        };
+        
+        // 安全版本的岗位详情切换（使用data属性避免特殊字符问题）
+        window.toggleJobDetailSafe = function(buttonElement) {
+            if (!buttonElement) return;
+            
+            const elementId = buttonElement.getAttribute('data-detail-id');
+            const encodedFullText = buttonElement.getAttribute('data-full-text');
+            const element = document.getElementById(elementId);
+            
+            if (!element || !encodedFullText) {
+                console.error('❌ 展开功能参数缺失:', {elementId, encodedFullText: !!encodedFullText});
+                return;
+            }
+            
+            const isExpanded = buttonElement.textContent.trim() === '收起';
+            
+            try {
+                // 解码文本内容
+                const fullText = decodeURIComponent(encodedFullText);
+                const cleanedText = window.cleanJobText(fullText);
+                
+                if (isExpanded) {
+                    // 收起：显示截断文本
+                    const truncatedText = cleanedText.length > 800 ? cleanedText.substring(0, 800) + '...' : cleanedText;
+                    element.innerHTML = truncatedText;
+                    buttonElement.textContent = '展开全文';
+                    console.log('✅ 文本已收起');
+                } else {
+                    // 展开：显示完整文本
+                    element.innerHTML = cleanedText;
+                    buttonElement.textContent = '收起';
+                    console.log('✅ 文本已展开，完整长度:', cleanedText.length);
+                }
+                
+            } catch (error) {
+                console.error('❌ 展开文本失败:', error);
+                buttonElement.textContent = '展开失败';
             }
         };
         
@@ -1023,7 +1062,8 @@ def serve_frontend():
                                 ${displayText}${isLong ? '...' : ''}
                             </div>
                             ${isLong ? `
-                                <button onclick="toggleJobDetail('${detailId}_desc', '${cleanedContent.replace(/'/g, "\\'")}', this)" 
+                                <button data-detail-id="${detailId}_desc" data-full-text="${encodeURIComponent(cleanedContent)}" 
+                                        onclick="toggleJobDetailSafe(this)" 
                                         class="text-xs text-gray-600 hover:text-gray-800 mt-2 underline">
                                     展开全文
                                 </button>
