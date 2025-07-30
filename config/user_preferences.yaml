@@ -39,7 +39,7 @@ ai_analysis:
   provider: "deepseek"
   
   # 评分标准
-  min_score: 6           # 最低接受评分
+  min_score: 3           # 最低接受评分（降低标准以获得更多结果）
   
   # 分析深度
   analysis_depth: "standard"  # standard/detailed/quick

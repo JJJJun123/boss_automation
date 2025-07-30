@@ -21,7 +21,7 @@ ai:
   # 各AI模型的默认配置
   models:
     deepseek:
-      model_name: "deepseek-reasoner"
+      model_name: "deepseek-chat"
       temperature: 0.7
       max_tokens: 1000
     claude:

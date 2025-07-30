@@ -92,8 +92,32 @@ class EnhancedDataExtractor:
     async def _prepare_page_for_extraction(self, page: Page) -> None:
         """页面预处理和智能等待"""
         try:
-            # 智能滚动策略 - 基于页面高度动态调整
-            initial_height = await page.evaluate("document.body.scrollHeight")
+            # 设置较短的超时时间避免长时间等待
+            page.set_default_timeout(15000)  # 15秒超时
+            
+            # 等待页面完全加载
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_load_state("networkidle")  # 等待网络空闲
+            
+            # Boss直聘特有：等待骨架屏消失，真实内容加载
+            await self._wait_for_content_load(page)
+            
+            await page.wait_for_timeout(2000)  # 减少等待时间
+            
+            # 安全获取页面高度 - 处理document.body为null的情况
+            initial_height = await page.evaluate("""
+                () => {
+                    // 确保document.body存在
+                    if (!document.body) {
+                        return document.documentElement ? document.documentElement.scrollHeight : 1000;
+                    }
+                    return Math.max(
+                        document.body.scrollHeight || 0,
+                        document.documentElement.scrollHeight || 0,
+                        window.innerHeight || 0
+                    );
+                }
+            """)
             logger.info(f"页面初始高度: {initial_height}")
             
             # 分段滚动，触发懒加载
@@ -104,8 +128,18 @@ class EnhancedDataExtractor:
                 await page.evaluate(f"window.scrollTo(0, {scroll_position})")
                 await asyncio.sleep(1.5)  # 给予足够时间加载内容
                 
-                # 检查是否有新内容加载
-                new_height = await page.evaluate("document.body.scrollHeight")
+                # 检查是否有新内容加载（安全获取）
+                new_height = await page.evaluate("""
+                    () => {
+                        if (!document.body) {
+                            return document.documentElement ? document.documentElement.scrollHeight : 1000;
+                        }
+                        return Math.max(
+                            document.body.scrollHeight || 0,
+                            document.documentElement.scrollHeight || 0
+                        );
+                    }
+                """)
                 if new_height > initial_height:
                     logger.info(f"检测到新内容加载，页面高度: {initial_height} -> {new_height}")
                     initial_height = new_height
@@ -119,6 +153,55 @@ class EnhancedDataExtractor:
             
         except Exception as e:
             logger.warning(f"页面预处理失败: {e}")
+    
+    async def _wait_for_content_load(self, page: Page) -> None:
+        """等待Boss直聘内容加载完成，骨架屏消失"""
+        try:
+            logger.info("⏳ 等待Boss直聘内容加载...")
+            
+            # 等待岗位列表容器出现（非骨架屏）
+            content_selectors = [
+                '.job-card-wrapper',  # 岗位卡片
+                '.job-list-item',     # 岗位列表项
+                '.job-detail-box',    # 岗位详情框
+                'li[data-jid]',       # 带数据ID的岗位
+                '.job-primary'        # 岗位主要信息
+            ]
+            
+            # 尝试等待任意一个真实内容选择器出现
+            for selector in content_selectors:
+                try:
+                    await page.wait_for_selector(selector, timeout=5000)  # 减少单个选择器的等待时间
+                    logger.info(f"✅ 检测到内容加载完成: {selector}")
+                    return
+                except:
+                    continue
+            
+            # 如果没有找到明确的内容，等待骨架屏消失
+            skeleton_selectors = [
+                '.skeleton',
+                '[class*="skeleton"]',
+                '.loading-placeholder',
+                '[class*="loading"]'
+            ]
+            
+            for selector in skeleton_selectors:
+                try:
+                    # 等待骨架屏消失
+                    await page.wait_for_selector(selector, state="hidden", timeout=5000)
+                    logger.info(f"✅ 骨架屏已消失: {selector}")
+                    break
+                except:
+                    continue
+            
+            # 额外等待动画完成
+            await page.wait_for_timeout(2000)
+            
+        except Exception as e:
+            if "Timeout" in str(e):
+                logger.info("⏳ 内容加载等待超时（继续处理）")
+            else:
+                logger.warning(f"等待内容加载失败: {e}")
     
     async def _handle_page_overlays(self, page: Page) -> None:
         """处理页面覆盖层（弹窗、加载中等）"""
@@ -530,31 +613,51 @@ class EnhancedDataExtractor:
         logger.info("🆘 启用降级提取策略...")
         
         try:
-            # 策略1: 尝试查找所有可能包含岗位信息的元素
+            # 策略1: 更智能的页面结构分析
             potential_containers = []
             
-            # 基础元素类型
-            basic_selectors = ['li', 'div', 'article', 'section']
+            # Boss直聘常见的页面结构模式
+            boss_patterns = [
+                'li[class*="job"]',     # 包含job的li元素
+                'div[class*="job"]',    # 包含job的div元素
+                'a[href*="job"]',       # 包含job链接的a元素
+                '[data-*]',             # 任何data属性元素
+                '.card, .item, .box',   # 常见容器类名
+                'li, div[class], a[class]'  # 有类名的基础元素
+            ]
             
-            for selector in basic_selectors:
-                elements = await page.query_selector_all(selector)
-                for element in elements:
-                    try:
-                        if await element.is_visible():
-                            text = await element.inner_text()
-                            # 检查是否包含岗位相关关键词
-                            if text and len(text) > 50:  # 内容足够长
-                                # 检查是否包含工作相关词汇
-                                job_keywords = ['工程师', '开发', '经理', '专员', '主管', '总监', '分析师', 
-                                              '设计师', '产品', '运营', '市场', '销售', '财务', '人事']
-                                
-                                if any(keyword in text for keyword in job_keywords):
-                                    potential_containers.append(element)
+            logger.info(f"🔍 尝试Boss直聘页面结构模式识别...")
+            
+            for pattern in boss_patterns:
+                try:
+                    elements = await page.query_selector_all(pattern)
+                    logger.debug(f"模式 '{pattern}' 找到 {len(elements)} 个元素")
+                    
+                    for element in elements:
+                        try:
+                            if await element.is_visible():
+                                text = await element.inner_text()
+                                # 检查是否包含岗位相关关键词
+                                if text and len(text) > 50:  # 内容足够长
+                                    # 检查是否包含工作相关词汇  
+                                    job_keywords = ['工程师', '开发', '经理', '专员', '主管', '总监', '分析师', 
+                                                  '设计师', '产品', '运营', '市场', '销售', '财务', '人事',
+                                                  'AI', '人工智能', '机器学习', '算法', '解决方案', '金融',
+                                                  '咨询', '顾问', '架构师', '技术', '研发', '科技']
                                     
-                            if len(potential_containers) >= max_jobs:
-                                break
-                    except:
-                        continue
+                                    if any(keyword in text for keyword in job_keywords):
+                                        potential_containers.append(element)
+                                        
+                                if len(potential_containers) >= max_jobs:
+                                    break
+                        except:
+                            continue
+                    
+                    if len(potential_containers) >= max_jobs:
+                        break
+                except Exception as e:
+                    logger.debug(f"模式 '{pattern}' 处理失败: {e}")
+                    continue
                 
                 if len(potential_containers) >= max_jobs:
                     break

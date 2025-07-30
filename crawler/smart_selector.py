@@ -41,11 +41,14 @@ class SmartSelector:
         self.selector_configs = {
             "job_container": {
                 "primary": [
-                    'li:has(a[href*="job_detail"])',  # 最精确：包含岗位链接的li
+                    'li.job-card-wrapper',            # Boss直聘最新结构
+                    'li[data-jid]',                   # Boss直聘岗位ID
+                    '.job-card-left',                 # 左侧卡片
+                    'li:has(a[href*="job_detail"])',  # 包含岗位链接的li
                     '.job-detail-box',                # Boss直聘特有
                     'a[ka*="search_list"]',           # ka属性标识
                     '[data-jobid]',                   # 数据属性标识
-                    'li[data-jid]',                   # Boss直聘岗位ID
+                    '.job-list-item',                 # 列表项目
                 ],
                 "fallback": [
                     '.job-card-wrapper', '.job-card-container',

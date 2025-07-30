@@ -245,7 +245,7 @@ def serve_frontend():
                             
                             <div class="space-y-4">
                                 <h4 class="font-bold text-gray-900">📈 市场匹配度</h4>
-                                <div id="market-analysis" class="text-sm text-gray-700"></div>
+                                <div id="resume-market-analysis" class="text-sm text-gray-700"></div>
                             </div>
                         </div>
                     </div>
@@ -357,6 +357,20 @@ def serve_frontend():
     document.addEventListener('DOMContentLoaded', function() {
         console.log('🚀 DOM加载完成，初始化系统...');
         
+        // ========== 工具函数 ==========
+        // 清理Markdown格式
+        function cleanMarkdown(text) {
+            if (!text) return text;
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '$1')  // 移除粗体**
+                .replace(/\*(.*?)\*/g, '$1')      // 移除斜体*
+                .replace(/__(.*?)__/g, '$1')      // 移除粗体__
+                .replace(/_(.*?)_/g, '$1')        // 移除斜体_
+                .replace(/`(.*?)`/g, '$1')        // 移除代码``
+                .replace(/#{1,6}\s/g, '')         // 移除标题#
+                .trim();
+        }
+
         // ========== 初始化核心变量 ==========
         console.log('🔌 初始化Socket.IO连接...');
         const socket = io();
@@ -365,6 +379,7 @@ def serve_frontend():
         let allJobs = [];
         let qualifiedJobs = [];
         let currentView = 'qualified';
+        let currentMarketAnalysis = null; // 存储当前市场分析数据
         
         // ========== 初始化所有DOM元素 ==========
         console.log('📋 初始化DOM元素...');
@@ -525,10 +540,10 @@ def serve_frontend():
                 ).join('');
             }
             
-            // 更新市场分析
-            const marketAnalysisDiv = document.getElementById('market-analysis');
-            if (marketAnalysisDiv && aiAnalysis.market_position) {
-                marketAnalysisDiv.textContent = aiAnalysis.market_position;
+            // 更新简历市场分析
+            const resumeMarketAnalysisDiv = document.getElementById('resume-market-analysis');
+            if (resumeMarketAnalysisDiv && aiAnalysis.market_position) {
+                resumeMarketAnalysisDiv.textContent = aiAnalysis.market_position;
             }
             
             // 存储AI原始输出（保留用于调试）
@@ -637,6 +652,9 @@ def serve_frontend():
             
             // 移除开头的冒号和空白字符
             cleaned = cleaned.replace(/^[:：]\\s*/, '');
+            
+            // 使用cleanMarkdown函数清理Markdown格式
+            cleaned = cleanMarkdown(cleaned);
             
             // 彻底清理所有多余空格
             // 1. 将多个连续空格替换为单个空格
@@ -749,6 +767,10 @@ def serve_frontend():
             currentView = 'all';
             if (allJobs && allJobs.length > 0) {
                 renderJobsList(allJobs);
+                // 重新显示市场分析报告
+                if (currentMarketAnalysis) {
+                    displayMarketAnalysis(currentMarketAnalysis);
+                }
             } else {
                 fetchAllJobs();
             }
@@ -758,6 +780,10 @@ def serve_frontend():
             console.log('⭐ 显示合格岗位');
             currentView = 'qualified';
             renderJobsList(qualifiedJobs);
+            // 重新显示市场分析报告
+            if (currentMarketAnalysis) {
+                displayMarketAnalysis(currentMarketAnalysis);
+            }
         };
         
         // ========== 岗位搜索功能 ==========
@@ -832,6 +858,13 @@ def serve_frontend():
             // 处理结果数据
             if (data.data && data.data.results) {
                 displayResults(data.data.results, data.data.stats, data.data.market_analysis);
+                
+                // 存储并自动显示市场分析报告
+                if (data.data.market_analysis) {
+                    console.log('📊 存储并自动显示市场分析报告');
+                    currentMarketAnalysis = data.data.market_analysis;
+                    displayMarketAnalysis(data.data.market_analysis);
+                }
                 if (data.data.all_jobs) {
                     allJobs = data.data.all_jobs;
                 }
@@ -859,6 +892,7 @@ def serve_frontend():
                 
                 // 然后显示市场分析报告（插入到列表前面）
                 if (marketAnalysis) {
+                    currentMarketAnalysis = marketAnalysis; // 存储市场分析数据
                     displayMarketAnalysis(marketAnalysis);
                 } else {
                     console.warn('⚠️ 市场分析数据为空:', marketAnalysis);
@@ -924,7 +958,7 @@ def serve_frontend():
                         <div class="space-y-1">
                             ${analysis.common_skills.slice(0, 5).map(skill => `
                                 <div class="flex items-center text-sm">
-                                    <span class="text-gray-700 flex-1">${skill.name}</span>
+                                    <span class="text-gray-700 flex-1">${cleanMarkdown(skill.name)}</span>
                                     <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                                         ${skill.percentage}%
                                     </span>
@@ -943,7 +977,7 @@ def serve_frontend():
                         <div class="flex flex-wrap gap-2">
                             ${analysis.keyword_cloud.slice(0, 10).map(keyword => `
                                 <span class="text-xs bg-white px-3 py-1 rounded-full border border-gray-200">
-                                    ${keyword.word} 
+                                    ${cleanMarkdown(keyword.word)} 
                                     <span class="text-gray-500">(${keyword.count})</span>
                                 </span>
                             `).join('')}
@@ -958,7 +992,7 @@ def serve_frontend():
                     <div class="mb-2">
                         <h4 class="text-sm font-medium text-gray-700 mb-2">🎯 差异化分析</h4>
                         <div class="text-sm text-gray-600 whitespace-pre-wrap">
-                            ${analysis.differentiation_analysis.analysis}
+                            ${cleanMarkdown(analysis.differentiation_analysis.analysis)}
                         </div>
                     </div>
                 `;
@@ -1022,8 +1056,8 @@ def serve_frontend():
                     </div>
                 </div>
                 <div class="pr-20 mb-4">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${job.title || '未知岗位'}</h3>
-                    <div class="text-gray-600 mb-2">🏢 ${job.company || '未知公司'} • 💰 ${job.salary || '薪资面议'}</div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${cleanMarkdown(job.title) || '未知岗位'}</h3>
+                    <div class="text-gray-600 mb-2">🏢 ${cleanMarkdown(job.company) || '未知公司'} • 💰 ${cleanMarkdown(job.salary) || '薪资面议'}</div>
                     <div class="text-gray-600 mb-2">📍 ${job.work_location || '未知地点'}</div>
                     ${job.url ? `
                         <div class="text-gray-600 mb-2">

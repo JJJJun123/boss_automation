@@ -286,7 +286,10 @@ class RealPlaywrightBossSpider:
                 initial_height = new_height
                 
         except Exception as e:
-            logger.warning(f"⚠️ 智能滚动出现异常: {str(e)}")
+            if "Execution context was destroyed" in str(e):
+                logger.info("⚠️ 页面导航导致滚动中断（正常现象）")
+            else:
+                logger.warning(f"⚠️ 智能滚动出现异常: {str(e)}")
             # 不再尝试降级滚动，避免触发更多错误
     
     async def _wait_for_page_stable(self) -> None:
@@ -634,7 +637,10 @@ class RealPlaywrightBossSpider:
                 await asyncio.sleep(5)
                 
         except Exception as e:
-            logger.warning(f"⚠️ 处理登录/验证码时出错: {e}")
+            if "Execution context was destroyed" in str(e):
+                logger.debug("⚠️ 页面导航导致登录检查中断（正常现象）")
+            else:
+                logger.warning(f"⚠️ 处理登录/验证码时出错: {e}")
     
     async def get_performance_report(self) -> Dict:
         """获取爬虫性能报告"""
