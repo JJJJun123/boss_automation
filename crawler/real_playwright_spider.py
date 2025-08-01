@@ -8,8 +8,10 @@ import asyncio
 import logging
 import urllib.parse
 import time
+import os
+from pathlib import Path
 from typing import List, Dict, Optional
-from playwright.async_api import async_playwright, Browser, Page
+from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 from .enhanced_extractor import EnhancedDataExtractor
 from .session_manager import SessionManager
 from .retry_handler import RetryHandler, RetryConfig, ErrorType, RetryStrategy, retry_on_error
@@ -24,11 +26,22 @@ class RealPlaywrightBossSpider:
     def __init__(self, headless: bool = False):
         self.headless = headless
         self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.playwright = None
         self.enhanced_extractor = EnhancedDataExtractor()  # 集成增强提取器
         self.session_manager = SessionManager()  # 集成会话管理器
         self.retry_handler = RetryHandler()  # 集成重试处理器
+        
+        # 加载配置
+        try:
+            from config.config_manager import ConfigManager
+            self.config_manager = ConfigManager()
+            self.browser_config = self.config_manager.get_app_config('crawler', {}).get('browser', {})
+        except:
+            logger.warning("无法加载配置管理器，使用默认配置")
+            self.config_manager = None
+            self.browser_config = {}
         
         # Boss直聘城市代码映射 (与app_config.yaml保持一致)
         self.city_codes = {
@@ -40,30 +53,69 @@ class RealPlaywrightBossSpider:
         
     @retry_on_error(max_attempts=3, base_delay=2.0, strategy=RetryStrategy.EXPONENTIAL_BACKOFF)
     async def start(self) -> bool:
-        """启动浏览器 - 带重试机制"""
+        """启动浏览器 - 使用持久化上下文保持登录状态"""
         logger.info("🎭 启动真正的Playwright浏览器...")
         
         self.playwright = await async_playwright().start()
         
-        # 启动Chrome浏览器，确保用户可以看到
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--disable-web-security',
-                '--disable-features=VizDisplayCompositor',
-                '--start-maximized'  # 最大化窗口
-            ]
-        )
+        # 检查是否使用持久化上下文
+        use_persistent = self.browser_config.get('use_persistent_context', True)
+        user_data_dir = self.browser_config.get('user_data_dir', './browser_profile/boss_zhipin')
+        
+        if use_persistent:
+            # 创建用户数据目录
+            user_data_path = Path(user_data_dir).absolute()
+            user_data_path.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"📁 使用持久化浏览器配置: {user_data_path}")
+            
+            # 检查是否是首次使用
+            is_first_run = not (user_data_path / "Default").exists()
+            if is_first_run:
+                logger.info("🆕 检测到首次运行，将引导您进行登录...")
+                logger.info("👤 请在打开的浏览器窗口中手动登录Boss直聘")
+                logger.info("✅ 登录成功后，您的登录状态将被自动保存")
+            
+            # 使用持久化上下文启动浏览器
+            logger.info(f"🚀 正在启动浏览器，headless模式: {self.headless}")
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_path),
+                headless=self.headless,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--start-maximized'
+                ],
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            
+            # 获取或创建页面
+            pages = self.context.pages
+            self.page = pages[0] if pages else await self.context.new_page()
+            logger.info(f"✅ 浏览器启动成功！headless={self.headless}, 页面数: {len(pages)}")
+            
+        else:
+            # 传统方式启动浏览器
+            self.browser = await self.playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--start-maximized'
+                ]
+            )
+            
+            # 创建新上下文
+            self.context = await self.browser.new_context(
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            self.page = await self.context.new_page()
         
         logger.info("🖥️ Chrome浏览器窗口已打开，你应该能看到它！")
-        
-        # 创建新页面
-        context = await self.browser.new_context(
-            viewport={'width': 1280, 'height': 800},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        self.page = await context.new_page()
         
         # 确保窗口在前台
         await self.page.bring_to_front()
@@ -116,17 +168,25 @@ class RealPlaywrightBossSpider:
         
         logger.info(f"🔍 开始搜索: {keyword} | 城市: {city} ({city_code}) | 数量: {max_jobs}")
         
-        # 构建搜索URL
+        # 使用更自然的搜索方式
+        logger.info(f"🔍 准备搜索: {keyword}")
+        
+        # 确保在首页（登录后可能还在登录页或其他页面）
+        logger.info("🏠 导航到Boss直聘首页...")
+        try:
+            await self.page.goto("https://www.zhipin.com", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.warning(f"首页加载超时，尝试继续: {e}")
+        
+        # 直接使用URL导航（更稳定高效）
+        logger.info("🔍 使用URL导航进行搜索...")
         encoded_keyword = urllib.parse.quote(keyword)
         search_url = f"https://www.zhipin.com/web/geek/job?query={encoded_keyword}&city={city_code}"
-        
-        logger.info(f"🌐 导航到: {search_url}")
-        
-        # 导航到搜索页面
         await self._navigate_to_search_page(search_url)
         
-        # 处理页面加载和预处理
-        await self._prepare_search_page()
+        # 处理页面加载和预处理（传递目标岗位数量）
+        await self._prepare_search_page(max_jobs)
         
         # 根据岗位数量选择合适的抓取策略
         if max_jobs <= 30:
@@ -160,14 +220,13 @@ class RealPlaywrightBossSpider:
         logger.info("👀 请观察浏览器窗口，你应该能看到页面加载过程")
         
         await self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
-        
-        # 截图记录当前页面
-        screenshot_path = f"boss_search_{int(time.time())}.png"
-        await self.page.screenshot(path=screenshot_path)
-        logger.info(f"📸 已截图当前页面: {screenshot_path}")
     
-    async def _prepare_search_page(self) -> None:
-        """准备搜索页面（页面加载、滚动等）"""
+    async def _prepare_search_page(self, target_jobs: int = 20) -> None:
+        """准备搜索页面（页面加载、滚动等）
+        
+        Args:
+            target_jobs: 目标岗位数量
+        """
         # 等待页面完全加载完成
         logger.info("⏳ 等待页面完全加载...")
         
@@ -200,8 +259,8 @@ class RealPlaywrightBossSpider:
         await asyncio.sleep(5)
         
         # 智能滚动页面以加载更多岗位
-        logger.info("📜 滚动页面以触发更多岗位加载...")
-        await self._smart_scroll_page()
+        logger.info(f"📜 滚动页面以触发更多岗位加载（目标: {target_jobs} 个）...")
+        await self._smart_scroll_page(target_jobs)
         
         # 滚动回顶部
         await self.page.evaluate("window.scrollTo(0, 0)")
@@ -212,11 +271,24 @@ class RealPlaywrightBossSpider:
         # 检查是否需要登录或有验证码
         await self._handle_login_or_captcha()
     
-    async def _smart_scroll_page(self) -> None:
-        """智能滚动页面策略（优化版）"""
+    async def _smart_scroll_page(self, target_jobs: int = 20) -> None:
+        """智能滚动页面策略（优化版）
+        
+        Args:
+            target_jobs: 目标岗位数量
+        """
         try:
             # 先检查页面是否稳定
             await self._wait_for_page_stable()
+            
+            # 获取当前岗位数量
+            current_job_count = await self._count_current_jobs()
+            logger.info(f"📊 当前页面岗位数: {current_job_count}，目标: {target_jobs}")
+            
+            # 如果已经达到目标数量，直接返回
+            if current_job_count >= target_jobs:
+                logger.info(f"✅ 已达到目标岗位数量")
+                return
             
             # 安全地获取页面高度
             initial_height = await self.page.evaluate("""
@@ -231,7 +303,11 @@ class RealPlaywrightBossSpider:
             
             logger.info(f"📜 开始智能滚动，初始高度: {initial_height}")
             
-            for scroll_attempt in range(3):
+            # 根据需要的岗位数量动态调整滚动次数
+            max_scroll_attempts = max(8, (target_jobs // 8) + 3)  # 至少8次尝试，每8个岗位增加3次
+            no_change_count = 0  # 连续无变化计数
+            
+            for scroll_attempt in range(max_scroll_attempts):
                 # 检查是否仍在同一页面
                 current_url = self.page.url
                 
@@ -249,16 +325,29 @@ class RealPlaywrightBossSpider:
                     """)
                     await asyncio.sleep(0.5)
                 
-                # 滚动到底部
+                # 缓慢滚动到底部以更好地触发懒加载
                 await self.page.evaluate("""
                     () => {
-                        window.scrollTo({
-                            top: document.body.scrollHeight,
-                            behavior: 'smooth'
-                        });
+                        const targetY = document.body.scrollHeight;
+                        const currentY = window.scrollY;
+                        const step = (targetY - currentY) / 3;
+                        
+                        // 分3步滚动到底部
+                        let steps = 0;
+                        function smoothScroll() {
+                            if (steps < 3) {
+                                steps++;
+                                window.scrollTo({
+                                    top: currentY + (step * steps),
+                                    behavior: 'smooth'
+                                });
+                                setTimeout(smoothScroll, 800);
+                            }
+                        }
+                        smoothScroll();
                     }
                 """)
-                await asyncio.sleep(2)
+                await asyncio.sleep(4)  # 给更多时间让内容加载
                 
                 # 检查是否发生了页面跳转
                 if self.page.url != current_url:
@@ -276,14 +365,64 @@ class RealPlaywrightBossSpider:
                     }
                 """)
                 
-                logger.info(f"   滚动 {scroll_attempt + 1}/3，页面高度: {initial_height} -> {new_height}")
+                logger.info(f"   滚动 {scroll_attempt + 1}/{max_scroll_attempts}，页面高度: {initial_height} -> {new_height}")
                 
-                # 如果页面高度没有显著变化，可能已经加载完毕
+                # 如果页面高度没有显著变化
                 if abs(new_height - initial_height) < 100:
-                    logger.info("   页面高度变化不大，已加载完毕")
-                    break
-                
-                initial_height = new_height
+                    no_change_count += 1
+                    logger.info(f"   页面高度变化不大 (连续{no_change_count}次)")
+                    
+                    # 检查当前岗位数量
+                    current_job_count = await self._count_current_jobs()
+                    logger.info(f"   当前岗位数: {current_job_count}/{target_jobs}")
+                    
+                    if current_job_count >= target_jobs:
+                        logger.info(f"✅ 已达到目标岗位数量")
+                        break
+                    
+                    # 如果连续3次没有变化且岗位数量还不够，尝试其他策略
+                    if no_change_count >= 3:
+                        if current_job_count < target_jobs:
+                            logger.info("   尝试查找加载更多按钮或翻页...")
+                            # 尝试查找加载更多按钮
+                            try:
+                                load_more_buttons = await self.page.query_selector_all(
+                                    'button:has-text("加载更多"), a:has-text("查看更多"), '
+                                    '.load-more, .more-btn, [class*="more"], [class*="load"]'
+                                )
+                                if load_more_buttons:
+                                    for btn in load_more_buttons[:1]:  # 只点击第一个
+                                        if await btn.is_visible():
+                                            await btn.click()
+                                            logger.info("   点击了加载更多按钮")
+                                            await asyncio.sleep(3)
+                                            no_change_count = 0
+                                            break
+                                else:
+                                    # 尝试查找下一页按钮
+                                    next_page = await self.page.query_selector(
+                                        'a:has-text("下一页"), .next-page, [class*="next"]'
+                                    )
+                                    if next_page and await next_page.is_visible():
+                                        await next_page.click()
+                                        logger.info("   点击了下一页按钮")
+                                        await asyncio.sleep(5)
+                                        no_change_count = 0
+                                    else:
+                                        logger.info("   未找到加载更多或翻页按钮，已到达最后一页")
+                                        break
+                            except Exception as e:
+                                logger.debug(f"尝试加载更多时出错: {e}")
+                                break
+                        else:
+                            logger.info("   已到达页面底部")
+                            break
+                else:
+                    no_change_count = 0  # 重置计数
+                    initial_height = new_height
+                    
+                    # 等待新内容加载
+                    await asyncio.sleep(3)
                 
         except Exception as e:
             if "Execution context was destroyed" in str(e):
@@ -291,6 +430,45 @@ class RealPlaywrightBossSpider:
             else:
                 logger.warning(f"⚠️ 智能滚动出现异常: {str(e)}")
             # 不再尝试降级滚动，避免触发更多错误
+    
+    async def _count_current_jobs(self) -> int:
+        """统计当前页面的岗位数量"""
+        try:
+            # 使用多个选择器查找岗位元素，取最大值
+            selectors = [
+                'li.job-card-wrapper',
+                'li[data-jid]', 
+                '.job-card-left',
+                'li:has(a[href*="job_detail"])',
+                'li[class*="job"]',
+                'div[class*="job-card"]',
+                '.job-list-item',  # 添加更多可能的选择器
+                '[data-jobid]',
+                'a[ka*="search_list"]'
+            ]
+            
+            max_count = 0
+            counts = {}
+            
+            for selector in selectors:
+                try:
+                    jobs = await self.page.query_selector_all(selector)
+                    count = len(jobs) if jobs else 0
+                    counts[selector] = count
+                    max_count = max(max_count, count)
+                except Exception as e:
+                    logger.debug(f"选择器 {selector} 查询失败: {e}")
+                    continue
+            
+            # 记录详细的计数信息用于调试
+            if max_count > 0:
+                best_selector = max(counts, key=counts.get)
+                logger.debug(f"岗位计数详情: {counts}, 最佳选择器: {best_selector}")
+            
+            return max_count
+        except Exception as e:
+            logger.debug(f"统计岗位数量失败: {e}")
+            return 0
     
     async def _wait_for_page_stable(self) -> None:
         """等待页面稳定"""
@@ -350,34 +528,107 @@ class RealPlaywrightBossSpider:
             logger.debug(f"记录搜索失败信息时出错: {e}")
     
     async def _ensure_logged_in(self) -> bool:
-        """确保已登录Boss直聘 - 使用增强会话管理"""
+        """确保已登录Boss直聘 - 支持持久化登录状态"""
         try:
             # 首先导航到Boss直聘首页
             logger.info("🏠 导航到Boss直聘首页...")
-            await self.page.goto("https://www.zhipin.com", wait_until="domcontentloaded", timeout=15000)
+            try:
+                await self.page.goto("https://www.zhipin.com", wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                logger.warning(f"首页加载超时，尝试继续: {e}")
+                # 即使超时也尝试继续，因为页面可能已经部分加载
             await asyncio.sleep(3)
             
-            # 尝试加载已保存的会话
-            if await self.session_manager.load_session(self.page.context, "zhipin.com"):
-                logger.info("🍪 已加载保存的会话，刷新页面...")
-                await self.page.reload()
-                await asyncio.sleep(3)
+            # 如果使用持久化上下文，先检查是否已经登录
+            use_persistent = self.browser_config.get('use_persistent_context', True)
+            if use_persistent:
+                # 定义登录状态检查的选择器
+                login_indicators = [
+                    'a[href*="/web/geek/chat"]',  # 聊天入口
+                    '.nav-figure img',  # 用户头像
+                    'a[ka="header-username"]',  # 用户名链接
+                    '.header-login-name'  # 登录名
+                ]
                 
-                # 检查是否登录成功
-                if await self.session_manager.check_login_status(self.page, "zhipin.com"):
-                    logger.info("✅ 使用保存的会话登录成功!")
+                # 更严格的登录状态检查
+                # 先检查是否有登录按钮（如果有说明未登录）
+                login_button = await self.page.query_selector('a[ka="header-login"], .btn-sign, .sign-in')
+                if login_button:
+                    logger.info("❌ 检测到登录按钮，用户未登录")
+                else:
+                    # 检查登录状态的多种方式（更严格）
+                    for indicator in login_indicators:
+                        try:
+                            element = await self.page.query_selector(indicator)
+                            if element:
+                                logger.info(f"✅ 检测到登录标识: {indicator}")
+                                logger.info("✅ 使用持久化登录状态，无需重新登录")
+                                return True
+                        except:
+                            continue
+                
+                # 如果没有检测到登录状态，引导用户登录
+                logger.info("❌ 未检测到登录状态")
+                logger.info("🔐 请手动登录Boss直聘...")
+                logger.info("👉 登录步骤：")
+                logger.info("   1. 点击页面右上角的'登录'按钮")
+                logger.info("   2. 使用手机号验证码或扫码登录")
+                logger.info("   3. 登录成功后，在控制台按Enter继续")
+                
+                # 等待用户登录 - 使用异步等待而非阻塞输入
+                logger.info("\n⏸️  请在浏览器中完成登录...")
+                logger.info("💡 提示：登录成功后，程序会自动检测并继续")
+                
+                # 循环检测登录状态，每5秒检查一次
+                max_wait_time = 300  # 最多等待5分钟
+                check_interval = 5   # 每5秒检查一次
+                waited_time = 0
+                
+                while waited_time < max_wait_time:
+                    await asyncio.sleep(check_interval)
+                    waited_time += check_interval
+                    
+                    # 检查是否已登录
+                    for indicator in login_indicators:
+                        try:
+                            element = await self.page.query_selector(indicator)
+                            if element:
+                                logger.info(f"✅ 检测到登录成功！")
+                                await asyncio.sleep(2)  # 等待页面稳定
+                                return True
+                        except:
+                            continue
+                    
+                    # 显示等待进度
+                    remaining_time = max_wait_time - waited_time
+                    logger.info(f"⏳ 等待登录中... (剩余 {remaining_time} 秒)")
+                
+                logger.error("❌ 登录超时，请重试")
+                return False
+                
+            else:
+                # 使用传统的会话管理方式
+                # 尝试加载已保存的会话
+                if await self.session_manager.load_session(self.page.context, "zhipin.com"):
+                    logger.info("🍪 已加载保存的会话，刷新页面...")
+                    await self.page.reload()
+                    await asyncio.sleep(3)
+                    
+                    # 检查是否登录成功
+                    if await self.session_manager.check_login_status(self.page, "zhipin.com"):
+                        logger.info("✅ 使用保存的会话登录成功!")
+                        return True
+                    else:
+                        logger.warning("⚠️ 保存的会话已失效，需要重新登录")
+                
+                # 等待用户手动登录
+                if await self.session_manager.wait_for_login(self.page, timeout=300, domain="zhipin.com"):
+                    # 保存新的会话
+                    await self.session_manager.save_session(self.page.context, self.page, "zhipin.com")
                     return True
                 else:
-                    logger.warning("⚠️ 保存的会话已失效，需要重新登录")
-            
-            # 等待用户手动登录
-            if await self.session_manager.wait_for_login(self.page, timeout=300, domain="zhipin.com"):
-                # 保存新的会话
-                await self.session_manager.save_session(self.page.context, self.page, "zhipin.com")
-                return True
-            else:
-                logger.error("❌ 登录失败")
-                return False
+                    logger.error("❌ 登录失败")
+                    return False
             
         except Exception as e:
             logger.error(f"❌ 登录过程出错: {e}")
@@ -444,13 +695,22 @@ class RealPlaywrightBossSpider:
             # 提取福利待遇
             benefits = await self._extract_benefits()
             
-            return {
+            # 提取完整薪资信息
+            salary_info = await self._extract_salary_info()
+            
+            result = {
                 'job_description': job_description,
                 'job_requirements': job_requirements, 
                 'company_details': company_details,
                 'benefits': benefits,
                 'detail_extraction_success': True
             }
+            
+            # 如果提取到了更完整的薪资信息，更新它
+            if salary_info and salary_info != "薪资面议":
+                result['salary'] = salary_info
+                
+            return result
             
         except Exception as e:
             logger.error(f"❌ 提取详情页失败: {e}")
@@ -593,6 +853,52 @@ class RealPlaywrightBossSpider:
         
         return "公司详情信息未找到"
     
+    async def _extract_salary_info(self) -> str:
+        """提取薪资信息"""
+        # Boss直聘详情页的薪资选择器
+        selectors = [
+            '.salary',
+            '.job-primary .info-primary .salary',
+            '.info-primary h1 + .salary',
+            '.job-detail .salary',
+            '[class*="salary"]',
+            '.job-primary .name + .salary',
+            'span.salary'
+        ]
+        
+        for selector in selectors:
+            try:
+                element = await self.page.query_selector(selector)
+                if element:
+                    text = await element.inner_text()
+                    if text and text.strip():
+                        salary = text.strip()
+                        # 清理薪资文本
+                        salary = salary.replace('·', '-').replace('薪', '')
+                        # 验证是否是有效的薪资格式
+                        if any(k in salary for k in ['K', '万', '千']) and len(salary) > 2:
+                            logger.debug(f"✅ 找到薪资信息: {selector} → {salary}")
+                            return salary
+            except Exception as e:
+                logger.debug(f"提取薪资失败 {selector}: {e}")
+                continue
+        
+        # 尝试从页面文本中查找薪资
+        try:
+            page_text = await self.page.content()
+            import re
+            # 匹配薪资模式: 15K-25K, 15-25K, 1.5万-2.5万等
+            salary_pattern = r'\b(\d+(?:\.\d+)?)\s*[-~]\s*(\d+(?:\.\d+)?)\s*([Kk千万])\b'
+            match = re.search(salary_pattern, page_text)
+            if match:
+                salary = match.group(0)
+                logger.debug(f"✅ 从页面文本中找到薪资: {salary}")
+                return salary
+        except:
+            pass
+        
+        return ""
+    
     async def _extract_benefits(self) -> str:
         """提取福利待遇"""
         selectors = [
@@ -688,10 +994,15 @@ class RealPlaywrightBossSpider:
     async def close(self):
         """关闭浏览器"""
         try:
-            if self.page:
-                await self.page.close()
-            if self.browser:
+            # 对于持久化上下文，只需要关闭上下文
+            if self.context:
+                await self.context.close()
+            # 对于非持久化模式，需要关闭浏览器
+            elif self.browser:
+                if self.page:
+                    await self.page.close()
                 await self.browser.close()
+            
             if self.playwright:
                 await self.playwright.stop()
             

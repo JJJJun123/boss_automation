@@ -67,14 +67,21 @@ class SmartSelector:
             "job_title": {
                 "primary": [
                     '.job-name', '.job-title', 
-                    'a .job-name', 'h3.job-name'
+                    'a .job-name', 'h3.job-name',
+                    '.job-card-body .name a',  # Boss直聘新结构
+                    'span.job-name',            # 可能是span元素
+                    '.job-info .name'           # 岗位信息名称
                 ],
                 "fallback": [
                     '.job-info h3', '.job-primary .name',
-                    '.job-card-body .job-name', '[class*="job"][class*="name"]'
+                    '.job-card-body .job-name', '[class*="job"][class*="name"]',
+                    'a[href*="job_detail"]:first-child',  # 第一个岗位链接
+                    '.name:not(.company-name)',           # 排除公司名的name类
+                    'h3:first-child'                      # 第一个h3元素
                 ],
                 "generic": [
-                    '.position-name', 'h3', '.title'
+                    '.position-name', 'h3', '.title',
+                    'a:first-child', 'span:first-child'  # 第一个链接或span
                 ]
             },
             "company_name": {
@@ -93,15 +100,26 @@ class SmartSelector:
             },
             "salary": {
                 "primary": [
-                    '[class*="salary"]', '.red', '.salary',
-                    '.job-limit .red', '.job-primary .red'
+                    '.job-salary',                    # Boss直聘主要薪资类名
+                    'span.job-salary',                # span版本
+                    '[class*="salary"]',              # 包含salary的类
+                    '.red',                           # 红色文字（薪资常用）
+                    '.salary',                        # 通用salary类
+                    '.job-limit .red',                # 岗位限制中的红色文字
+                    '.job-primary .red',              # 主要信息中的红色文字
+                    '.text-warning',                  # 警告色文字
+                    '.text-orange'                    # 橙色文字
                 ],
                 "fallback": [
-                    '.job-salary', 'span:contains("K")', 
-                    'span:contains("万")', 'div:contains("K")'
+                    'span:has-text("K")',             # 包含K的span
+                    'span:has-text("万")',            # 包含万的span
+                    'div:has-text("K")',              # 包含K的div
+                    '.job-info span.red',             # 岗位信息中的红色span
+                    '.job-info .salary'               # 岗位信息中的薪资
                 ],
                 "generic": [
-                    'em', 'span[class*="pay"]', '.money', '.price'
+                    'em', 'span[class*="pay"]', '.money', '.price',
+                    'span[class*="wage"]', 'span[class*="salary"]'
                 ]
             },
             "location": {
@@ -330,6 +348,10 @@ class SmartSelector:
                         clean_text = text.strip()
                         quality_score = self._calculate_quality_score(clean_text, field_type)
                         
+                        # 对于job_title，增加调试信息
+                        if field_type == "job_title":
+                            logger.debug(f"职位标题选择器 {selector} 找到文本: '{clean_text}', 质量分: {quality_score}")
+                        
                         if quality_score > 0.3:  # 质量阈值
                             # 进行字段特定的清洗
                             cleaned_text = self._clean_field_text(clean_text, field_type)
@@ -340,6 +362,15 @@ class SmartSelector:
                                 confidence=quality_score,
                                 source_selector=selector,
                                 validation_errors=validation_errors
+                            )
+                        elif field_type == "job_title" and quality_score > 0:
+                            # 对于职位标题，放宽质量要求
+                            cleaned_text = self._clean_field_text(clean_text, field_type)
+                            return ExtractedField(
+                                value=cleaned_text,
+                                confidence=quality_score,
+                                source_selector=selector,
+                                validation_errors=["质量分较低"]
                             )
             except Exception as e:
                 logger.debug(f"选择器 {selector} 提取失败: {e}")
@@ -359,12 +390,17 @@ class SmartSelector:
         if field_type == "salary":
             # 清理薪资文本中的异常字符
             text = text.replace('·', '-').replace('薪', '').strip()
-            # 修复"-K"这种显示异常
-            if '-K' in text and len(text) < 10:
-                # 尝试从更完整的文本中提取
-                match = re.search(r'\d+[KkWw万千][\-~]\d+[KkWw万千]', text)
-                if match:
-                    text = match.group()
+            
+            # 修复"-K"这种显示异常（Boss直聘的反爬虫导致的不完整显示）
+            if re.match(r'^-[Kk]$', text) or re.match(r'^[Kk]-$', text):
+                # 这种情况下薪资信息不完整，标记为需要从详情页获取
+                logger.debug(f"检测到不完整的薪资格式: {text}")
+                return "薪资待更新"  # 特殊标记，后续从详情页更新
+            
+            # 尝试从更完整的文本中提取
+            match = re.search(r'\d+[KkWw万千][\-~]\d+[KkWw万千]', text)
+            if match:
+                text = match.group()
         
         elif field_type == "company_name":
             # 移除公司名中的多余信息

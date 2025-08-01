@@ -361,13 +361,14 @@ def serve_frontend():
         // 清理Markdown格式
         function cleanMarkdown(text) {
             if (!text) return text;
+            // 使用简单的字符串替换避免复杂的正则表达式
             return text
-                .replace(/\*\*(.*?)\*\*/g, '$1')  // 移除粗体**
-                .replace(/\*(.*?)\*/g, '$1')      // 移除斜体*
-                .replace(/__(.*?)__/g, '$1')      // 移除粗体__
-                .replace(/_(.*?)_/g, '$1')        // 移除斜体_
-                .replace(/`(.*?)`/g, '$1')        // 移除代码``
-                .replace(/#{1,6}\s/g, '')         // 移除标题#
+                .replace(/\\*\\*([^*]+?)\\*\\*/g, '$1')  // 移除粗体**text**
+                .replace(/\\*([^*]+?)\\*/g, '$1')        // 移除斜体*text*
+                .replace(/__([^_]+?)__/g, '$1')          // 移除粗体__text__
+                .replace(/_([^_]+?)_/g, '$1')            // 移除斜体_text_
+                .replace(/`([^`]+?)`/g, '$1')            // 移除代码`text`
+                .replace(/#{1,6}\\s+/g, '')              // 移除标题# text
                 .trim();
         }
 

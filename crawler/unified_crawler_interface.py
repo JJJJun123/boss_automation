@@ -9,6 +9,7 @@ import logging
 from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 from dataclasses import dataclass
+from config.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ class UnifiedCrawlerInterface:
     
     def __init__(self):
         self.engine_cache = {}  # 引擎实例缓存
+        self.config_manager = ConfigManager()
+        self.crawler_config = self.config_manager.get_app_config('crawler')
+        self.browser_config = self.crawler_config.get('browser', {})
         self.city_mapping = {
             # 支持多种城市代码格式
             "shanghai": {"name": "上海", "code": "101020100"},
@@ -189,7 +193,8 @@ class UnifiedCrawlerInterface:
         try:
             from .real_playwright_spider import RealPlaywrightBossSpider
             
-            spider = RealPlaywrightBossSpider(headless=True)
+            headless = self.browser_config.get('headless', False)
+            spider = RealPlaywrightBossSpider(headless=headless)
             
             try:
                 await spider.start()

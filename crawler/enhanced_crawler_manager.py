@@ -12,6 +12,7 @@ from dataclasses import asdict
 from .concurrent_manager import ConcurrentManager, get_concurrent_manager
 from .performance_monitor import PerformanceMonitor, CrawlerPerformance
 from .real_playwright_spider import RealPlaywrightBossSpider
+from config.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,11 @@ class EnhancedCrawlerManager:
         self.concurrent_manager: Optional[ConcurrentManager] = None
         self.performance_monitor = PerformanceMonitor()
         self.is_initialized = False
+        
+        # 获取配置
+        self.config_manager = ConfigManager()
+        self.crawler_config = self.config_manager.get_app_config('crawler')
+        self.browser_config = self.crawler_config.get('browser', {})
         
         # 管理器配置
         self.config = {
@@ -212,7 +218,8 @@ class EnhancedCrawlerManager:
         if callback:
             callback("启动直接搜索模式...")
         
-        spider = RealPlaywrightBossSpider(headless=True)
+        headless = self.browser_config.get('headless', False)
+        spider = RealPlaywrightBossSpider(headless=headless)
         
         try:
             if callback:

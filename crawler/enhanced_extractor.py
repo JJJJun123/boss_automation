@@ -703,14 +703,28 @@ class EnhancedDataExtractor:
             lines = [line.strip() for line in text_content.split('\n') if line.strip()]
             
             # 尝试识别职位名称（通常是第一行或包含关键词的行）
-            job_title = "职位信息"
-            for line in lines[:3]:  # 检查前3行
-                if any(keyword in line for keyword in ['工程师', '开发', '经理', '专员', '主管', '分析师']):
+            job_title = "职位信息获取失败"
+            
+            # 扩展职位关键词列表
+            job_keywords = [
+                '工程师', '开发', '经理', '专员', '主管', '分析师', '架构师', '总监',
+                '风控', 'AI', '产品', '运营', '设计', '测试', '项目', '数据',
+                '前端', '后端', '算法', '研发', '技术', '咨询', '顾问', '专家',
+                'Java', 'Python', 'Go', 'C++', '解决方案', '售前', '售后'
+            ]
+            
+            # 首先检查前3行是否包含职位关键词
+            for i, line in enumerate(lines[:5]):  # 扩展到前5行
+                if any(keyword.lower() in line.lower() for keyword in job_keywords):
                     job_title = line[:50]  # 限制长度
+                    break
+                # 如果第一行较短且不包含薪资/地点信息，可能是职位名
+                elif i == 0 and len(line) < 30 and not any(x in line for x in ['K', '万', '元', '·']):
+                    job_title = line[:50]
                     break
             
             # 尝试识别公司名称
-            company_name = "公司信息"
+            company_name = "公司信息获取失败"
             for line in lines:
                 if len(line) > 2 and len(line) < 30:  # 合理的公司名长度
                     if not any(char in line for char in ['K', '万', '年', '经验', '学历']):

@@ -42,6 +42,9 @@ crawler:
   browser:
     headless: false  # 是否无头模式
     timeout: 30      # 页面加载超时时间(秒)
+    # Chrome用户数据目录（用于保持登录状态）
+    user_data_dir: "./browser_profile/boss_zhipin"  # 专用配置文件目录
+    use_persistent_context: true  # 是否使用持久化上下文
     
   # 反爬虫设置
   anti_detection:
