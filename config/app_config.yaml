@@ -14,24 +14,52 @@ ai:
     - deepseek
     - claude  
     - gemini
+    - gpt
   
   # 默认AI服务商
   default_provider: "deepseek"
+  
+  # 增强分析器配置（GLM+DeepSeek混合模式）
+  use_enhanced_analyzer: true  # 是否启用混合AI模式，默认启用以获得更好性价比
   
   # 各AI模型的默认配置
   models:
     deepseek:
       model_name: "deepseek-chat"
-      temperature: 0.7
+      temperature: 0.3
       max_tokens: 1000
+      available_models:
+        - "deepseek-chat"
+        - "deepseek-reasoner"
     claude:
-      model_name: "claude-3-sonnet-20240229"
-      temperature: 0.7
+      model_name: "claude-3-5-sonnet-20241022"
+      temperature: 0.3
       max_tokens: 1000
+      available_models:
+        - "claude-3-5-sonnet-20241022"
+        - "claude-3-haiku-20240307"
     gemini:
       model_name: "gemini-pro"
-      temperature: 0.7
+      temperature: 0.3
       max_tokens: 1000
+      available_models:
+        - "gemini-pro"
+        - "gemini-pro-vision"
+    gpt:
+      model_name: "gpt-4o"
+      temperature: 0.3
+      max_tokens: 1000
+      available_models:
+        - "gpt-4o"
+        - "gpt-4o-mini"
+    glm:
+      model_name: "glm-4.5"
+      temperature: 0.3
+      max_tokens: 1000
+      available_models:
+        - "glm-4.5"
+        - "glm-4.5-air"
+        - "glm-4"
 
 # 爬虫配置
 crawler:
@@ -61,7 +89,7 @@ crawler:
 limits:
   max_jobs_search: 100     # 最大搜索岗位数
   max_jobs_analyze: 80     # 最大分析岗位数（提升以支持大规模分析）
-  min_score: 1             # 最小评分
+  min_score: 6             # 最小评分（6分以上才是合格岗位）
   max_score: 10            # 最大评分
 
 # 城市配置

@@ -1,5 +1,5 @@
 from .ai_client_factory import AIClientFactory
-from .prompts import JobMatchPrompts
+from .prompts.job_analysis_prompts import JobAnalysisPrompts
 from .job_requirement_summarizer import JobRequirementSummarizer, JobRequirementSummary
 import os
 import json
@@ -164,7 +164,8 @@ class JobAnalyzer:
             print(f"分析第 {i}/{len(jobs_list)} 个岗位: {job.get('title', '未知')}")
             
             try:
-                analysis_result = self.ai_client.analyze_job_match(
+                # 使用新的简单岗位匹配分析方法
+                analysis_result = self.ai_client.analyze_job_match_simple(
                     job, 
                     self.user_requirements
                 )
@@ -228,42 +229,45 @@ class JobAnalyzer:
     def _analyze_single_job_match(self, job):
         """分析单个岗位与简历的匹配度"""
         try:
-            # 构建专业匹配分析prompt
-            system_prompt = JobMatchPrompts.get_hr_system_prompt()
-            user_prompt = JobMatchPrompts.get_job_match_analysis_prompt(
+            # 使用新的AI服务进行专业岗位匹配分析
+            analysis_result = self.ai_client.analyze_job_match(
                 job, self.resume_analysis
             )
             
-            # 调用AI分析
-            response = self.ai_client.call_api_with_system(
-                system_prompt, user_prompt
-            )
-            
             # 解析结果
-            return self._parse_match_analysis_result(response)
+            return self._parse_match_analysis_result(analysis_result)
             
         except Exception as e:
             print(f"单个岗位匹配分析失败: {e}")
             return self._get_fallback_analysis(str(e))
     
-    def _parse_match_analysis_result(self, response_text):
+    def _parse_match_analysis_result(self, analysis_result):
         """解析匹配分析结果"""
         try:
-            # 提取JSON部分
-            response_text = response_text.strip()
+            # 如果是字符串，说明是旧版本的raw response，需要解析
+            if isinstance(analysis_result, str):
+                response_text = analysis_result.strip()
+                
+                if "```json" in response_text:
+                    start = response_text.find("```json") + 7
+                    end = response_text.find("```", start)
+                    json_text = response_text[start:end].strip()
+                elif "{" in response_text and "}" in response_text:
+                    start = response_text.find("{")
+                    end = response_text.rfind("}") + 1
+                    json_text = response_text[start:end]
+                else:
+                    json_text = response_text
+                
+                result = json.loads(json_text)
+                result['full_output'] = response_text
             
-            if "```json" in response_text:
-                start = response_text.find("```json") + 7
-                end = response_text.find("```", start)
-                json_text = response_text[start:end].strip()
-            elif "{" in response_text and "}" in response_text:
-                start = response_text.find("{")
-                end = response_text.rfind("}") + 1
-                json_text = response_text[start:end]
+            # 如果是字典，说明是新版本AI服务返回的结构化数据
+            elif isinstance(analysis_result, dict):
+                result = analysis_result.copy()
             else:
-                json_text = response_text
-            
-            result = json.loads(json_text)
+                # 其他类型，转换为字符串处理
+                return self._extract_match_info_from_text(str(analysis_result))
             
             # 验证和填充必要字段
             required_fields = [
@@ -281,18 +285,15 @@ class JobAnalyzer:
                 result['overall_score'] = max(1, min(10, float(result['overall_score'])))
             
             # 兼容原有字段格式
-            result['score'] = result['overall_score']
-            result['reason'] = result['detailed_analysis']
-            result['summary'] = result['action_recommendation']
-            
-            # 添加完整输出
-            result['full_output'] = response_text
+            result['score'] = result.get('overall_score', result.get('score', 5))
+            result['reason'] = result.get('detailed_analysis', result.get('reason', ''))
+            result['summary'] = result.get('action_recommendation', result.get('summary', ''))
             
             return result
             
-        except json.JSONDecodeError as e:
-            print(f"JSON解析失败: {e}")
-            return self._extract_match_info_from_text(response_text)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"结果解析失败: {e}")
+            return self._extract_match_info_from_text(str(analysis_result))
     
     def _get_default_match_value(self, field):
         """获取匹配分析字段默认值"""

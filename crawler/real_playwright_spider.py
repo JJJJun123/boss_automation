@@ -677,7 +677,7 @@ class RealPlaywrightBossSpider:
             logger.debug(f"🔗 访问详情页: {job_url}")
             
             # 导航到详情页
-            await self.page.goto(job_url, wait_until="domcontentloaded", timeout=10000)
+            await self.page.goto(job_url, wait_until="domcontentloaded", timeout=30000)  # 增加到30秒
             await asyncio.sleep(2)
             
             # 等待页面加载完成

@@ -19,6 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config_manager import ConfigManager
 from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
 from analyzer.job_analyzer import JobAnalyzer
+from analyzer.enhanced_job_analyzer import EnhancedJobAnalyzer
 
 
 # 创建Flask应用
@@ -288,13 +289,13 @@ def serve_frontend():
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">🤖 AI分析模型</label>
                                 <select id="ai_model" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="deepseek-chat">DeepSeek Chat (经济实用)</option>
-                                    <option value="deepseek-reasoner" selected>DeepSeek Reasoner (推理增强)</option>
-                                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (高质量)</option>
-                                    <option value="claude-3-sonnet-20240229">Claude 3 Sonnet (最高质量)</option>
+                                    <option value="deepseek-chat" selected>DeepSeek Chat (经济实用，推荐)</option>
+                                    <option value="deepseek-reasoner">DeepSeek Reasoner (推理增强)</option>
+                                    <option value="claude-3-5-sonnet-20241022">Claude 4 Sonnet (最高质量)</option>
+                                    <option value="gpt-4o">GPT-4o (OpenAI最新)</option>
                                     <option value="gemini-pro">Gemini Pro (平衡选择)</option>
                                 </select>
-                                <p class="text-xs text-gray-500 mt-1">不同模型的成本和质量不同，推荐使用DeepSeek Reasoner</p>
+                                <p class="text-xs text-gray-500 mt-1">不同模型的成本和质量不同，推荐使用DeepSeek Chat</p>
                             </div>
                             
                             <button id="start-search-btn" class="btn btn-primary w-full">
@@ -646,7 +647,7 @@ def serve_frontend():
                 .trim();
             
             // 移除每行开头的所有空白字符（包括全角空格）
-            cleaned = cleaned.replace(/^[\s\u3000\u00A0\t]+/gm, '');
+            cleaned = cleaned.replace(/^[\\s\u3000\u00A0\t]+/gm, '');
             
             // 移除重复的标题（如"工作职责:"后面又有"工作职责:"）
             cleaned = cleaned.replace(/^(工作职责|任职资格|岗位职责|任职要求)[:：]\\s*(工作职责|任职资格|岗位职责|任职要求)[:：]/g, '$1：');
@@ -905,10 +906,10 @@ def serve_frontend():
         function displayMarketAnalysis(analysis) {
             console.log('📊 显示市场分析:', analysis);
             console.log('📊 分析数据详情:', {
-                common_skills: analysis?.common_skills?.length || 0,
-                keyword_cloud: analysis?.keyword_cloud?.length || 0,
-                differentiation_analysis: analysis?.differentiation_analysis?.analysis?.length || 0,
-                total_jobs_analyzed: analysis?.total_jobs_analyzed || 0
+                market_overview: analysis?.market_overview,
+                skill_requirements: analysis?.skill_requirements,
+                key_findings: analysis?.key_findings?.length || 0,
+                core_responsibilities: analysis?.core_responsibilities?.length || 0
             });
             
             if (!analysis || typeof analysis !== 'object') {
@@ -946,22 +947,22 @@ def serve_frontend():
                     <span class="text-2xl mr-2">📊</span>
                     市场整体分析报告
                     <span class="text-sm font-normal text-gray-600 ml-2">
-                        (基于 ${analysis.total_jobs_analyzed || 0} 个岗位)
+                        (基于 ${analysis.market_overview?.total_jobs_analyzed || 0} 个岗位)
                     </span>
                 </h3>
             `;
             
-            // 共同技能要求
-            if (analysis.common_skills && analysis.common_skills.length > 0) {
+            // 核心必备技能
+            if (analysis.skill_requirements?.hard_skills?.core_required?.length > 0) {
                 analysisHTML += `
                     <div class="mb-4">
-                        <h4 class="text-sm font-medium text-gray-700 mb-2">🔧 共同技能要求</h4>
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">🔧 核心必备技能</h4>
                         <div class="space-y-1">
-                            ${analysis.common_skills.slice(0, 5).map(skill => `
+                            ${analysis.skill_requirements.hard_skills.core_required.slice(0, 5).map(skill => `
                                 <div class="flex items-center text-sm">
                                     <span class="text-gray-700 flex-1">${cleanMarkdown(skill.name)}</span>
                                     <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                                        ${skill.percentage}%
+                                        ${skill.frequency}
                                     </span>
                                 </div>
                             `).join('')}
@@ -970,16 +971,16 @@ def serve_frontend():
                 `;
             }
             
-            // 关键词云
-            if (analysis.keyword_cloud && analysis.keyword_cloud.length > 0) {
+            // 重要加分技能
+            if (analysis.skill_requirements?.hard_skills?.important_preferred?.length > 0) {
                 analysisHTML += `
                     <div class="mb-4">
-                        <h4 class="text-sm font-medium text-gray-700 mb-2">☁️ 热门关键词</h4>
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">⭐ 重要加分技能</h4>
                         <div class="flex flex-wrap gap-2">
-                            ${analysis.keyword_cloud.slice(0, 10).map(keyword => `
+                            ${analysis.skill_requirements.hard_skills.important_preferred.slice(0, 8).map(skill => `
                                 <span class="text-xs bg-white px-3 py-1 rounded-full border border-gray-200">
-                                    ${cleanMarkdown(keyword.word)} 
-                                    <span class="text-gray-500">(${keyword.count})</span>
+                                    ${cleanMarkdown(skill.name)} 
+                                    <span class="text-gray-500">(${skill.frequency})</span>
                                 </span>
                             `).join('')}
                         </div>
@@ -987,13 +988,31 @@ def serve_frontend():
                 `;
             }
             
-            // 差异化分析
-            if (analysis.differentiation_analysis && analysis.differentiation_analysis.analysis) {
+            // 核心职责
+            if (analysis.core_responsibilities && analysis.core_responsibilities.length > 0) {
+                analysisHTML += `
+                    <div class="mb-4">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">📋 核心职责</h4>
+                        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1">
+                            ${analysis.core_responsibilities.slice(0, 5).map(resp => `
+                                <li>${cleanMarkdown(resp)}</li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            // 关键发现
+            if (analysis.key_findings && analysis.key_findings.length > 0) {
                 analysisHTML += `
                     <div class="mb-2">
-                        <h4 class="text-sm font-medium text-gray-700 mb-2">🎯 差异化分析</h4>
-                        <div class="text-sm text-gray-600 whitespace-pre-wrap">
-                            ${cleanMarkdown(analysis.differentiation_analysis.analysis)}
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">🎯 关键发现</h4>
+                        <div class="space-y-2">
+                            ${analysis.key_findings.map(finding => `
+                                <div class="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-400">
+                                    ${cleanMarkdown(finding)}
+                                </div>
+                            `).join('')}
                         </div>
                     </div>
                 `;
@@ -1306,10 +1325,15 @@ def get_config():
         # 移除敏感信息
         ai_config.pop('api_key', None)
         
+        # 获取可用的AI模型
+        from analyzer.ai_client_factory import AIClientFactory
+        available_models = AIClientFactory.get_available_models()
+        
         return jsonify({
             'search': search_config,
             'ai': ai_config,
-            'app': config_manager.get_app_config()
+            'app': config_manager.get_app_config(),
+            'available_ai_models': available_models
         })
     except Exception as e:
         logger.error(f"获取配置失败: {e}")
@@ -1409,11 +1433,35 @@ def upload_resume():
         }
         
         # 更新全局分析器
-        from analyzer.job_analyzer import JobAnalyzer
         global job_analyzer_instance
         if 'job_analyzer_instance' not in globals():
-            job_analyzer_instance = JobAnalyzer()
-        job_analyzer_instance.set_resume_analysis(ai_analysis)
+            # 获取AI配置
+            try:
+                config_manager = ConfigManager()
+                ai_config = config_manager.get_app_config('ai', {})
+                use_enhanced_analyzer = ai_config.get('use_enhanced_analyzer', True)
+                
+                if use_enhanced_analyzer:
+                    print("🚀 创建增强型简历分析器（GLM+DeepSeek混合模式）")
+                    job_analyzer_instance = EnhancedJobAnalyzer(
+                        extraction_provider="glm",
+                        analysis_provider="deepseek"
+                    )
+                else:
+                    print("🔄 创建传统简历分析器")
+                    job_analyzer_instance = JobAnalyzer()
+            except Exception as e:
+                print(f"⚠️ 配置读取失败，使用默认增强分析器: {e}")
+                job_analyzer_instance = EnhancedJobAnalyzer(
+                    extraction_provider="glm",
+                    analysis_provider="deepseek"
+                )
+        
+        # 设置简历分析数据（兼容两种分析器）
+        if hasattr(job_analyzer_instance, 'set_resume_analysis'):
+            job_analyzer_instance.set_resume_analysis(ai_analysis)
+        else:
+            job_analyzer_instance.resume_analysis = ai_analysis
         
         logger.info(f"简历分析完成: {resume_data['name']}, 竞争力评分: {ai_analysis.get('competitiveness_score')}/10")
         
@@ -1536,23 +1584,45 @@ def run_job_search_task(params):
         
         # 如果用户指定了AI模型，或者没有现有实例，创建新的分析器
         if ai_model or 'job_analyzer_instance' not in globals():
-            print(f"🔄 创建新的JobAnalyzer实例，模型: {ai_model or ai_config['provider']}")
+            # 检查是否启用混合AI模式（GLM+DeepSeek）
+            use_enhanced_analyzer = ai_config.get('use_enhanced_analyzer', True)  # 默认启用
             
-            # 保存之前的简历分析数据（如果有）
-            previous_resume_analysis = None
-            if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
-                previous_resume_analysis = job_analyzer_instance.resume_analysis
-            
-            # 创建新实例
-            if ai_model:
-                job_analyzer_instance = JobAnalyzer(model_name=ai_model)
+            if use_enhanced_analyzer:
+                print(f"🚀 创建增强型JobAnalyzer实例（GLM+DeepSeek混合模式）")
+                
+                # 保存之前的简历分析数据（如果有）
+                previous_resume_analysis = None
+                if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
+                    previous_resume_analysis = job_analyzer_instance.resume_analysis
+                
+                # 创建增强分析器实例
+                job_analyzer_instance = EnhancedJobAnalyzer(
+                    extraction_provider="glm",  # GLM-4.5用于信息提取
+                    analysis_provider="deepseek"  # DeepSeek用于分析
+                )
+                
+                # 恢复简历分析数据
+                if previous_resume_analysis:
+                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                    print("🎯 已恢复简历数据到增强分析器实例")
             else:
-                job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
-            
-            # 恢复简历分析数据
-            if previous_resume_analysis:
-                job_analyzer_instance.resume_analysis = previous_resume_analysis
-                print("🎯 已恢复简历数据到新的分析器实例")
+                print(f"🔄 创建传统JobAnalyzer实例，模型: {ai_model or ai_config['provider']}")
+                
+                # 保存之前的简历分析数据（如果有）
+                previous_resume_analysis = None
+                if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
+                    previous_resume_analysis = job_analyzer_instance.resume_analysis
+                
+                # 创建传统分析器实例
+                if ai_model:
+                    job_analyzer_instance = JobAnalyzer(model_name=ai_model)
+                else:
+                    job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
+                
+                # 恢复简历分析数据
+                if previous_resume_analysis:
+                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                    print("🎯 已恢复简历数据到传统分析器实例")
         else:
             # 使用现有实例
             if hasattr(job_analyzer_instance, 'resume_analysis') and job_analyzer_instance.resume_analysis:
