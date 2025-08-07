@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-AI客户端工厂 - 重构为使用统一的AI服务架构
-支持快速创建AI服务实例，使用统一的提示词模板和纯API客户端
+AI客户端工厂 - 简化版，直接创建纯净的AI客户端
+移除AIService中间层，直接创建API客户端
 """
 
 import os
 from dotenv import load_dotenv
-from .ai_service import AIService, create_ai_service
 
 load_dotenv()
 
@@ -15,31 +14,82 @@ class AIClientFactory:
     @staticmethod
     def create_client(provider=None, model_name=None):
         """
-        创建AI服务实例（兼容旧版本接口）
+        直接创建纯净的AI客户端（重构后的简化版本）
         
         Args:
             provider: AI提供商名称
             model_name: 模型名称
             
         Returns:
-            AIService实例
+            具体的AI客户端实例（不再是AIService）
         """
-        # 使用新的统一AI服务
-        return create_ai_service(provider, model_name)
+        return AIClientFactory.create_pure_client(provider, model_name)
     
     @staticmethod
-    def create_ai_service(provider=None, model_name=None):
+    def create_pure_client(provider=None, model_name=None, use_sdk=True):
         """
-        创建AI服务实例（推荐使用的新接口）
+        创建纯净的AI客户端，跳过AIService包装层
         
         Args:
             provider: AI提供商名称
             model_name: 模型名称
+            use_sdk: 是否使用官方SDK（默认True，如果SDK可用）
             
         Returns:
-            AIService实例
+            具体的AI客户端实例
         """
-        return create_ai_service(provider, model_name)
+        # 设置默认提供商
+        if not provider:
+            try:
+                from config.config_manager import ConfigManager
+                config_manager = ConfigManager()
+                provider = config_manager.get_app_config('ai.default_provider', 'deepseek')
+            except Exception:
+                provider = 'deepseek'
+        
+        provider = provider.lower()
+        
+        # 根据提供商和SDK可用性选择客户端
+        if provider == "deepseek":
+            from .clients.deepseek_client import DeepSeekClient
+            return DeepSeekClient(model_name)
+            
+        elif provider == "claude":
+            if use_sdk:
+                try:
+                    from .clients.claude_client_sdk import ClaudeClientSDK
+                    return ClaudeClientSDK(model_name)
+                except ImportError:
+                    print("⚠️ Claude SDK不可用，回退到HTTP客户端")
+            from .clients.claude_client import ClaudeClient
+            return ClaudeClient(model_name)
+            
+        elif provider == "gemini":
+            if use_sdk:
+                try:
+                    from .clients.gemini_client_sdk import GeminiClientSDK
+                    return GeminiClientSDK(model_name)
+                except ImportError:
+                    print("⚠️ Google Generative AI SDK不可用，回退到HTTP客户端")
+            from .clients.gemini_client import GeminiClient
+            return GeminiClient(model_name)
+            
+        elif provider in ["gpt", "openai"]:
+            if use_sdk:
+                try:
+                    from .clients.gpt_client_sdk import GPTClientSDK
+                    return GPTClientSDK(model_name)
+                except ImportError:
+                    print("⚠️ OpenAI SDK不可用，回退到HTTP客户端")
+            from .clients.gpt_client import GPTClient
+            return GPTClient(model_name)
+            
+        elif provider == "glm":
+            from .clients.glm_client import GLMClient
+            return GLMClient(model_name)
+            
+        else:
+            raise ValueError(f"不支持的AI提供商: {provider}")
     
     @staticmethod
     def get_available_models():
@@ -83,6 +133,6 @@ def create_ai_client(provider=None, model_name=None):
         model_name: 模型名称
         
     Returns:
-        AIService实例
+        纯净的AI客户端实例
     """
-    return create_ai_service(provider, model_name)
+    return AIClientFactory.create_pure_client(provider, model_name)

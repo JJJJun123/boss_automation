@@ -7,10 +7,21 @@ from ..ai_client_factory import AIClientFactory
 class ResumeAnalyzer:
     """简历AI分析器，使用专业HR角色分析简历"""
     
-    def __init__(self, ai_provider='deepseek'):
+    def __init__(self, ai_provider=None):
+        # 从配置读取默认AI提供商
+        if not ai_provider:
+            try:
+                from config.config_manager import ConfigManager
+                config_manager = ConfigManager()
+                ai_provider = config_manager.get_app_config('ai.default_provider', 'deepseek')
+            except Exception:
+                ai_provider = 'deepseek'
+        
         self.ai_provider = ai_provider
         self.ai_client = AIClientFactory.create_client(ai_provider)
         self.analysis_history = []
+        
+        print(f"📝 简历分析器初始化完成，使用AI: {self.ai_provider.upper()}")
     
     def analyze_resume(self, resume_text, basic_info=None):
         """分析简历内容，返回完整的AI分析结果"""
@@ -21,8 +32,8 @@ class ResumeAnalyzer:
         
         try:
             # 调用AI分析
-            analysis_response = self.ai_client.call_api_with_system(
-                system_prompt, user_prompt, model="deepseek-chat"
+            analysis_response = self.ai_client.call_api(
+                system_prompt, user_prompt
             )
             
             # 解析分析结果

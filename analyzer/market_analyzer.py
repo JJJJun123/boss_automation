@@ -67,15 +67,18 @@ class MarketAnalyzer:
         # 构建分析提示词
         prompt = self._build_market_analysis_prompt(jobs)
         
-        # 调用AI分析（使用同步方法避免aiohttp问题）
+        # 调用AI分析（重构后使用纯净客户端的标准接口）
         try:
-            response = self.ai_client.call_api(prompt)
+            system_prompt = "你是专业的市场分析师，擅长分析职位市场趋势和技能需求。"
+            response = self.ai_client.call_api(system_prompt, prompt)
         except Exception as e:
-            logger.error(f"AI调用失败，使用同步方法重试: {e}")
-            # 如果有call_api_with_system方法，使用它
-            if hasattr(self.ai_client, 'call_api_with_system'):
-                response = self.ai_client.call_api_with_system("你是专业的市场分析师", prompt)
-            else:
+            logger.error(f"❌ 市场分析失败: {e}")
+            # 尝试使用简单API调用作为降级方案
+            try:
+                full_prompt = f"你是专业的市场分析师。{prompt}"
+                response = self.ai_client.call_api_simple(full_prompt)
+            except Exception as e2:
+                logger.error(f"❌ 降级方案也失败: {e2}")
                 raise e
         
         # 解析AI响应

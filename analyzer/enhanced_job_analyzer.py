@@ -14,7 +14,8 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
-from .ai_service import create_ai_service
+from .ai_client_factory import AIClientFactory
+from .job_analyzer import JobAnalyzer
 from .prompts.extraction_prompts import ExtractionPrompts
 from .prompts.job_analysis_prompts import JobAnalysisPrompts
 
@@ -37,9 +38,10 @@ class EnhancedJobAnalyzer:
             model_name: 分析阶段的具体模型名称
             screening_mode: 是否启用快速筛选模式（默认True）
         """
-        # 创建两个AI服务实例
-        self.extraction_service = create_ai_service(extraction_provider, "glm-4.5")
-        self.analysis_service = create_ai_service(analysis_provider, model_name)
+        # 创建AI服务实例
+        self.extraction_service = AIClientFactory.create_client(extraction_provider, "glm-4.5")
+        self.extraction_provider = extraction_provider  # 保存provider信息以便显示
+        self.job_analyzer = JobAnalyzer(ai_provider=analysis_provider, model_name=model_name)
         
         # 获取用户配置
         self.user_requirements = self._get_user_requirements()
@@ -50,8 +52,8 @@ class EnhancedJobAnalyzer:
         
         print(f"🚀 增强版分析器初始化完成")
         print(f"🎯 筛选模式: {'启用' if screening_mode else '禁用'}")
-        print(f"📋 筛选引擎: {extraction_provider.upper()}")
-        print(f"🧠 分析引擎: {self.analysis_service.provider.upper()}")
+        print(f"📋 筛选引擎: {self.extraction_provider.upper()}")
+        print(f"🧠 分析引擎: {self.job_analyzer.ai_provider.upper()}")
         
     def _get_user_requirements(self):
         """获取用户要求配置"""
@@ -162,7 +164,7 @@ class EnhancedJobAnalyzer:
         if self.screening_mode:
             # 新流程：快速筛选模式
             # 阶段1：快速筛选相关岗位
-            print(f"\n🔍 阶段1/3: 快速筛选相关岗位（使用{self.extraction_service.provider.upper()}）...")
+            print(f"\n🔍 阶段1/3: 快速筛选相关岗位（使用{self.extraction_provider.upper()}）...")
             relevant_jobs = await self._stage1_quick_screening(jobs_list)
             
             if not relevant_jobs:
@@ -172,16 +174,16 @@ class EnhancedJobAnalyzer:
             print(f"✅ 筛选出 {len(relevant_jobs)}/{len(jobs_list)} 个相关岗位")
             
             # 阶段2：信息提取（只对相关岗位）
-            print(f"\n📊 阶段2/3: 提取相关岗位信息（使用{self.extraction_service.provider.upper()}）...")
+            print(f"\n📊 阶段2/3: 提取相关岗位信息（使用{self.extraction_provider.upper()}）...")
             extracted_jobs = await self._stage1_extract_job_info(relevant_jobs)
             
             # 阶段3：市场认知分析
-            print(f"\n🧠 阶段3/3: 市场认知分析（使用{self.analysis_service.provider.upper()}）...")
+            print(f"\n🧠 阶段3/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             market_report = await self._stage2_market_cognition_analysis(extracted_jobs)
             self.market_cognition_report = market_report
             
             # 阶段4：个人匹配分析（只对相关岗位）
-            print(f"\n🎯 阶段4/4: 个人匹配分析（使用{self.analysis_service.provider.upper()}）...")
+            print(f"\n🎯 阶段4/4: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             analyzed_jobs = await self._stage3_personal_match_analysis(relevant_jobs, extracted_jobs)
             
             # 标记不相关的岗位
@@ -191,16 +193,16 @@ class EnhancedJobAnalyzer:
         else:
             # 原流程：全量分析
             # 阶段1：信息提取
-            print(f"\n📊 阶段1/3: 岗位信息提取（使用{self.extraction_service.provider.upper()}）...")
+            print(f"\n📊 阶段1/3: 岗位信息提取（使用{self.extraction_provider.upper()}）...")
             extracted_jobs = await self._stage1_extract_job_info(jobs_list)
             
             # 阶段2：市场认知分析
-            print(f"\n🧠 阶段2/3: 市场认知分析（使用{self.analysis_service.provider.upper()}）...")
+            print(f"\n🧠 阶段2/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             market_report = await self._stage2_market_cognition_analysis(extracted_jobs)
             self.market_cognition_report = market_report
             
             # 阶段3：个人匹配分析
-            print(f"\n🎯 阶段3/3: 个人匹配分析（使用{self.analysis_service.provider.upper()}）...")
+            print(f"\n🎯 阶段3/3: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             analyzed_jobs = await self._stage3_personal_match_analysis(jobs_list, extracted_jobs)
             
             return market_report, analyzed_jobs
@@ -264,7 +266,7 @@ class EnhancedJobAnalyzer:
                     print(f"⚠️ GLM网络异常，尝试降级到DeepSeek进行岗位{i}的信息提取...")
                     try:
                         # 使用DeepSeek进行提取
-                        fallback_response = self.analysis_service.call_api_simple(prompt, max_tokens=3000)
+                        fallback_response = self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=3000)
                         extracted_info = self._parse_extraction_result(fallback_response)
                         
                         job_with_extraction = job.copy()
@@ -297,7 +299,7 @@ class EnhancedJobAnalyzer:
             prompt = JobAnalysisPrompts.get_market_cognition_prompt(extracted_data)
             
             # 调用分析模型
-            response = self.analysis_service.call_api_simple(prompt)
+            response = self.job_analyzer.ai_client.call_api_simple(prompt)
             
             # 解析结果
             market_report = self._parse_market_cognition_result(response)
@@ -338,7 +340,7 @@ class EnhancedJobAnalyzer:
                 # 根据是否有简历选择分析方法
                 if self.resume_analysis:
                     # 使用简历智能匹配
-                    analysis_result = self.analysis_service.analyze_job_match(
+                    analysis_result = self.job_analyzer.analyze_job_match(
                         job, self.resume_analysis
                     )
                 else:
@@ -349,7 +351,7 @@ class EnhancedJobAnalyzer:
                         logger.info(f"标题: {job.get('title', '')}")
                         logger.info(f"描述长度: {len(job.get('job_description', ''))}")
                     
-                    analysis_result = self.analysis_service.analyze_job_match_simple(
+                    analysis_result = self.job_analyzer.analyze_job_match_simple(
                         job, self.user_requirements
                     )
                 

@@ -156,7 +156,7 @@ def upload_resume():
         
         # 使用新的解析器
         from analyzer.resume.resume_parser_v2 import ResumeParserV2
-        from analyzer.resume.resume_analyzer_v2 import ResumeAnalyzerV2
+        from analyzer.resume.resume_analyzer import ResumeAnalyzer
         
         parser = ResumeParserV2()
         
@@ -172,8 +172,15 @@ def upload_resume():
         
         logger.info(f"简历解析成功，文本长度: {len(resume_text)} 字符")
         
-        # AI分析简历
-        analyzer = ResumeAnalyzerV2()
+        # AI分析简历 - 使用统一的AI架构，从配置读取AI提供商
+        try:
+            from config.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            ai_provider = config_manager.get_app_config('ai.default_provider', 'deepseek')
+        except Exception:
+            ai_provider = 'deepseek'
+        
+        analyzer = ResumeAnalyzer(ai_provider=ai_provider)
         ai_analysis = analyzer.analyze_resume(resume_text)
         
         # 从AI分析结果中提取基本信息用于显示

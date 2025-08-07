@@ -17,6 +17,10 @@ python-socketio==5.10.0
 python-docx==1.1.0
 PyPDF2==3.0.1
 
-# AI analysis (add as needed)
-# openai>=1.0.0
-# anthropic>=0.7.0
+# AI SDK - 官方客户端库
+openai>=1.0.0          # OpenAI GPT模型
+anthropic>=0.7.0       # Claude模型
+google-generativeai>=0.3.0  # Gemini模型
+
+# 注意：DeepSeek使用OpenAI兼容接口，无需额外SDK
+# 注意：GLM（智谱）需要安装 zhipuai 库（如果使用）

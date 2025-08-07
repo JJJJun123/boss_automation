@@ -63,5 +63,4 @@ frontend/dist/
 cookies.json
 session_data/
 browser_profile/
-backend/browser_profile/
 crawler/sessions/
