@@ -65,18 +65,17 @@ python test_real_browser.py
 
 ## Architecture Overview
 
-The project uses a dual-crawler architecture with multiple AI analysis models:
+The project uses a simplified unified crawler architecture with multiple AI analysis models:
 
 ### Core Components
 
 1. **Crawler System** (`crawler/`):
-   - **Enhanced Crawler Manager** (`enhanced_crawler_manager.py`): High-level orchestration with performance monitoring (推荐)
+   - **Real Playwright Spider** (`real_playwright_spider.py`): Core crawler engine with persistent browser context and anti-detection
+   - **Unified Interface** (`unified_crawler_interface.py`): Simplified interface that uses Real Playwright Spider
    - **Large-Scale Crawler** (`large_scale_crawler.py`): Handles 50-100+ job listings with intelligent batching
-   - **Real Playwright Engine** (`real_playwright_spider.py`): Direct Playwright API with session management
    - **Smart Components**: Smart selector (`smart_selector.py`), enhanced extractor (`enhanced_extractor.py`)
-   - **MCP Engine** (`mcp_client.py`, `advanced_mcp_client.py`): AI-driven browser automation (实验性)
-   - **Unified Interface** (`unified_crawler_interface.py`): Single entry point supporting multiple engines
-   - **Supporting Services**: Session management, retry handling, performance monitoring, concurrent processing
+   - **Supporting Services**: Session management (`session_manager.py`), retry handling (`retry_handler.py`)
+   - **Deprecated**: MCP, Enhanced Manager, and failed unified_spider moved to `_deprecated/` folder
 
 2. **AI Analysis System** (`analyzer/`):
    - **AI Client Factory** (`ai_client_factory.py`): Multi-provider support with dynamic model selection
@@ -104,8 +103,8 @@ The project uses a dual-crawler architecture with multiple AI analysis models:
 
 1. User configures search parameters via web interface or CLI
 2. Configuration validated and stored by ConfigManager  
-3. Unified crawler interface selects appropriate engine (Enhanced/Real Playwright/MCP)
-4. Crawler fetches job listings with session management and anti-detection
+3. Unified crawler interface uses the simplified unified spider engine
+4. Crawler fetches job listings with integrated caching, session management and anti-detection
 5. AI analyzer processes job descriptions using selected provider (DeepSeek/Claude/Gemini)
 6. Jobs scored 1-10 based on user preferences and job match criteria
 7. Results streamed in real-time via WebSocket to web interface
@@ -121,33 +120,32 @@ GEMINI_API_KEY=xxx         # Optional
 ```
 
 ### User Preferences (config/user_preferences.yaml)
-- **Search Configuration**: Keywords, cities, job count limits, crawler engine selection
+- **Search Configuration**: Keywords, cities, job count limits
 - **AI Analysis**: Provider selection (deepseek/claude/gemini), minimum score threshold, analysis depth
 - **Personal Profile**: Skills, experience, salary expectations, company preferences
 - **UI Preferences**: Theme, language, display options, notification settings
 
 ## Important Implementation Details
 
-1. **Multi-Engine Architecture**: Enhanced Crawler Manager orchestrates multiple engines with automatic fallback
-2. **Large-Scale Processing**: Supports 50-100+ job listings (upgraded from 20-job limit) with intelligent batching
+1. **Persistent Browser Context**: Uses `browser_profile/boss_zhipin` to maintain login state across sessions
+2. **Large-Scale Processing**: Supports 50-100+ job listings with intelligent batching
 3. **Smart Data Extraction**: Multi-stage extraction with 90%+ success rate and adaptive CSS selectors
-4. **Session Persistence**: Automatic cookie and session management with 7-day persistence (`crawler/sessions/`)
+4. **Session Persistence**: Automatic cookie and session management with persistent browser profile
 5. **AI Cost Optimization**: Intelligent caching system with batch processing (5 jobs/API call) achieving 70-85% cost savings
 6. **Anti-Detection System**: Human-like behavior simulation, random delays, smart element selection
-7. **Performance Monitoring**: Real-time system resource monitoring with bottleneck detection
-8. **Concurrent Processing**: Async task scheduling with browser instance pooling (5x performance improvement)
-9. **Error Recovery**: Multi-strategy retry system with 95% recovery rate and intelligent fallback
+7. **Login State Management**: Automatic detection and preservation of login status
+8. **Retry Mechanism**: Built-in retry handler with exponential backoff for network failures
+9. **Error Recovery**: Multi-strategy retry system with intelligent fallback
 10. **Real-time Communication**: WebSocket-based progress updates with detailed status information
 
 ## Common Development Tasks
 
 **Crawler System Modifications**:
-- Enhanced crawler: Update `crawler/enhanced_crawler_manager.py` (recommended entry point)
+- Main crawler engine: Update `crawler/real_playwright_spider.py` (core crawler with persistent login)
+- Crawler interface: Modify `crawler/unified_crawler_interface.py` for API changes
 - Large-scale processing: Modify `crawler/large_scale_crawler.py` for 50-100+ job handling
 - Smart extraction: Update `crawler/enhanced_extractor.py` and `crawler/smart_selector.py`  
-- Real Playwright: Modify `crawler/real_playwright_spider.py` for direct Playwright features
-- MCP integration: Update `crawler/mcp_client.py` or `crawler/advanced_mcp_client.py`
-- Add new engines: Register in `crawler/unified_crawler_interface.py`
+- Session/retry logic: Update `crawler/session_manager.py` or `crawler/retry_handler.py`
 
 **AI Analysis Enhancements**:
 - New AI providers: Create client in `analyzer/` following existing pattern, register in `ai_client_factory.py`

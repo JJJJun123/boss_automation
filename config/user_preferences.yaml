@@ -29,9 +29,8 @@ search:
   max_analyze_jobs: 50   # AI分析岗位数（智能批量分析）
   fetch_details: true    # 获取岗位详细信息（AI要求总结需要）
   
-  # 爬虫引擎选择
-  spider_engine: "playwright"  # playwright（推荐）或 mcp（实验性）
-  use_playwright_mcp: false     # 已弃用，请使用 spider_engine: "mcp"
+  # 爬虫引擎配置（已简化为统一引擎）
+  # spider_engine: "unified"  # 已移除引擎选择，系统自动使用优化后的统一引擎
 
 # AI分析偏好
 ai_analysis:

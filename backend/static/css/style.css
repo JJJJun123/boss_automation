@@ -1,0 +1,40 @@
+body { font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', 'Helvetica Neue', Arial, sans-serif; }
+.glass { backdrop-filter: blur(20px); background: rgba(255, 255, 255, 0.8); }
+.btn { @apply px-6 py-3 rounded-2xl font-medium transition-all duration-200 transform hover:scale-105; }
+.btn-primary { @apply bg-blue-600 hover:bg-blue-700 text-white; }
+.btn-secondary { @apply bg-gray-100 hover:bg-gray-200 text-gray-800; }
+.card { @apply bg-white rounded-3xl shadow-lg p-6 border border-gray-200; }
+
+/* 页面切换样式 */
+.page-content { display: none; }
+.page-content.active { display: block; }
+.nav-btn { transition: all 0.2s ease; }
+.nav-btn.active { 
+    color: #2563eb !important; 
+    border-bottom-color: #2563eb !important; 
+    font-weight: 600;
+}
+
+/* 文件上传样式 */
+.upload-area {
+    border: 2px dashed #d1d5db;
+    transition: all 0.2s ease;
+}
+.upload-area.dragover {
+    border-color: #2563eb;
+    background-color: #eff6ff;
+}
+
+/* AI输出查看器样式 */
+.ai-output-viewer {
+    max-height: 500px;
+    overflow-y: auto;
+}
+.analysis-step {
+    border-left: 3px solid #e5e7eb;
+    transition: all 0.2s ease;
+}
+.analysis-step.expanded {
+    border-left-color: #2563eb;
+    background-color: #f8fafc;
+}

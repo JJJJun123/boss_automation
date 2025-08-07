@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
 """
 统一爬虫接口
-提供统一的搜索接口，消除代码重复，支持多种爬虫引擎
+提供统一的搜索接口，使用简化后的统一爬虫引擎
 """
 
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any, Union
-from enum import Enum
 from dataclasses import dataclass
 from config.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
-
-
-class CrawlerEngine(Enum):
-    """爬虫引擎枚举"""
-    ENHANCED_PLAYWRIGHT = "enhanced_playwright"  # 增强Playwright管理器 (推荐)
-    REAL_PLAYWRIGHT = "real_playwright"         # 直接Playwright爬虫  
-    MCP_PLAYWRIGHT = "mcp_playwright"           # MCP Playwright爬虫
 
 
 @dataclass
@@ -29,15 +21,12 @@ class SearchParams:
     max_jobs: int = 20
     priority: int = 1
     use_cache: bool = True
-    fetch_details: bool = False
-    engine: CrawlerEngine = CrawlerEngine.ENHANCED_PLAYWRIGHT
 
 
 @dataclass 
 class SearchResult:
     """搜索结果"""
     jobs: List[Dict]
-    engine_used: str
     total_found: int
     success: bool
     error_message: Optional[str] = None
@@ -46,24 +35,17 @@ class SearchResult:
 
 
 class UnifiedCrawlerInterface:
-    """统一爬虫接口"""
+    """统一爬虫接口 - 简化版"""
     
     def __init__(self):
-        self.engine_cache = {}  # 引擎实例缓存
         self.config_manager = ConfigManager()
-        self.crawler_config = self.config_manager.get_app_config('crawler')
-        self.browser_config = self.crawler_config.get('browser', {})
+        self.crawler_config = self.config_manager.get_app_config('crawler', {})
         self.city_mapping = {
-            # 支持多种城市代码格式
+            # 支持多种城市格式
             "shanghai": {"name": "上海", "code": "101020100"},
             "beijing": {"name": "北京", "code": "101010100"}, 
             "shenzhen": {"name": "深圳", "code": "101280600"},
-            "hangzhou": {"name": "杭州", "code": "101210100"},
-            # 兼容城市代码
-            "101020100": {"name": "上海", "code": "101020100"},
-            "101010100": {"name": "北京", "code": "101010100"},
-            "101280600": {"name": "深圳", "code": "101280600"},
-            "101210100": {"name": "杭州", "code": "101210100"}
+            "hangzhou": {"name": "杭州", "code": "101210100"}
         }
         
     def normalize_city(self, city: Union[str, int]) -> str:
@@ -107,9 +89,7 @@ class UnifiedCrawlerInterface:
                 city=self.normalize_city(params.get("city", "shanghai")),
                 max_jobs=params.get("max_jobs", 20),
                 priority=params.get("priority", 1),
-                use_cache=params.get("use_cache", True),
-                fetch_details=params.get("fetch_details", False),
-                engine=CrawlerEngine(params.get("engine", "enhanced_playwright"))
+                use_cache=params.get("use_cache", True)
             )
         else:
             search_params = params
@@ -119,7 +99,6 @@ class UnifiedCrawlerInterface:
         if not search_params.keyword.strip():
             return SearchResult(
                 jobs=[],
-                engine_used="none",
                 total_found=0,
                 success=False,
                 error_message="搜索关键词不能为空"
@@ -138,7 +117,6 @@ class UnifiedCrawlerInterface:
             logger.error(f"搜索失败: {e}")
             return SearchResult(
                 jobs=[],
-                engine_used=search_params.engine.value,
                 total_found=0,
                 success=False,
                 error_message=str(e),
@@ -146,62 +124,26 @@ class UnifiedCrawlerInterface:
             )
     
     async def _execute_search(self, params: SearchParams) -> SearchResult:
-        """执行具体搜索逻辑"""
-        engine = params.engine
-        
-        if engine == CrawlerEngine.ENHANCED_PLAYWRIGHT:
-            return await self._search_with_enhanced_playwright(params)
-        elif engine == CrawlerEngine.REAL_PLAYWRIGHT:
-            return await self._search_with_real_playwright(params) 
-        elif engine == CrawlerEngine.MCP_PLAYWRIGHT:
-            return await self._search_with_mcp_playwright(params)
-        else:
-            raise ValueError(f"不支持的爬虫引擎: {engine}")
+        """执行具体搜索逻辑 - 使用统一爬虫引擎"""
+        return await self._search_with_unified_spider(params)
     
-    async def _search_with_enhanced_playwright(self, params: SearchParams) -> SearchResult:
-        """使用增强Playwright管理器搜索"""
-        try:
-            from .enhanced_crawler_manager import enhanced_search_jobs
-            
-            jobs = await enhanced_search_jobs(
-                keyword=params.keyword,
-                city=params.city,
-                max_jobs=params.max_jobs,
-                priority=params.priority,
-                use_cache=params.use_cache
-            )
-            
-            # 检查是否命中缓存
-            cache_hit = any(
-                job.get("engine_source", "").find("缓存") != -1 
-                for job in jobs
-            )
-            
-            return SearchResult(
-                jobs=jobs,
-                engine_used="Enhanced Playwright Manager",
-                total_found=len(jobs),
-                success=True,
-                cache_hit=cache_hit
-            )
-            
-        except Exception as e:
-            raise Exception(f"增强Playwright管理器搜索失败: {e}")
-    
-    async def _search_with_real_playwright(self, params: SearchParams) -> SearchResult:
-        """使用直接Playwright爬虫搜索"""
+    async def _search_with_unified_spider(self, params: SearchParams) -> SearchResult:
+        """使用Real Playwright Spider搜索"""
         try:
             from .real_playwright_spider import RealPlaywrightBossSpider
             
-            headless = self.browser_config.get('headless', False)
-            spider = RealPlaywrightBossSpider(headless=headless)
+            # 创建爬虫实例
+            spider = RealPlaywrightBossSpider(headless=False)  # 使用有头模式
             
             try:
+                # 启动爬虫
                 await spider.start()
+                
+                # 执行搜索
                 jobs = await spider.search_jobs(
-                    params.keyword,
-                    params.city, 
-                    params.max_jobs
+                    keyword=params.keyword,
+                    city=params.city,
+                    max_jobs=params.max_jobs
                 )
                 
                 # 添加引擎标识
@@ -210,54 +152,17 @@ class UnifiedCrawlerInterface:
                 
                 return SearchResult(
                     jobs=jobs,
-                    engine_used="Real Playwright Spider",
                     total_found=len(jobs),
-                    success=True
+                    success=True,
+                    cache_hit=False
                 )
                 
             finally:
+                # 关闭爬虫
                 await spider.close()
                 
         except Exception as e:
-            raise Exception(f"Real Playwright爬虫搜索失败: {e}")
-    
-    async def _search_with_mcp_playwright(self, params: SearchParams) -> SearchResult:
-        """使用MCP Playwright爬虫搜索"""
-        try:
-            from .mcp_client import PlaywrightMCPSync
-            
-            # 城市名称转换为代码
-            city_info = self.city_mapping.get(params.city, {"code": "101020100"})
-            city_code = city_info["code"]
-            
-            spider = PlaywrightMCPSync(headless=False)
-            
-            try:
-                if not spider.start():
-                    raise Exception("MCP爬虫启动失败")
-                
-                jobs = spider.search_jobs(
-                    params.keyword,
-                    city_code,
-                    params.max_jobs
-                )
-                
-                # 添加引擎标识
-                for job in jobs:
-                    job['engine_source'] = 'Playwright MCP'
-                
-                return SearchResult(
-                    jobs=jobs,
-                    engine_used="Playwright MCP",
-                    total_found=len(jobs),
-                    success=True
-                )
-                
-            finally:
-                spider.close()
-                
-        except Exception as e:
-            raise Exception(f"MCP Playwright爬虫搜索失败: {e}")
+            raise Exception(f"Real Playwright Spider搜索失败: {e}")
     
     async def batch_search(self, search_requests: List[Union[SearchParams, Dict[str, Any]]]) -> Dict[str, SearchResult]:
         """
@@ -295,8 +200,8 @@ class UnifiedCrawlerInterface:
         return results
     
     def get_supported_engines(self) -> List[str]:
-        """获取支持的引擎列表"""
-        return [engine.value for engine in CrawlerEngine]
+        """获取支持的引擎列表 - 已简化为单一引擎"""
+        return ["unified_spider"]
     
     def get_supported_cities(self) -> List[Dict[str, str]]:
         """获取支持的城市列表"""
@@ -314,44 +219,18 @@ class UnifiedCrawlerInterface:
         
         return cities
     
-    def recommend_engine(self, requirements: Dict[str, Any]) -> CrawlerEngine:
+    def recommend_engine(self, requirements: Dict[str, Any]) -> str:
         """
-        根据需求推荐最佳引擎
+        根据需求推荐最佳引擎 - 现在只有一个统一引擎
         
         Args:
-            requirements: 需求字典，包含performance, cache, stability等偏好
+            requirements: 需求字典（保留以便向后兼容）
             
         Returns:
             推荐的引擎
         """
-        performance_priority = requirements.get("performance", 0.5)
-        cache_priority = requirements.get("cache", 0.7)
-        stability_priority = requirements.get("stability", 0.8)
-        
-        # 计算引擎评分
-        engine_scores = {
-            CrawlerEngine.ENHANCED_PLAYWRIGHT: (
-                performance_priority * 0.9 +  # 高性能
-                cache_priority * 1.0 +         # 完整缓存支持
-                stability_priority * 0.9       # 高稳定性
-            ),
-            CrawlerEngine.REAL_PLAYWRIGHT: (
-                performance_priority * 0.7 +   # 中等性能
-                cache_priority * 0.0 +         # 无缓存
-                stability_priority * 0.8       # 较高稳定性
-            ),
-            CrawlerEngine.MCP_PLAYWRIGHT: (
-                performance_priority * 0.6 +   # 较低性能
-                cache_priority * 0.0 +         # 无缓存
-                stability_priority * 0.6       # 中等稳定性
-            )
-        }
-        
-        # 返回评分最高的引擎
-        best_engine = max(engine_scores.items(), key=lambda x: x[1])[0]
-        
-        logger.info(f"根据需求推荐引擎: {best_engine.value}")
-        return best_engine
+        logger.info("使用统一爬虫引擎")
+        return "unified_spider"
 
 
 # 全局统一接口实例
@@ -371,7 +250,6 @@ async def unified_search_jobs(
     keyword: str,
     city: str = "shanghai", 
     max_jobs: int = 20,
-    engine: str = "enhanced_playwright",
     **kwargs
 ) -> List[Dict]:
     """
@@ -381,7 +259,6 @@ async def unified_search_jobs(
         keyword: 搜索关键词
         city: 城市
         max_jobs: 最大岗位数
-        engine: 爬虫引擎
         **kwargs: 其他参数
         
     Returns:
@@ -393,7 +270,6 @@ async def unified_search_jobs(
         keyword=keyword,
         city=city,
         max_jobs=max_jobs,
-        engine=CrawlerEngine(engine),
         **kwargs
     )
     
@@ -438,9 +314,8 @@ def get_crawler_capabilities() -> Dict[str, Any]:
             "caching": True,
             "concurrent_search": True,
             "performance_monitoring": True,
-            "auto_optimization": True,
             "error_recovery": True,
             "session_management": True
         },
-        "version": "2.0-unified"
+        "version": "3.0-simplified"
     }
