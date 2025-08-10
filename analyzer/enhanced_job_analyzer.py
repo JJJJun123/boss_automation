@@ -637,16 +637,21 @@ class EnhancedJobAnalyzer:
     
     def filter_and_sort_jobs(self, analyzed_jobs: List[Dict[str, Any]], min_score: int = 6) -> List[Dict[str, Any]]:
         """过滤和排序岗位"""
+        def get_score(job):
+            analysis = job.get('analysis', {})
+            # 优先使用overall_score，其次使用score
+            return analysis.get('overall_score', analysis.get('score', 0))
+        
         # 过滤低分岗位
         filtered_jobs = [
             job for job in analyzed_jobs 
-            if job.get('analysis', {}).get('score', 0) >= min_score
+            if get_score(job) >= min_score
         ]
         
         # 按分数排序
         sorted_jobs = sorted(
             filtered_jobs, 
-            key=lambda x: x.get('analysis', {}).get('score', 0), 
+            key=get_score, 
             reverse=True
         )
         
