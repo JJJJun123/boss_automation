@@ -142,7 +142,8 @@ class JobAnalyzer:
             
         except Exception as e:
             logger.error(f"岗位匹配分析失败 [{self.ai_provider}]: {e}")
-            return self._get_fallback_job_analysis(str(e))
+            # 直接抛出异常，让上层处理
+            raise e
     
     def analyze_job_match_simple(self, job_info: Dict[str, Any], user_requirements: str) -> Dict[str, Any]:
         """
@@ -167,7 +168,8 @@ class JobAnalyzer:
             
         except Exception as e:
             logger.error(f"简单岗位匹配分析失败 [{self.ai_provider}]: {e}")
-            return self._get_fallback_simple_analysis(str(e))
+            # 直接抛出异常，让上层处理
+            raise e
 
     def set_resume_analysis(self, resume_analysis):
         """设置简历分析结果用于智能匹配"""
@@ -227,7 +229,14 @@ class JobAnalyzer:
                 
             except Exception as e:
                 print(f"❌ 分析失败: {e}")
-                job['analysis'] = self._get_fallback_analysis(str(e))
+                job['analysis'] = {
+                    'score': -1,
+                    'overall_score': -1,
+                    'recommendation': '分析失败',
+                    'reason': f'分析失败: {e}',
+                    'error': True,
+                    'error_message': str(e)
+                }
                 analyzed_jobs.append(job)
         
         return analyzed_jobs
@@ -254,7 +263,14 @@ class JobAnalyzer:
                 
             except Exception as e:
                 print(f"❌ 分析失败: {e}")
-                job['analysis'] = self._get_fallback_analysis(str(e))
+                job['analysis'] = {
+                    'score': -1,
+                    'overall_score': -1,
+                    'recommendation': '分析失败',
+                    'reason': f'分析失败: {e}',
+                    'error': True,
+                    'error_message': str(e)
+                }
                 analyzed_jobs.append(job)
         
         return analyzed_jobs
@@ -432,21 +448,23 @@ class JobAnalyzer:
         }
     
     def _get_fallback_analysis(self, error_msg):
-        """获取fallback分析结果"""
+        """分析失败时的返回结果"""
         return {
-            'overall_score': 0,
-            'score': 0,  # 兼容字段
+            'overall_score': -1,  # 使用-1表示失败
+            'score': -1,
             'recommendation': '分析失败',
-            'dimension_scores': self._get_default_match_value('dimension_scores'),
-            'match_highlights': ['分析失败'],
-            'potential_concerns': ['无法分析'],
-            'interview_suggestions': ['请重新分析'],
-            'negotiation_points': ['请重新分析'],
-            'detailed_analysis': f'分析过程中出错: {error_msg}',
-            'reason': f'分析过程中出错: {error_msg}',  # 兼容字段
-            'action_recommendation': '请检查网络连接和API配置后重试',
-            'summary': '无法分析此岗位',  # 兼容字段
-            'full_output': f'AI分析服务异常: {error_msg}'
+            'dimension_scores': {},
+            'match_highlights': [],
+            'potential_concerns': [],
+            'interview_suggestions': [],
+            'negotiation_points': [],
+            'detailed_analysis': f'分析失败: {error_msg}',
+            'reason': f'分析失败: {error_msg}',
+            'action_recommendation': '',
+            'summary': f'分析失败: {error_msg}',
+            'full_output': f'AI分析失败: {error_msg}',
+            'error': True,
+            'error_message': error_msg
         }
     
     def set_user_requirements(self, requirements):
@@ -504,10 +522,41 @@ class JobAnalyzer:
                 json_str = json_match.group()
                 result = json.loads(json_str)
                 
-                # 验证必要字段
-                required_fields = ['score', 'recommendation', 'reason', 'summary']
-                if all(field in result for field in required_fields):
-                    return result
+                # 如果有推荐级别但没有分数，根据推荐级别推断分数
+                if 'recommendation' in result and 'score' not in result:
+                    recommendation = result['recommendation']
+                    if "强烈推荐" in recommendation:
+                        result['score'] = 8
+                    elif "推荐" in recommendation:
+                        result['score'] = 7
+                    elif "可以考虑" in recommendation:
+                        result['score'] = 6
+                    elif "不推荐" in recommendation:
+                        result['score'] = 3
+                    else:
+                        result['score'] = 5
+                    logger.info(f"根据推荐级别'{recommendation}'推断分数为{result['score']}")
+                
+                # 确保分数是数字类型
+                if 'score' in result:
+                    try:
+                        result['score'] = float(result['score'])
+                    except (ValueError, TypeError):
+                        result['score'] = 5
+                
+                # 验证必要字段，缺失的用默认值填充
+                defaults = {
+                    'score': 5,
+                    'recommendation': '需要进一步评估',
+                    'reason': result.get('reason', '分析完成'),
+                    'summary': result.get('summary', '请查看详细分析')
+                }
+                
+                for field, default_value in defaults.items():
+                    if field not in result:
+                        result[field] = default_value
+                
+                return result
             
             # JSON解析失败的降级处理
             return {
@@ -518,7 +567,7 @@ class JobAnalyzer:
             }
             
         except Exception as e:
-            logger.error(f"解析简单岗位分析结果失败: {e}")
+            logger.error(f"解析简单岗位分析结果失败: {e}, 响应内容前100字符: {response_text[:100]}")
             return self._get_fallback_simple_analysis(f"解析失败: {e}")
     
     def _parse_text_job_analysis(self, text: str) -> Dict[str, Any]:
@@ -557,33 +606,28 @@ class JobAnalyzer:
         }
     
     def _get_fallback_job_analysis(self, error_msg: str) -> Dict[str, Any]:
-        """获取岗位分析的降级结果（从AIService移过来）"""
+        """分析失败时的返回结果"""
         return {
-            "overall_score": 0,
+            "overall_score": -1,
             "recommendation": "分析失败",
-            "dimension_scores": {
-                "job_match": 0,
-                "skill_match": 0,
-                "experience_match": 0,
-                "salary_reasonableness": 0,
-                "company_fit": 0,
-                "development_prospects": 0,
-                "location_convenience": 0,
-                "risk_assessment": 0
-            },
+            "dimension_scores": {},
             "match_highlights": [],
-            "potential_concerns": [f"AI分析失败: {error_msg}"],
+            "potential_concerns": [],
             "interview_suggestions": [],
             "negotiation_points": [],
-            "detailed_analysis": f"分析过程中出现错误: {error_msg}",
-            "action_recommendation": "由于分析失败，建议手动评估该岗位。"
+            "detailed_analysis": f"分析失败: {error_msg}",
+            "action_recommendation": "",
+            "error": True,
+            "error_message": error_msg
         }
     
     def _get_fallback_simple_analysis(self, error_msg: str) -> Dict[str, Any]:
-        """获取简单分析的降级结果（从AIService移过来）"""
+        """分析失败时的返回结果"""
         return {
-            "score": 0,
+            "score": -1,
             "recommendation": "分析失败",
-            "reason": f"AI分析出现错误: {error_msg}",
-            "summary": "无法完成岗位匹配分析"
+            "reason": f"分析失败: {error_msg}",
+            "summary": f"分析失败: {error_msg}",
+            "error": True,
+            "error_message": error_msg
         }

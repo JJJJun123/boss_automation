@@ -20,6 +20,7 @@ from config.config_manager import ConfigManager
 from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
 from analyzer.job_analyzer import JobAnalyzer
 from analyzer.enhanced_job_analyzer import EnhancedJobAnalyzer
+from analyzer.smart_job_analyzer import SmartJobAnalyzer
 
 
 # 创建Flask应用
@@ -98,15 +99,10 @@ def get_config():
         # 移除敏感信息
         ai_config.pop('api_key', None)
         
-        # 获取可用的AI模型
-        from analyzer.ai_client_factory import AIClientFactory
-        available_models = AIClientFactory.get_available_models()
-        
         return jsonify({
             'search': search_config,
             'ai': ai_config,
-            'app': config_manager.get_app_config(),
-            'available_ai_models': available_models
+            'app': config_manager.get_app_config()
         })
     except Exception as e:
         logger.error(f"获取配置失败: {e}")
@@ -324,7 +320,7 @@ def run_job_search_task(params):
         keyword = params.get('keyword', search_config['keyword'])
         max_jobs = params.get('max_jobs', search_config['max_jobs'])
         selected_city = params.get('city', 'shanghai')  # 默认上海
-        ai_model = params.get('ai_model')  # 用户选择的AI模型
+        # ai_model参数已移除，系统固定使用EnhancedJobAnalyzer（GLM+DeepSeek）
         
         # 获取城市代码
         city_codes = search_config['city_codes']
@@ -359,18 +355,32 @@ def run_job_search_task(params):
         # 5. AI分析 - 支持动态模型选择
         global job_analyzer_instance
         
-        # 如果用户指定了AI模型，或者没有现有实例，创建新的分析器
-        if ai_model or 'job_analyzer_instance' not in globals():
-            # 检查是否启用混合AI模式（GLM+DeepSeek）
-            use_enhanced_analyzer = ai_config.get('use_enhanced_analyzer', True)  # 默认启用
+        # 如果没有现有实例，创建新的分析器
+        if 'job_analyzer_instance' not in globals():
+            # 检查是否启用智能分层分析器
+            use_smart_analyzer = ai_config.get('use_smart_analyzer', False)  # 默认关闭，需要手动启用
+            # 检查是否启用混合AI模式（GLM+DeepSeek）- 强制使用以获得市场分析报告
+            use_enhanced_analyzer = True  # 强制启用EnhancedJobAnalyzer以获得完整的市场分析
             
-            if use_enhanced_analyzer:
-                print(f"🚀 创建增强型JobAnalyzer实例（GLM+DeepSeek混合模式）")
+            # 保存之前的简历分析数据（如果有）
+            previous_resume_analysis = None
+            if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
+                previous_resume_analysis = job_analyzer_instance.resume_analysis
+            
+            if use_smart_analyzer:
+                print(f"💎 创建智能分层JobAnalyzer实例（GLM批量提取+DeepSeek批量评分+Claude深度分析）")
+                print(f"💰 预期成本: $0.65/100个岗位")
                 
-                # 保存之前的简历分析数据（如果有）
-                previous_resume_analysis = None
-                if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
-                    previous_resume_analysis = job_analyzer_instance.resume_analysis
+                # 创建智能分析器实例
+                job_analyzer_instance = SmartJobAnalyzer()
+                
+                # 恢复简历分析数据（如果有）
+                if previous_resume_analysis:
+                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                    print("🎯 已恢复简历数据到智能分析器实例")
+                    
+            elif use_enhanced_analyzer:
+                print(f"🚀 创建增强型JobAnalyzer实例（GLM+DeepSeek混合模式）")
                 
                 # 创建增强分析器实例
                 job_analyzer_instance = EnhancedJobAnalyzer(
@@ -383,18 +393,10 @@ def run_job_search_task(params):
                     job_analyzer_instance.resume_analysis = previous_resume_analysis
                     print("🎯 已恢复简历数据到增强分析器实例")
             else:
-                print(f"🔄 创建传统JobAnalyzer实例，模型: {ai_model or ai_config['provider']}")
-                
-                # 保存之前的简历分析数据（如果有）
-                previous_resume_analysis = None
-                if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
-                    previous_resume_analysis = job_analyzer_instance.resume_analysis
+                print(f"🔄 创建传统JobAnalyzer实例，模型: {ai_config['provider']}")
                 
                 # 创建传统分析器实例
-                if ai_model:
-                    job_analyzer_instance = JobAnalyzer(model_name=ai_model)
-                else:
-                    job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
+                job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
                 
                 # 恢复简历分析数据
                 if previous_resume_analysis:
@@ -414,11 +416,26 @@ def run_job_search_task(params):
         emit_progress("🧠 启动AI岗位要求总结和智能分析...", 50)
         
         try:
-            # 使用新的分析方法（包含岗位要求总结）
-            all_jobs_with_analysis = analyzer.analyze_jobs(jobs)
-            
-            # 市场分析已完成，不再需要单独的成本报告
-            emit_progress(f"📊 市场分析完成", 80)
+            # 检查是否使用智能分层分析器
+            if isinstance(analyzer, SmartJobAnalyzer):
+                # 使用智能分层分析（包含智能打分和TOP岗位深度分析）
+                result = analyzer.analyze_jobs_smart(jobs, session.get('resume_data'))
+                
+                # 从结果中提取分析后的岗位
+                all_jobs_with_analysis = result.get('all_jobs_with_scores', [])
+                
+                # 保存市场分析报告
+                analyzer.market_analysis = result.get('statistics', {})
+                
+                # 显示成本统计
+                cost_info = result.get('cost_analysis', {})
+                emit_progress(f"💰 分析完成 - API调用: {cost_info.get('total_api_calls', 0)}次, 缓存命中: {cost_info.get('cache_hits', 0)}次, 成本: {cost_info.get('estimated_cost', '$0')}", 80)
+            else:
+                # 使用新的分析方法（包含岗位要求总结）
+                all_jobs_with_analysis = analyzer.analyze_jobs(jobs)
+                
+                # 市场分析已完成，不再需要单独的成本报告
+                emit_progress(f"📊 市场分析完成", 80)
             
         except Exception as e:
             logger.error(f"新分析方法失败，降级到传统分析: {e}")
@@ -457,7 +474,20 @@ def run_job_search_task(params):
         save_all_job_results(all_jobs_with_analysis, filtered_jobs)  # 保存所有岗位
         
         # 8. 获取市场分析结果
-        market_analysis = analyzer.get_market_analysis() if analyzer else None
+        if isinstance(analyzer, SmartJobAnalyzer):
+            # 智能分析器的市场分析已在analyze_jobs_smart中返回
+            market_analysis = getattr(analyzer, 'market_analysis', None)
+            logger.info(f"SmartJobAnalyzer市场分析: {market_analysis is not None}")
+        elif isinstance(analyzer, EnhancedJobAnalyzer):
+            # EnhancedJobAnalyzer有完整的市场分析
+            market_analysis = analyzer.get_market_analysis()
+            logger.info(f"EnhancedJobAnalyzer市场分析获取: {market_analysis is not None}")
+            if market_analysis:
+                logger.info(f"市场分析包含技能要求: {'skill_requirements' in market_analysis}")
+                logger.info(f"市场分析包含核心职责: {'core_responsibilities' in market_analysis}")
+        else:
+            market_analysis = analyzer.get_market_analysis() if hasattr(analyzer, 'get_market_analysis') else None
+            logger.info(f"其他分析器市场分析: {market_analysis is not None}")
         
         # 9. 完成
         current_job.update({

@@ -278,9 +278,17 @@ class EnhancedJobAnalyzer:
                     except Exception as fallback_error:
                         logger.error(f"DeepSeek降级提取也失败: {fallback_error}")
                 
-                # 使用默认提取结果
+                # 提取失败，标记错误
                 job_with_extraction = job.copy()
-                job_with_extraction['extracted_info'] = self._get_default_extraction()
+                job_with_extraction['extracted_info'] = {
+                    "error": True,
+                    "error_message": str(e),
+                    "responsibilities": [],
+                    "hard_skills": {"required": [], "preferred": [], "bonus": []},
+                    "soft_skills": [],
+                    "experience_required": "提取失败",
+                    "education_required": "提取失败"
+                }
                 extracted_jobs.append(job_with_extraction)
         
         print(f"✅ 信息提取完成，成功提取{len(extracted_jobs)}个岗位")
@@ -321,7 +329,7 @@ class EnhancedJobAnalyzer:
             
         except Exception as e:
             logger.error(f"市场认知分析失败: {e}")
-            return self._get_default_market_report()
+            raise e
     
     async def _stage3_personal_match_analysis(self, 
                                             original_jobs: List[Dict[str, Any]], 
@@ -344,15 +352,19 @@ class EnhancedJobAnalyzer:
                         job, self.resume_analysis
                     )
                 else:
-                    # 使用简单匹配
+                    # 无简历时，也使用详细分析（基于用户要求构建匹配数据）
                     # 调试：显示输入内容
                     if i <= 2:  # 只显示前2个
                         logger.info(f"岗位{i}输入内容预览:")
                         logger.info(f"标题: {job.get('title', '')}")
                         logger.info(f"描述长度: {len(job.get('job_description', ''))}")
                     
-                    analysis_result = self.job_analyzer.analyze_job_match_simple(
-                        job, self.user_requirements
+                    # 构建虚拟简历数据
+                    pseudo_resume = self._build_pseudo_resume_from_requirements()
+                    
+                    # 使用详细分析
+                    analysis_result = self.job_analyzer.analyze_job_match(
+                        job, pseudo_resume
                     )
                 
                 # 合并分析结果
@@ -362,7 +374,16 @@ class EnhancedJobAnalyzer:
                 
             except Exception as e:
                 logger.error(f"分析岗位{i}失败: {e}")
-                job['analysis'] = self._get_fallback_analysis(str(e))
+                # 直接显示失败，不使用fallback
+                job['analysis'] = {
+                    'score': -1,
+                    'overall_score': -1,
+                    'recommendation': '分析失败',
+                    'reason': f'AI分析失败: {e}',
+                    'summary': f'分析失败: {e}',
+                    'error': True,
+                    'error_message': str(e)
+                }
                 job['extracted_info'] = extracted_job.get('extracted_info', {})
                 analyzed_jobs.append(job)
         
@@ -521,23 +542,66 @@ class EnhancedJobAnalyzer:
         }
     
     def _get_fallback_analysis(self, error_msg: str) -> Dict[str, Any]:
-        """获取降级分析结果"""
+        """分析失败时的返回结果"""
         return {
-            "overall_score": 0,
-            "score": 0,
+            "overall_score": -1,  # 使用-1表示失败
+            "score": -1,
             "recommendation": "分析失败",
-            "reason": f"分析过程中出错: {error_msg}",
-            "summary": "无法完成分析",
+            "reason": f"分析失败: {error_msg}",
+            "summary": f"分析失败: {error_msg}",
             "dimension_scores": {},
             "match_highlights": [],
-            "potential_concerns": ["分析服务异常"]
+            "potential_concerns": [],
+            "error": True,
+            "error_message": error_msg
         }
+    
+    def _build_pseudo_resume_from_requirements(self) -> Dict[str, Any]:
+        """基于用户要求构建虚拟简历数据"""
+        try:
+            from config.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            profile = config_manager.get_user_preference('personal_profile', {})
+            
+            # 构建类似简历分析结果的数据结构
+            pseudo_resume = {
+                'skills': profile.get('skills', []),
+                'experience_years': profile.get('experience_years', 0),
+                'education': profile.get('education_level', '本科'),
+                'job_intentions': profile.get('job_intentions', []),
+                'expected_salary': profile.get('salary_range', {}),
+                'work_experience': [
+                    {
+                        'title': intention,
+                        'years': profile.get('experience_years', 0)
+                    } for intention in profile.get('job_intentions', [])
+                ],
+                'certificates': profile.get('certificates', []),
+                'languages': profile.get('languages', ['中文']),
+                'strengths': profile.get('skills', [])[:5],  # 前5个技能作为优势
+                'competitiveness_score': 7,  # 默认竞争力分数
+                'recommended_jobs': profile.get('job_intentions', []),
+                'improvement_suggestions': ["持续学习新技术"]
+            }
+            
+            return pseudo_resume
+            
+        except Exception as e:
+            logger.warning(f"构建虚拟简历失败: {e}")
+            # 返回最小化的默认结构
+            return {
+                'skills': [],
+                'experience_years': 0,
+                'job_intentions': [],
+                'competitiveness_score': 5
+            }
     
     def get_market_analysis(self) -> Optional[Dict[str, Any]]:
         """获取市场分析结果（兼容原JobAnalyzer接口）"""
         if hasattr(self, 'market_report') and self.market_report:
             # 转换新格式到旧格式以保持前端兼容
             market_report = self.market_report
+            logger.info(f"EnhancedJobAnalyzer - 原始market_report包含: {list(market_report.keys())}")
             
             # 合并硬技能和软技能为统一格式
             all_skills = []

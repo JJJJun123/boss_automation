@@ -164,3 +164,52 @@ GEMINI_API_KEY=xxx         # Optional
 - Embedded UI: Backend serves UI directly from `backend/app.py` (lines 71+)
 - React development: Use separate React app in `frontend/` for complex changes
 - Real-time features: Update WebSocket handlers in both backend and frontend
+
+## 错误处理原则 - 必须严格遵守
+
+### 禁止的做法
+1. **禁止静默失败**: 永远不要用默认值掩盖错误。错误就是错误，必须明确显示
+2. **禁止假数据**: 不要生成看起来正常的假数据。宁可崩溃也不要假装正常
+3. **禁止模糊信息**: 不要用"需要进一步评估"这类模糊描述掩盖失败
+4. **禁止过度兜底**: 不要试图"智能恢复"，让错误暴露出来
+
+### 正确的做法
+1. **快速失败**: 遇到问题立即报错，让异常向上传播
+2. **明确的错误信息**: 准确说明什么失败了，包含具体错误原因
+3. **使用异常**: 用raise而不是return默认值
+4. **显式错误标记**: 使用error=True, error_message字段
+
+### 代码示例
+```python
+# ❌ 错误做法 - 绝对禁止
+try:
+    result = api_call()
+except:
+    return {"score": 5, "status": "需要评估"}  # 假数据！
+    
+try:
+    data = parse_json(response)
+except:
+    return get_default_data()  # 静默失败！
+
+# ✅ 正确做法
+try:
+    result = api_call()
+except Exception as e:
+    logger.error(f"API调用失败: {e}")
+    raise Exception(f"API调用失败: {e}")  # 明确失败！
+    
+try:
+    data = parse_json(response)
+except Exception as e:
+    return {
+        "error": True,
+        "error_message": f"JSON解析失败: {e}",
+        "data": None
+    }
+```
+
+### 原则总结
+- **透明性优于稳定性**: 宁可让用户看到错误，也不要用假数据欺骗用户
+- **调试友好**: 清晰的错误信息让问题定位变得简单
+- **不要过度工程**: 简单的失败比复杂的恢复机制更好

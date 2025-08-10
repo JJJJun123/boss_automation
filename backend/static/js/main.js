@@ -186,12 +186,6 @@ document.addEventListener('DOMContentLoaded', function() {
             ).join('');
         }
         
-        // 更新简历市场分析
-        const resumeMarketAnalysisDiv = document.getElementById('resume-market-analysis');
-        if (resumeMarketAnalysisDiv && aiAnalysis.market_position) {
-            resumeMarketAnalysisDiv.textContent = aiAnalysis.market_position;
-        }
-        
         // 存储AI原始输出（保留用于调试）
         window.resumeAIOutput = aiAnalysis.full_output || '';
     }
@@ -439,7 +433,6 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const keyword = document.getElementById('keyword').value.trim();
             const city = document.getElementById('city').value;
-            const aiModel = document.getElementById('ai_model').value;
             
             if (!keyword) {
                 alert('请输入搜索关键词');
@@ -454,14 +447,13 @@ document.addEventListener('DOMContentLoaded', function() {
             startBtn.textContent = '搜索中...';
             startBtn.disabled = true;
             
-            console.log('🔍 开始搜索:', { keyword, city, aiModel });
+            console.log('🔍 开始搜索:', { keyword, city });
             
             try {
                 const response = await axios.post('/api/jobs/search', {
                     keyword,
                     city,
-                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 20,
-                    ai_model: aiModel  // 传递用户选择的AI模型
+                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 20
                 });
                 
                 console.log('✅ 搜索任务已启动:', response.data);
@@ -787,23 +779,124 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         
-        // 添加智能匹配分析展示
-        if (isAnalyzed && analysis.dimension_scores) {
+        // 添加详细的智能匹配分析展示
+        if (isAnalyzed && analysis) {
             const analysisDiv = document.createElement('div');
-            analysisDiv.className = 'mt-4 p-4 bg-gray-50 rounded-lg';
-            analysisDiv.innerHTML = `
-                <div class="text-sm font-medium text-gray-900 mb-3">📊 智能匹配分析</div>
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div class="flex justify-between items-center py-1">
-                        <span class="text-gray-600">岗位匹配</span>
-                        <span class="font-medium">${analysis.dimension_scores.job_match || 0}/10</span>
-                    </div>
-                    <div class="flex justify-between items-center py-1">
-                        <span class="text-gray-600">技能匹配</span>
-                        <span class="font-medium">${analysis.dimension_scores.skill_match || 0}/10</span>
+            analysisDiv.className = 'mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-100';
+            
+            let analysisHTML = `
+                <div class="flex justify-between items-center mb-3">
+                    <div class="text-sm font-semibold text-gray-900">🎯 智能匹配分析</div>
+                    <div class="text-sm font-medium ${getScoreColor(score, true).replace('bg-', 'text-').replace('-100', '-600')}">
+                        ${analysis.priority_level || '中优先级'}
                     </div>
                 </div>
             `;
+            
+            // 技能匹配情况
+            if (analysis.matched_skills || analysis.missing_skills) {
+                analysisHTML += `
+                    <div class="mb-3 space-y-2">
+                        ${analysis.matched_skills && analysis.matched_skills.length > 0 ? `
+                            <div class="flex flex-wrap gap-1">
+                                <span class="text-xs text-green-700 font-medium">✅ 匹配技能:</span>
+                                ${analysis.matched_skills.map(skill => 
+                                    `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">${skill}</span>`
+                                ).join('')}
+                            </div>
+                        ` : ''}
+                        ${analysis.missing_skills && analysis.missing_skills.length > 0 ? `
+                            <div class="flex flex-wrap gap-1">
+                                <span class="text-xs text-red-700 font-medium">❌ 缺失技能:</span>
+                                ${analysis.missing_skills.map(skill => 
+                                    `<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">${skill}</span>`
+                                ).join('')}
+                            </div>
+                        ` : ''}
+                        ${analysis.extra_advantages && analysis.extra_advantages.length > 0 ? `
+                            <div class="flex flex-wrap gap-1">
+                                <span class="text-xs text-yellow-700 font-medium">⭐ 额外优势:</span>
+                                ${analysis.extra_advantages.map(adv => 
+                                    `<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">${adv}</span>`
+                                ).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            
+            // 技能覆盖率
+            if (analysis.skill_coverage_detail) {
+                analysisHTML += `
+                    <div class="text-xs text-gray-600 mb-2">
+                        📋 技能覆盖: <span class="font-medium">${analysis.skill_coverage_detail}</span>
+                    </div>
+                `;
+            }
+            
+            // 维度评分（只显示核心维度）
+            if (analysis.dimension_scores) {
+                const dimensions = [
+                    { key: 'job_match', label: '岗位匹配' },
+                    { key: 'skill_match', label: '技能匹配' },
+                    { key: 'experience_match', label: '经验匹配' },
+                    { key: 'skill_coverage', label: '技能覆盖' },
+                    { key: 'keyword_match', label: '关键词匹配' },
+                    { key: 'hard_requirements', label: '硬性要求' }
+                ];
+                
+                analysisHTML += `
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        ${dimensions.map(dim => {
+                            const score = analysis.dimension_scores[dim.key];
+                            if (score === undefined) return '';
+                            const percentage = score * 10;
+                            return `
+                                <div class="text-xs">
+                                    <div class="flex justify-between mb-1">
+                                        <span class="text-gray-600">${dim.label}</span>
+                                        <span class="font-medium">${score}/10</span>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-1.5">
+                                        <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${percentage}%"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }).filter(html => html).join('')}
+                    </div>
+                `;
+            }
+            
+            // 面试准备建议（可展开）
+            if (analysis.interview_preparation && analysis.interview_preparation.length > 0) {
+                analysisHTML += `
+                    <details class="text-xs">
+                        <summary class="cursor-pointer text-gray-700 hover:text-gray-900 font-medium">
+                            📝 查看面试准备建议
+                        </summary>
+                        <ul class="mt-2 space-y-1 text-gray-600">
+                            ${analysis.interview_preparation.map(tip => 
+                                `<li class="pl-4">• ${tip}</li>`
+                            ).join('')}
+                        </ul>
+                    </details>
+                `;
+            }
+            
+            // 行动建议
+            if (analysis.action_recommendation) {
+                const actionColor = analysis.priority_level === '高' ? 'green' : 
+                                  analysis.priority_level === '低' ? 'red' : 'yellow';
+                analysisHTML += `
+                    <div class="mt-3 pt-3 border-t border-gray-200">
+                        <div class="text-xs bg-${actionColor}-50 text-${actionColor}-700 p-2 rounded">
+                            💡 <strong>建议:</strong> ${analysis.action_recommendation}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            analysisDiv.innerHTML = analysisHTML;
             div.appendChild(analysisDiv);
         }
         

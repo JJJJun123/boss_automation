@@ -41,7 +41,7 @@ ai_analysis:
   model: "deepseek-chat"    # 默认使用deepseek-chat模型
   
   # 评分标准
-  min_score: 3           # 最低接受评分（降低标准以获得更多结果）
+  min_score: 6           # 最低接受评分（6分为合格线）
   
   # 分析深度
   analysis_depth: "standard"  # standard/detailed/quick

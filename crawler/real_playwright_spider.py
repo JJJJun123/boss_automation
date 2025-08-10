@@ -60,7 +60,9 @@ class RealPlaywrightBossSpider:
         
         # 检查是否使用持久化上下文
         use_persistent = self.browser_config.get('use_persistent_context', True)
-        user_data_dir = self.browser_config.get('user_data_dir', './browser_profile/boss_zhipin')
+        # 使用用户目录存储浏览器配置文件，避免混在代码目录中
+        user_data_dir = self.browser_config.get('user_data_dir', 
+            os.path.expanduser('~/Library/Application Support/boss_automation/browser_profile/boss_zhipin'))
         
         if use_persistent:
             # 创建用户数据目录

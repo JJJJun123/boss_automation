@@ -154,30 +154,53 @@ class GLMClient(BaseAIClient):
                                 return '{"responsibilities":["售前支持","POC管理","方案设计"],"hard_skills":{"required":["AI技术","项目管理"],"preferred":[]},"soft_skills":["沟通能力"],"experience_required":"5年+","education_required":"本科"}'
                             
                             # 处理相关性判断场景
-                            if "relevant" in prompt.lower() and ("相关" in reasoning_content or "匹配" in reasoning_content or "符合" in reasoning_content):
-                                logger.info("从reasoning_content中检测到相关性判断")
-                                # 判断是否相关
-                                is_relevant = False
-                                if "直接匹配" in reasoning_content or "明显属于" in reasoning_content or "符合求职意向" in reasoning_content:
-                                    is_relevant = True
-                                elif "不属于" in reasoning_content or "不符合" in reasoning_content or "不接受" in reasoning_content:
-                                    is_relevant = False
-                                else:
-                                    # 默认基于关键词判断
-                                    is_relevant = "相关" in reasoning_content or "匹配" in reasoning_content or "符合" in reasoning_content
+                            if "relevant" in prompt.lower():
+                                logger.info("从reasoning_content中检测到相关性判断任务")
                                 
-                                # 提取原因
+                                # 更智能的相关性判断
+                                is_relevant = False
                                 reason = "基于岗位内容分析"
+                                
+                                # 判断岗位是否相关 - 更精确的短语匹配
+                                # 正面判断（岗位相关）
+                                if any(phrase in reasoning_content for phrase in [
+                                    "符合求职意向", "与求职意向相关", "属于目标岗位",
+                                    "匹配用户需求", "是相关岗位", "符合要求"
+                                ]):
+                                    is_relevant = True
+                                    reason = "岗位与求职意向匹配"
+                                # 负面判断（岗位不相关）
+                                elif any(phrase in reasoning_content for phrase in [
+                                    "不符合求职意向", "与求职意向不相关", "不属于目标岗位",
+                                    "属于不接受的岗位类型", "明确排除", "用户不接受此类岗位"
+                                ]):
+                                    is_relevant = False
+                                    reason = "岗位不符合求职意向"
+                                # 默认判断 - 基于关键词出现频率
+                                else:
+                                    # 计算正面和负面信号
+                                    positive_signals = reasoning_content.count("相关") + reasoning_content.count("符合") + reasoning_content.count("匹配")
+                                    negative_signals = reasoning_content.count("不相关") + reasoning_content.count("不符合") + reasoning_content.count("不匹配")
+                                    
+                                    is_relevant = positive_signals > negative_signals
+                                    if is_relevant:
+                                        reason = "岗位特征与求职意向部分匹配"
+                                    else:
+                                        reason = "岗位特征与求职意向不匹配"
+                                
+                                # 尝试从reasoning_content提取更具体的原因
                                 if "岗位" in reasoning_content:
-                                    # 尝试提取关键判断理由
                                     sentences = reasoning_content.split("。")
                                     for sentence in sentences:
-                                        if "属于" in sentence or "符合" in sentence or "匹配" in sentence:
-                                            reason = sentence.strip()[:50]
-                                            break
+                                        if any(word in sentence for word in ["属于", "符合", "匹配", "相关"]):
+                                            extracted_reason = sentence.strip()[:100]
+                                            if len(extracted_reason) > 10:  # 确保提取的原因有意义
+                                                reason = extracted_reason
+                                                break
                                 
                                 # 清理reason中的特殊字符
                                 reason_clean = reason.replace('"', "'").replace('\n', ' ').replace('\r', '').strip()
+                                logger.info(f"筛选判断结果: relevant={is_relevant}, reason={reason_clean}")
                                 return f'{{"relevant": {str(is_relevant).lower()}, "reason": "{reason_clean}"}}'
                         except Exception as extract_error:
                             logger.error(f"从reasoning_content提取JSON失败: {extract_error}")
@@ -281,30 +304,53 @@ class GLMClient(BaseAIClient):
                                 return '{"responsibilities":["售前支持","POC管理","方案设计"],"hard_skills":{"required":["AI技术","项目管理"],"preferred":[]},"soft_skills":["沟通能力"],"experience_required":"5年+","education_required":"本科"}'
                             
                             # 处理相关性判断场景
-                            if "relevant" in prompt.lower() and ("相关" in reasoning_content or "匹配" in reasoning_content or "符合" in reasoning_content):
-                                logger.info("从reasoning_content中检测到相关性判断")
-                                # 判断是否相关
-                                is_relevant = False
-                                if "直接匹配" in reasoning_content or "明显属于" in reasoning_content or "符合求职意向" in reasoning_content:
-                                    is_relevant = True
-                                elif "不属于" in reasoning_content or "不符合" in reasoning_content or "不接受" in reasoning_content:
-                                    is_relevant = False
-                                else:
-                                    # 默认基于关键词判断
-                                    is_relevant = "相关" in reasoning_content or "匹配" in reasoning_content or "符合" in reasoning_content
+                            if "relevant" in prompt.lower():
+                                logger.info("从reasoning_content中检测到相关性判断任务")
                                 
-                                # 提取原因
+                                # 更智能的相关性判断
+                                is_relevant = False
                                 reason = "基于岗位内容分析"
+                                
+                                # 判断岗位是否相关 - 更精确的短语匹配
+                                # 正面判断（岗位相关）
+                                if any(phrase in reasoning_content for phrase in [
+                                    "符合求职意向", "与求职意向相关", "属于目标岗位",
+                                    "匹配用户需求", "是相关岗位", "符合要求"
+                                ]):
+                                    is_relevant = True
+                                    reason = "岗位与求职意向匹配"
+                                # 负面判断（岗位不相关）
+                                elif any(phrase in reasoning_content for phrase in [
+                                    "不符合求职意向", "与求职意向不相关", "不属于目标岗位",
+                                    "属于不接受的岗位类型", "明确排除", "用户不接受此类岗位"
+                                ]):
+                                    is_relevant = False
+                                    reason = "岗位不符合求职意向"
+                                # 默认判断 - 基于关键词出现频率
+                                else:
+                                    # 计算正面和负面信号
+                                    positive_signals = reasoning_content.count("相关") + reasoning_content.count("符合") + reasoning_content.count("匹配")
+                                    negative_signals = reasoning_content.count("不相关") + reasoning_content.count("不符合") + reasoning_content.count("不匹配")
+                                    
+                                    is_relevant = positive_signals > negative_signals
+                                    if is_relevant:
+                                        reason = "岗位特征与求职意向部分匹配"
+                                    else:
+                                        reason = "岗位特征与求职意向不匹配"
+                                
+                                # 尝试从reasoning_content提取更具体的原因
                                 if "岗位" in reasoning_content:
-                                    # 尝试提取关键判断理由
                                     sentences = reasoning_content.split("。")
                                     for sentence in sentences:
-                                        if "属于" in sentence or "符合" in sentence or "匹配" in sentence:
-                                            reason = sentence.strip()[:50]
-                                            break
+                                        if any(word in sentence for word in ["属于", "符合", "匹配", "相关"]):
+                                            extracted_reason = sentence.strip()[:100]
+                                            if len(extracted_reason) > 10:  # 确保提取的原因有意义
+                                                reason = extracted_reason
+                                                break
                                 
                                 # 清理reason中的特殊字符
                                 reason_clean = reason.replace('"', "'").replace('\n', ' ').replace('\r', '').strip()
+                                logger.info(f"筛选判断结果: relevant={is_relevant}, reason={reason_clean}")
                                 return f'{{"relevant": {str(is_relevant).lower()}, "reason": "{reason_clean}"}}'
                         except Exception as extract_error:
                             logger.error(f"从reasoning_content提取JSON失败: {extract_error}")

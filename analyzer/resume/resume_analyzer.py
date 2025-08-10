@@ -46,19 +46,26 @@ class ResumeAnalyzer:
             
         except Exception as e:
             print(f"简历分析失败: {e}")
-            return self._get_fallback_analysis(basic_info)
+            raise e
     
     def _build_hr_system_prompt(self):
         """构建专业HR系统prompt"""
         return """你是一位拥有15年丰富经验的资深HR总监，专精于人才评估和职业发展规划。
-你具备以下专业能力：
-1. 敏锐的人才识别能力，能快速判断候选人的核心竞争力
-2. 丰富的行业经验，熟悉各个领域的岗位要求和发展趋势
-3. 专业的简历分析技能，能从简历中挖掘出关键信息
-4. 客观公正的评价态度，既能发现优势也能指出不足
 
-你的任务是对上传的简历进行全面、专业、客观的分析评估。
-请以专业HR的角度，为求职者提供有价值的职业建议。"""
+重要评估原则：
+1. 【严格客观】不要过度乐观，要基于实际经验和技能进行评估
+2. 【实事求是】基于简历内容评分，不要凭空想象或过度推测
+3. 【市场对标】参考当前市场上同级别人才的平均水平
+4. 【合理建议】推荐的岗位要符合候选人的实际水平
+
+评分标准：
+- 9-10分：行业顶尖人才，有突出成就和影响力
+- 7-8分：优秀人才，在某些领域有明显优势
+- 5-6分：合格人才，能胜任对应级别工作
+- 3-4分：基础人才，需要进一步提升
+- 1-2分：入门级别，经验和技能较弱
+
+请以严格、客观的态度进行评估，避免给出过高的评分。"""
     
     def _build_user_analysis_prompt(self, resume_text, basic_info):
         """构建用户分析prompt"""
@@ -84,10 +91,15 @@ class ResumeAnalyzer:
 
 请从以下8个维度进行专业分析，并给出详细评估：
 
+重要提醒：
+- 根据工作年限合理评估（如3年经验不应推荐总监岗位）
+- 基于实际技能水平评分，不要过度乐观
+- 推荐岗位要与当前水平匹配
+
 1. 【竞争力评估】(1-10分)
-   - 整体竞争力水平
-   - 在目标行业中的优势地位
-   - 与同行业人才的对比
+   - 整体竞争力水平（基于工作年限和实际成就）
+   - 在同等经验人群中的位置
+   - 与市场平均水平的对比
 
 2. 【专业技能匹配度】(1-10分)
    - 技能深度与广度
@@ -137,10 +149,10 @@ class ResumeAnalyzer:
         "resume_expression": 简历表达分数,
         "personal_branding": 个人品牌分数
     }},
-    "strengths": ["优势1", "优势2", "优势3"],
-    "weaknesses": ["不足1", "不足2", "不足3"],
-    "recommended_jobs": ["推荐岗位1", "推荐岗位2", "推荐岗位3"],
-    "improvement_suggestions": ["建议1", "建议2", "建议3"],
+    "strengths": ["真实的优势1", "优势2", "优势3"],
+    "weaknesses": ["客观的不足1", "不足2", "不足3"],
+    "recommended_jobs": ["与经验匹配的岗位1(如:中级工程师)", "岗位2", "岗位3"],
+    "improvement_suggestions": ["实际可行的建议1", "建议2", "建议3"],
     "career_advice": "职业发展建议",
     "full_analysis": "完整分析报告"
 }}"""
@@ -213,7 +225,9 @@ class ResumeAnalyzer:
         return defaults.get(field, '待完善')
     
     def _extract_info_from_text(self, text):
-        """从纯文本中提取信息（fallback方法）"""
+        """这个函数不应该被使用"""
+        raise NotImplementedError("fallback文本解析已被移除")
+        # 以下代码不会执行
         return {
             'competitiveness_score': 5.0,
             'competitiveness_desc': '分析结果解析失败，请重新分析',
@@ -237,7 +251,9 @@ class ResumeAnalyzer:
         }
     
     def _get_fallback_analysis(self, basic_info):
-        """获取fallback分析结果"""
+        """这个函数不应该被使用"""
+        raise NotImplementedError("fallback机制已被移除")
+        # 以下代码不会执行
         experience_years = basic_info.get('experience_years', 0) if basic_info else 0
         skills = basic_info.get('skills', []) if basic_info else []
         

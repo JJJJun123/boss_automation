@@ -275,12 +275,11 @@ class JobRequirementSummarizer:
                 result_data = json.loads(json_str)
                 return JobRequirementSummary(**result_data)
             else:
-                logger.warning("AI响应格式不正确，使用默认总结")
-                return self._create_fallback_summary(title, description, requirements)
+                raise ValueError("AI响应格式不正确，无法解析JSON")
                 
         except Exception as e:
             logger.error(f"AI分析失败: {e}")
-            return self._create_fallback_summary(title, description, requirements)
+            raise e
     
     async def _ai_batch_analyze_jobs(self, job_batch: List[Tuple[int, Dict]]) -> List[JobRequirementSummary]:
         """AI批量分析岗位（成本优化策略）"""
@@ -339,14 +338,9 @@ class JobRequirementSummarizer:
                     if i < len(job_batch):
                         summaries.append(JobRequirementSummary(**result_data))
                 
-                # 如果结果数量不足，用fallback填充
-                while len(summaries) < len(job_batch):
-                    _, job = job_batch[len(summaries)]
-                    summaries.append(self._create_fallback_summary(
-                        job.get('title', ''), 
-                        job.get('job_description', ''),
-                        job.get('job_requirements', '')
-                    ))
+                # 如果结果数量不足，抛出异常
+                if len(summaries) < len(job_batch):
+                    raise ValueError(f"AI返回的结果数量不足: 期望{len(job_batch)}个，实际{len(summaries)}个")
                 
                 return summaries
             else:
@@ -367,32 +361,11 @@ class JobRequirementSummarizer:
                 
         except Exception as e:
             logger.error(f"批量AI分析失败: {e}")
-            # 创建fallback summaries
-            summaries = []
-            for _, job in job_batch:
-                summaries.append(self._create_fallback_summary(
-                    job.get('title', ''),
-                    job.get('job_description', ''),
-                    job.get('job_requirements', '')
-                ))
-            return summaries
+            raise e
     
     def _create_fallback_summary(self, title: str, description: str, requirements: str) -> JobRequirementSummary:
-        """创建fallback总结（当AI分析失败时）"""
-        return JobRequirementSummary(
-            core_responsibilities=["负责相关工作职责", "完成团队分配的任务"],
-            key_requirements=["相关工作经验", "良好的沟通能力"],
-            technical_skills=["相关专业技能"],
-            soft_skills=["团队合作", "沟通能力"],
-            experience_level="相关经验",
-            education_requirement="相关学历",
-            industry_background="相关行业背景",
-            compensation_range="待面议",
-            company_stage="发展中",
-            growth_potential="有一定成长空间",
-            match_keywords=[title] if title else [],
-            summary_confidence=0.3
-        )
+        """这个函数不应该被使用，保留仅为向后兼容"""
+        raise NotImplementedError("fallback机制已被移除，分析失败应直接报错")
     
     def _cache_summary(self, job_hash: str, summary: JobRequirementSummary) -> None:
         """缓存岗位要求总结"""
