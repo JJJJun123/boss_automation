@@ -11,32 +11,19 @@ app:
 ai:
   # 支持的AI服务商列表
   supported_providers:
-    - deepseek
     - claude  
     - gemini
     - gpt
+    - glm
   
   # 默认AI服务商
-  default_provider: "deepseek"
+  default_provider: "claude"
   
-  # 增强分析器配置（GLM+DeepSeek混合模式）
-  use_enhanced_analyzer: true  # 是否启用混合AI模式，默认启用以获得更好性价比
-  
-  # 智能分层分析器配置（批量处理+成本优化）
-  use_smart_analyzer: false  # 启用智能分层分析（GLM批量提取+DeepSeek批量评分+Claude深度分析）
-  smart_batch_size: 10      # 批处理大小
-  smart_top_n: 10          # TOP岗位数量
-  smart_cache_days: 30     # 缓存有效期（天）
+  # 分析器配置 - 系统使用EnhancedJobAnalyzer（GLM+Claude混合模式）
+  # 该分析器提供最佳的质量和性能平衡
   
   # 各AI模型的默认配置
   models:
-    deepseek:
-      model_name: "deepseek-chat"
-      temperature: 0.3
-      max_tokens: 1000
-      available_models:
-        - "deepseek-chat"
-        - "deepseek-reasoner"
     claude:
       model_name: "claude-3-5-sonnet-20241022"
       temperature: 0.3

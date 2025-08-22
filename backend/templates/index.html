@@ -112,20 +112,19 @@
                     
                     <!-- AI分析结果显示 -->
                     <div id="analysis-result" class="space-y-6" style="display: none;">
-                        <div class="p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border">
-                            <h4 class="font-bold text-gray-900 mb-2">📊 竞争力评估</h4>
-                            <div id="competitiveness-score" class="text-2xl font-bold text-blue-600">0/10</div>
-                            <p id="competitiveness-desc" class="text-sm text-gray-600 mt-1">正在分析...</p>
+                        <div class="space-y-4">
+                            <h4 class="font-bold text-gray-900">✅ 优势</h4>
+                            <div id="strengths-display" class="space-y-2"></div>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <h4 class="font-bold text-gray-900">📈 改进建议</h4>
+                            <div id="weaknesses-display" class="space-y-2"></div>
                         </div>
                         
                         <div class="space-y-4">
                             <h4 class="font-bold text-gray-900">🎯 推荐岗位类型</h4>
                             <div id="recommended-jobs" class="space-y-2"></div>
-                        </div>
-                        
-                        <div class="space-y-4">
-                            <h4 class="font-bold text-gray-900">💡 提升建议</h4>
-                            <div id="improvement-suggestions" class="space-y-2"></div>
                         </div>
                     </div>
                 </div>
@@ -174,13 +173,51 @@
 
                 <!-- 进度卡片 -->
                 <div class="card">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">任务进度</h3>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">⏱️ 任务进度</h3>
                     <div id="progress-container">
-                        <div id="progress-bar" class="w-full h-2 bg-gray-200 rounded-full mb-4" style="display: none;">
-                            <div id="progress-fill" class="h-full bg-blue-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        <!-- 主进度条 -->
+                        <div id="progress-bar" class="w-full h-3 bg-gray-200 rounded-full mb-4" style="display: none;">
+                            <div id="progress-fill" class="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500 relative" style="width: 0%">
+                                <div class="absolute inset-0 bg-white/20 rounded-full animate-pulse"></div>
+                            </div>
                         </div>
-                        <div id="progress-message" class="text-sm text-gray-600">等待开始搜索...</div>
-                        <div id="progress-logs" class="mt-4 max-h-48 overflow-y-auto space-y-2"></div>
+                        
+                        <!-- 进度百分比 -->
+                        <div id="progress-percentage" class="text-right text-xs text-gray-500 mb-2" style="display: none;">0%</div>
+                        
+                        <!-- 当前状态 -->
+                        <div id="progress-message" class="text-sm font-medium text-gray-800 mb-3 p-2 bg-gray-50 rounded-lg">
+                            等待开始搜索...
+                        </div>
+                        
+                        <!-- 阶段指示器 -->
+                        <div id="stage-indicators" class="grid grid-cols-4 gap-2 mb-4" style="display: none;">
+                            <div class="stage-item" data-stage="search">
+                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">1</div>
+                                <div class="text-xs text-center text-gray-500">搜索岗位</div>
+                            </div>
+                            <div class="stage-item" data-stage="extract">
+                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">2</div>
+                                <div class="text-xs text-center text-gray-500">AI分析</div>
+                            </div>
+                            <div class="stage-item" data-stage="analysis">
+                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">3</div>
+                                <div class="text-xs text-center text-gray-500">整理结果</div>
+                            </div>
+                            <div class="stage-item" data-stage="complete">
+                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">4</div>
+                                <div class="text-xs text-center text-gray-500">完成</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 详细日志 -->
+                        <div class="border-t pt-3">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-medium text-gray-700">详细日志</span>
+                                <button id="toggle-logs" class="text-xs text-blue-600 hover:text-blue-800" onclick="toggleProgressLogs()">展开</button>
+                            </div>
+                            <div id="progress-logs" class="max-h-32 overflow-y-auto space-y-1 text-xs" style="display: none;"></div>
+                        </div>
                     </div>
                 </div>
             </div>

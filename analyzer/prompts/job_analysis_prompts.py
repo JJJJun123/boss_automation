@@ -130,7 +130,6 @@ class JobAnalysisPrompts:
     }},
     "matched_skills": ["列出候选人掌握且岗位需要的技能"],
     "missing_skills": ["列出岗位要求但候选人缺失的技能"],
-    "extra_advantages": ["列出候选人的额外优势（岗位未要求但有价值的）"],
     "interview_preparation": ["2-3个基于JD分析的面试重点准备方向"],
     "skill_coverage_detail": "技能覆盖情况说明（如：掌握8/10个要求的技能）",
     "priority_level": "投递优先级（高/中/低）",

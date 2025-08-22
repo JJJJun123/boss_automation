@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Boss直聘智能求职助手 - A web-based intelligent job search assistant for Boss直聘 (zhipin.com) that uses dual-engine crawlers and multiple AI models to analyze job listings.
+Boss直聘智能求职助手 - A web-based intelligent job search assistant for Boss直聘 (zhipin.com) that uses a real Playwright-based crawler and multiple AI models to analyze and score job listings.
 
 **Target job types**: Market risk management, consulting, AI/artificial intelligence, fintech
 **Supported cities**: Shanghai, Beijing, Shenzhen, Hangzhou
@@ -23,44 +23,21 @@ python main.py
 # Alternative web startup (separate backend)
 cd backend && python app.py
 
-# Frontend development server (if needed)
-cd frontend && npm start
+# Stop all running processes
+python stop_all.py
 ```
 
-### Development Commands
+### Installation
 
 ```bash
 # Install Python dependencies
 pip install -r requirements.txt
-
-# Install Playwright MCP (required for AI-driven crawler)
-claude mcp add playwright npx -- @playwright/mcp@latest
 
 # Install Playwright browsers (required for real browser operations)
 playwright install chromium
 
 # Install safe dependencies (alternative installer)
 python install_safe.py
-
-# Stop all running processes
-python stop_all.py
-```
-
-### Testing
-
-```bash
-# Quick functionality tests
-python quick_test.py
-python quick_test_large_scale.py
-
-# Safe web application test
-python run_web_safe.py
-
-# Legacy test files (if available)
-python test_app.py
-python simple_test.py
-python test_fixes.py
-python test_real_browser.py
 ```
 
 ## Architecture Overview
@@ -75,12 +52,13 @@ The project uses a simplified unified crawler architecture with multiple AI anal
    - **Large-Scale Crawler** (`large_scale_crawler.py`): Handles 50-100+ job listings with intelligent batching
    - **Smart Components**: Smart selector (`smart_selector.py`), enhanced extractor (`enhanced_extractor.py`)
    - **Supporting Services**: Session management (`session_manager.py`), retry handling (`retry_handler.py`)
-   - **Deprecated**: MCP, Enhanced Manager, and failed unified_spider moved to `_deprecated/` folder
 
 2. **AI Analysis System** (`analyzer/`):
    - **AI Client Factory** (`ai_client_factory.py`): Multi-provider support with dynamic model selection
-   - **Supported Providers**: DeepSeek (default, cost-effective), Claude (high quality), Gemini (balanced)
+   - **Supported Providers**: DeepSeek (default, cost-effective), Claude (high quality), Gemini (balanced), GPT, GLM
    - **Job Analyzer** (`job_analyzer.py`): Unified analysis interface with 1-10 scoring system
+   - **Enhanced Job Analyzer** (`enhanced_job_analyzer.py`): GLM+DeepSeek mixed mode for better cost-performance
+   - **Smart Job Analyzer** (`smart_job_analyzer.py`): Batch processing with intelligent layered analysis
    - **Job Requirement Summarizer** (`job_requirement_summarizer.py`): Structured job requirement analysis with AI
    - **Market Analyzer** (`market_analyzer.py`): Industry and market trend analysis
    - **Resume Components** (`resume/`): Resume parsing and matching capabilities
@@ -103,9 +81,9 @@ The project uses a simplified unified crawler architecture with multiple AI anal
 
 1. User configures search parameters via web interface or CLI
 2. Configuration validated and stored by ConfigManager  
-3. Unified crawler interface uses the simplified unified spider engine
+3. Unified crawler interface uses the Real Playwright Spider engine
 4. Crawler fetches job listings with integrated caching, session management and anti-detection
-5. AI analyzer processes job descriptions using selected provider (DeepSeek/Claude/Gemini)
+5. AI analyzer processes job descriptions using selected provider (DeepSeek/Claude/Gemini/GPT/GLM)
 6. Jobs scored 1-10 based on user preferences and job match criteria
 7. Results streamed in real-time via WebSocket to web interface
 8. Final data persisted to `data/job_results.json` with metadata
@@ -117,13 +95,22 @@ The project uses a simplified unified crawler architecture with multiple AI anal
 DEEPSEEK_API_KEY=sk-xxx    # Required for AI analysis
 CLAUDE_API_KEY=sk-ant-xxx  # Optional
 GEMINI_API_KEY=xxx         # Optional
+GPT_API_KEY=sk-xxx         # Optional
+GLM_API_KEY=xxx            # Optional for enhanced analyzer
 ```
 
 ### User Preferences (config/user_preferences.yaml)
 - **Search Configuration**: Keywords, cities, job count limits
-- **AI Analysis**: Provider selection (deepseek/claude/gemini), minimum score threshold, analysis depth
+- **AI Analysis**: Provider selection, minimum score threshold, analysis depth
 - **Personal Profile**: Skills, experience, salary expectations, company preferences
 - **UI Preferences**: Theme, language, display options, notification settings
+
+### App Configuration (config/app_config.yaml)
+- **AI Model Settings**: Default provider, temperature, max tokens
+- **Enhanced Analyzer**: GLM+DeepSeek mixed mode toggle
+- **Smart Analyzer**: Batch processing and layered analysis settings
+- **Crawler Settings**: Retry attempts, timeout, headless mode
+- **Web Server**: Host, port, debug mode, WebSocket configuration
 
 ## Important Implementation Details
 
@@ -131,7 +118,10 @@ GEMINI_API_KEY=xxx         # Optional
 2. **Large-Scale Processing**: Supports 50-100+ job listings with intelligent batching
 3. **Smart Data Extraction**: Multi-stage extraction with 90%+ success rate and adaptive CSS selectors
 4. **Session Persistence**: Automatic cookie and session management with persistent browser profile
-5. **AI Cost Optimization**: Intelligent caching system with batch processing (5 jobs/API call) achieving 70-85% cost savings
+5. **AI Cost Optimization**: 
+   - Intelligent caching system with batch processing (5-10 jobs/API call)
+   - Enhanced analyzer using GLM for extraction + DeepSeek for scoring
+   - Smart analyzer with layered approach: GLM batch extraction → DeepSeek batch scoring → Claude deep analysis
 6. **Anti-Detection System**: Human-like behavior simulation, random delays, smart element selection
 7. **Login State Management**: Automatic detection and preservation of login status
 8. **Retry Mechanism**: Built-in retry handler with exponential backoff for network failures
@@ -148,9 +138,11 @@ GEMINI_API_KEY=xxx         # Optional
 - Session/retry logic: Update `crawler/session_manager.py` or `crawler/retry_handler.py`
 
 **AI Analysis Enhancements**:
-- New AI providers: Create client in `analyzer/` following existing pattern, register in `ai_client_factory.py`
+- New AI providers: Create client in `analyzer/clients/` following existing pattern, register in `ai_client_factory.py`
 - Job requirement analysis: Modify `analyzer/job_requirement_summarizer.py` for structured analysis
 - Analysis logic: Modify `analyzer/job_analyzer.py` for scoring algorithms  
+- Enhanced analyzer: Update `analyzer/enhanced_job_analyzer.py` for GLM+DeepSeek mixed mode
+- Smart analyzer: Update `analyzer/smart_job_analyzer.py` for batch processing logic
 - Prompt engineering: Update templates in `analyzer/prompts/`
 - Market analysis: Enhance `analyzer/market_analyzer.py`
 - Cost optimization: Update caching logic and batch processing strategies
@@ -162,7 +154,6 @@ GEMINI_API_KEY=xxx         # Optional
 
 **Frontend Development**:
 - Embedded UI: Backend serves UI directly from `backend/app.py` (lines 71+)
-- React development: Use separate React app in `frontend/` for complex changes
 - Real-time features: Update WebSocket handlers in both backend and frontend
 
 ## 错误处理原则 - 必须严格遵守

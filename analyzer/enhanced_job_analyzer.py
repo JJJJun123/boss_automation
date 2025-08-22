@@ -345,27 +345,13 @@ class EnhancedJobAnalyzer:
                 print(f"   分析进度: {i}/{len(original_jobs)}")
             
             try:
-                # 根据是否有简历选择分析方法
-                if self.resume_analysis:
-                    # 使用简历智能匹配
-                    analysis_result = self.job_analyzer.analyze_job_match(
-                        job, self.resume_analysis
-                    )
-                else:
-                    # 无简历时，也使用详细分析（基于用户要求构建匹配数据）
-                    # 调试：显示输入内容
-                    if i <= 2:  # 只显示前2个
-                        logger.info(f"岗位{i}输入内容预览:")
-                        logger.info(f"标题: {job.get('title', '')}")
-                        logger.info(f"描述长度: {len(job.get('job_description', ''))}")
-                    
-                    # 构建虚拟简历数据
-                    pseudo_resume = self._build_pseudo_resume_from_requirements()
-                    
-                    # 使用详细分析
-                    analysis_result = self.job_analyzer.analyze_job_match(
-                        job, pseudo_resume
-                    )
+                # 使用简历进行智能匹配（此时必定有简历，因为上层已检查）
+                if not self.resume_analysis:
+                    raise Exception("简历数据缺失，无法进行岗位匹配分析")
+                
+                analysis_result = self.job_analyzer.analyze_job_match(
+                    job, self.resume_analysis
+                )
                 
                 # 合并分析结果
                 job['analysis'] = analysis_result
@@ -556,45 +542,6 @@ class EnhancedJobAnalyzer:
             "error_message": error_msg
         }
     
-    def _build_pseudo_resume_from_requirements(self) -> Dict[str, Any]:
-        """基于用户要求构建虚拟简历数据"""
-        try:
-            from config.config_manager import ConfigManager
-            config_manager = ConfigManager()
-            profile = config_manager.get_user_preference('personal_profile', {})
-            
-            # 构建类似简历分析结果的数据结构
-            pseudo_resume = {
-                'skills': profile.get('skills', []),
-                'experience_years': profile.get('experience_years', 0),
-                'education': profile.get('education_level', '本科'),
-                'job_intentions': profile.get('job_intentions', []),
-                'expected_salary': profile.get('salary_range', {}),
-                'work_experience': [
-                    {
-                        'title': intention,
-                        'years': profile.get('experience_years', 0)
-                    } for intention in profile.get('job_intentions', [])
-                ],
-                'certificates': profile.get('certificates', []),
-                'languages': profile.get('languages', ['中文']),
-                'strengths': profile.get('skills', [])[:5],  # 前5个技能作为优势
-                'competitiveness_score': 7,  # 默认竞争力分数
-                'recommended_jobs': profile.get('job_intentions', []),
-                'improvement_suggestions': ["持续学习新技术"]
-            }
-            
-            return pseudo_resume
-            
-        except Exception as e:
-            logger.warning(f"构建虚拟简历失败: {e}")
-            # 返回最小化的默认结构
-            return {
-                'skills': [],
-                'experience_years': 0,
-                'job_intentions': [],
-                'competitiveness_score': 5
-            }
     
     def get_market_analysis(self) -> Optional[Dict[str, Any]]:
         """获取市场分析结果（兼容原JobAnalyzer接口）"""

@@ -54,7 +54,7 @@ class RealPlaywrightBossSpider:
     @retry_on_error(max_attempts=3, base_delay=2.0, strategy=RetryStrategy.EXPONENTIAL_BACKOFF)
     async def start(self) -> bool:
         """启动浏览器 - 使用持久化上下文保持登录状态"""
-        logger.info("🎭 启动真正的Playwright浏览器...")
+        logger.info("🎭 启动Playwright浏览器...")
         
         self.playwright = await async_playwright().start()
         

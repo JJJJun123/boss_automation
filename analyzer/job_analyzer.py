@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class JobAnalyzer:
     def __init__(self, ai_provider=None, model_name=None):
-        self.ai_provider = ai_provider or os.getenv('AI_PROVIDER', 'deepseek')
+        self.ai_provider = ai_provider or os.getenv('AI_PROVIDER', 'claude')
         self.model_name = model_name
         
         # 如果提供了模型名称，从中推导出provider
@@ -40,62 +40,75 @@ class JobAnalyzer:
         print(f"📊 启用市场整体分析引擎")
     
     def get_default_requirements(self):
-        """获取默认的用户要求（从配置文件读取，若无则使用硬编码）"""
+        """获取用户要求（优先从简历信息，其次从配置，最后使用默认值）"""
         try:
-            from config.config_manager import ConfigManager
-            config_manager = ConfigManager()
-            profile = config_manager.get_user_preference('personal_profile', {})
+            # 首先尝试从简历管理器获取信息
+            from analyzer.resume.resume_manager import ResumeManager
+            resume_manager = ResumeManager()
             
-            # 从配置构建用户要求文本
-            job_intentions = profile.get('job_intentions', [])
-            skills = profile.get('skills', [])
-            salary_range = profile.get('salary_range', {})
-            excluded_types = profile.get('excluded_job_types', [])
-            experience_years = profile.get('experience_years', 0)
-            
-            requirements = f"""
+            if resume_manager.has_resume():
+                # 使用简历中的信息
+                profile = resume_manager.get_personal_profile()
+                
+                job_intentions = profile.get('job_intentions', [])
+                skills = profile.get('skills', [])
+                salary_expectations = profile.get('salary_expectations', {})
+                experience_years = profile.get('experience_years', 0)
+                strengths = profile.get('strengths', [])
+                
+                # 如果简历中没有求职意向，尝试从配置获取搜索关键词
+                if not job_intentions:
+                    from config.config_manager import ConfigManager
+                    config_manager = ConfigManager()
+                    keyword = config_manager.get_user_preference('search.keyword', '')
+                    if keyword:
+                        job_intentions = [f"{keyword}相关岗位"]
+                
+                requirements = f"""
 求职意向：
-{chr(10).join(f'- {intention}' for intention in job_intentions)}
+{chr(10).join(f'- {intention}' for intention in job_intentions) if job_intentions else '- 暂未设置具体求职意向'}
 
 背景要求：
 - 工作经验: {experience_years}年
-- 技能专长: {', '.join(skills)}
-- 希望在大中型公司发展
+- 技能专长: {', '.join(skills) if skills else '暂未提供'}
+- 核心优势: {', '.join(strengths) if strengths else '暂未提供'}
 
 薪资期望：
-- {salary_range.get('min', 15)}K-{salary_range.get('max', 35)}K/月（可接受范围）
+- {salary_expectations.get('min', 15)}K-{salary_expectations.get('max', 35)}K/月（可接受范围）
 
-不接受的岗位类型：
-{chr(10).join(f'- {excluded}' for excluded in excluded_types)}
+简历竞争力评分：{profile.get('competitiveness_score', 0)}/10
 """
-            return requirements
+                return requirements
+                
+            else:
+                # 如果没有简历，尝试从配置文件读取
+                from config.config_manager import ConfigManager
+                config_manager = ConfigManager()
+                
+                # 获取搜索关键词作为求职意向
+                keyword = config_manager.get_user_preference('search.keyword', '市场风险管理')
+                cities = config_manager.get_user_preference('search.selected_cities', ['shanghai'])
+                
+                requirements = f"""
+求职意向：
+- {keyword}相关岗位
+
+目标城市：
+- {', '.join(cities)}
+
+说明：请先上传简历以获得更精准的岗位匹配分析
+"""
+                return requirements
             
-        except Exception:
-            # 如果配置读取失败，使用硬编码默认值
+        except Exception as e:
+            # 如果所有方法都失败，返回基础默认值
+            import logging
+            logging.error(f"获取用户要求失败: {e}")
             return """
 求职意向：
-- 市场风险管理相关岗位
-- 咨询相关岗位（战略咨询、管理咨询、行业分析）
-- AI/人工智能相关岗位
-- 金融相关岗位（银行、证券、基金、保险）
+- 待设定（请上传简历）
 
-背景要求：
-- 有金融行业经验优先
-- 熟悉风险管理、数据分析
-- 对AI/机器学习有一定了解
-- 希望在大中型公司发展
-
-薪资期望：
-- 15K-35K/月（可接受范围）
-
-地理位置：
-- 深圳优先，其他一线城市可考虑
-
-不接受的岗位类型：
-- 纯销售岗位
-- 客服岗位
-- 纯技术开发（除非AI相关）
-- 初级行政岗位
+说明：请先上传简历以获得精准的岗位匹配分析
 """
     
     def _create_ai_client(self, provider: str, model_name: str = None):
@@ -401,11 +414,7 @@ class JobAnalyzer:
                 'job_match': 5,
                 'skill_match': 5,
                 'experience_match': 5,
-                'salary_reasonableness': 5,
-                'company_fit': 5,
-                'development_prospects': 5,
-                'location_convenience': 5,
-                'risk_assessment': 5
+                'skill_coverage': 5
             },
             'match_highlights': ['待分析'],
             'potential_concerns': ['待分析'],
@@ -598,14 +607,10 @@ class JobAnalyzer:
                 "job_match": score,
                 "skill_match": score,
                 "experience_match": score,
-                "salary_reasonableness": score,
-                "company_fit": score,
-                "development_prospects": score,
-                "location_convenience": score,
-                "risk_assessment": score
+                "skill_coverage": score
             },
             "match_highlights": ["AI分析处理中"],
-            "potential_concerns": ["AI响应格式异常，建议重新分析"],
+            "potential_issues": ["AI响应格式异常，建议重新分析"],
             "detailed_analysis": text[:200] + "..." if len(text) > 200 else text,
             "action_recommendation": f"基于{score}分的评估，{recommendation}。"
         }

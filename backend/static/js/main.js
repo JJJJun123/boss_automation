@@ -157,33 +157,53 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     
-    // 显示AI分析结果
+    // 显示AI分析结果 - 适配新的LangGPT格式
     function displayAIAnalysis(aiAnalysis) {
         console.log('🤖 显示AI分析结果:', aiAnalysis);
         if (analysisEmpty) analysisEmpty.style.display = 'none';
         if (analysisResult) analysisResult.style.display = 'block';
         
-        // 更新竞争力评分
-        const scoreEl = document.getElementById('competitiveness-score');
-        if (scoreEl) scoreEl.textContent = (aiAnalysis.competitiveness_score || 0) + '/10';
-        
-        const descEl = document.getElementById('competitiveness-desc');
-        if (descEl) descEl.textContent = aiAnalysis.competitiveness_desc || '分析中...';
-        
-        // 更新推荐岗位
-        const recommendedJobsDiv = document.getElementById('recommended-jobs');
-        if (recommendedJobsDiv && aiAnalysis.recommended_jobs && aiAnalysis.recommended_jobs.length > 0) {
-            recommendedJobsDiv.innerHTML = aiAnalysis.recommended_jobs.map(job => 
-                `<div class="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">• ${job}</div>`
-            ).join('');
+        // 显示优势
+        const strengthsDiv = document.getElementById('strengths-display');
+        const strengths = aiAnalysis.strengths || [];
+        if (strengthsDiv) {
+            if (strengths.length > 0) {
+                strengthsDiv.innerHTML = strengths.map(strength => 
+                    `<div class="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">✅ ${strength}</div>`
+                ).join('');
+            } else {
+                strengthsDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
+            }
         }
         
-        // 更新提升建议
-        const suggestionsDiv = document.getElementById('improvement-suggestions');
-        if (suggestionsDiv && aiAnalysis.improvement_suggestions && aiAnalysis.improvement_suggestions.length > 0) {
-            suggestionsDiv.innerHTML = aiAnalysis.improvement_suggestions.map(suggestion => 
-                `<div class="px-3 py-2 bg-yellow-50 text-yellow-700 rounded-lg text-sm">• ${suggestion}</div>`
-            ).join('');
+        // 显示改进建议（劣势）
+        const weaknessesDiv = document.getElementById('weaknesses-display');
+        const weaknesses = aiAnalysis.weaknesses || [];
+        if (weaknessesDiv) {
+            if (weaknesses.length > 0) {
+                weaknessesDiv.innerHTML = weaknesses.map(weakness => 
+                    `<div class="px-3 py-2 bg-yellow-50 text-yellow-700 rounded-lg text-sm">📈 ${weakness}</div>`
+                ).join('');
+            } else {
+                weaknessesDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
+            }
+        }
+        
+        // 显示推荐岗位（兼容对象和字符串两种格式）
+        const recommendedJobsDiv = document.getElementById('recommended-jobs');
+        const recommendedPositions = aiAnalysis.recommended_positions || [];
+        if (recommendedJobsDiv) {
+            if (recommendedPositions.length > 0) {
+                recommendedJobsDiv.innerHTML = recommendedPositions.map(job => {
+                    // 兼容处理：如果是对象，提取position字段；如果是字符串，直接使用
+                    const jobText = typeof job === 'object' ? 
+                        `${job.position || job} (匹配度: ${job.match_score || 'N/A'})` : 
+                        job;
+                    return `<div class="px-3 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm">🎯 ${jobText}</div>`;
+                }).join('');
+            } else {
+                recommendedJobsDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
+            }
         }
         
         // 存储AI原始输出（保留用于调试）
@@ -419,10 +439,37 @@ document.addEventListener('DOMContentLoaded', function() {
     window.showQualifiedJobs = function() {
         console.log('⭐ 显示合格岗位');
         currentView = 'qualified';
-        renderJobsList(qualifiedJobs);
-        // 重新显示市场分析报告
-        if (currentMarketAnalysis) {
-            displayMarketAnalysis(currentMarketAnalysis);
+        
+        if (qualifiedJobs && qualifiedJobs.length > 0) {
+            renderJobsList(qualifiedJobs);
+            // 重新显示市场分析报告
+            if (currentMarketAnalysis) {
+                displayMarketAnalysis(currentMarketAnalysis);
+            }
+        } else {
+            // 没有合格岗位时显示提示
+            const jobsList = document.getElementById('jobs-list');
+            if (jobsList) {
+                jobsList.innerHTML = `
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                        <div class="w-16 h-16 bg-yellow-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <span class="text-3xl">📊</span>
+                        </div>
+                        <h3 class="text-lg font-semibold text-yellow-800 mb-2">暂无合格岗位</h3>
+                        <p class="text-yellow-700 mb-4">
+                            当前没有评分达标的岗位。
+                        </p>
+                        <p class="text-sm text-yellow-600">
+                            建议：点击"总搜索数"查看所有岗位，或调整搜索条件
+                        </p>
+                    </div>
+                `;
+            }
+            
+            // 仍然显示市场分析报告（如果有）
+            if (currentMarketAnalysis) {
+                displayMarketAnalysis(currentMarketAnalysis);
+            }
         }
     };
     
@@ -469,22 +516,74 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 更新进度
     function updateProgress(data) {
-        if (progressMessage) progressMessage.textContent = data.message;
+        console.log('🔄 更新进度:', data);
         
-        if (data.progress !== undefined && progressBar && progressFill) {
-            progressBar.style.display = 'block';
-            progressFill.style.width = data.progress + '%';
+        // 更新主要状态消息
+        if (progressMessage) {
+            progressMessage.textContent = data.message;
         }
         
-        // 添加日志
+        // 更新进度条和百分比
+        if (data.progress !== undefined) {
+            const progressBar = document.getElementById('progress-bar');
+            const progressFill = document.getElementById('progress-fill');
+            const progressPercentage = document.getElementById('progress-percentage');
+            const stageIndicators = document.getElementById('stage-indicators');
+            
+            if (progressBar && progressFill) {
+                progressBar.style.display = 'block';
+                progressFill.style.width = data.progress + '%';
+                
+                if (progressPercentage) {
+                    progressPercentage.style.display = 'block';
+                    progressPercentage.textContent = Math.round(data.progress) + '%';
+                }
+                
+                // 显示阶段指示器
+                if (stageIndicators) {
+                    stageIndicators.style.display = 'grid';
+                    updateStageIndicators(data.progress, data.message);
+                }
+                
+                // 当进度达到100%时，重置搜索按钮状态（双重保险）
+                if (data.progress >= 100) {
+                    isSearching = false;
+                    const startBtn = document.getElementById('start-search-btn');
+                    if (startBtn) {
+                        startBtn.textContent = '开始搜索';
+                        startBtn.disabled = false;
+                    }
+                }
+            }
+        }
+        
+        // 添加到详细日志
+        const progressLogs = document.getElementById('progress-logs');
         if (progressLogs) {
             const logItem = document.createElement('div');
-            logItem.className = 'flex items-start text-sm';
+            logItem.className = 'flex items-start py-1 px-2 hover:bg-gray-50 rounded text-xs';
+            
+            // 检查消息是否已包含emoji，如果有就不添加额外图标
+            let icon = '•';
+            const hasEmoji = /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u.test(data.message);
+            
+            if (!hasEmoji) {
+                if (data.message.includes('开始') || data.message.includes('初始化')) icon = '🚀';
+                else if (data.message.includes('搜索') || data.message.includes('设置')) icon = '🔍';
+                else if (data.message.includes('AI') || data.message.includes('智能')) icon = '🧠';
+                else if (data.message.includes('分析') || data.message.includes('市场')) icon = '📊';
+                else if (data.message.includes('完成') || data.message.includes('成功')) icon = '✅';
+                else if (data.message.includes('警告') || data.message.includes('未检测')) icon = '⚠️';
+                else if (data.message.includes('失败') || data.message.includes('错误')) icon = '❌';
+            } else {
+                icon = ''; // 如果消息已有emoji就不显示额外图标
+            }
+            
             logItem.innerHTML = `
-                <div class="w-1.5 h-1.5 bg-gray-400 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                <span class="mr-2 flex-shrink-0">${icon}</span>
                 <div class="flex-1">
-                    <span class="text-gray-600">${data.message}</span>
-                    <span class="text-xs text-gray-400 ml-2">${data.timestamp}</span>
+                    <span class="text-gray-700">${data.message}</span>
+                    <span class="text-gray-400 ml-2">${data.timestamp}</span>
                 </div>
             `;
             progressLogs.appendChild(logItem);
@@ -492,19 +591,194 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // 处理结果数据
-        if (data.data && data.data.results) {
-            displayResults(data.data.results, data.data.stats, data.data.market_analysis);
-            
-            // 存储并自动显示市场分析报告
-            if (data.data.market_analysis) {
-                console.log('📊 存储并自动显示市场分析报告');
-                currentMarketAnalysis = data.data.market_analysis;
-                displayMarketAnalysis(data.data.market_analysis);
+        if (data.data) {
+            // 检查是否需要简历
+            if (data.data.requires_resume) {
+                displayResumeRequiredMessage(data.data);
+            } else {
+                displayResults(data.data.results, data.data.stats, data.data.market_analysis);
+                
+                // 存储并自动显示市场分析报告
+                if (data.data.market_analysis) {
+                    console.log('📊 存储并自动显示市场分析报告');
+                    currentMarketAnalysis = data.data.market_analysis;
+                    displayMarketAnalysis(data.data.market_analysis);
+                } else {
+                    // 如果没有市场分析，清除之前的数据
+                    currentMarketAnalysis = null;
+                    console.log('🧹 清除之前的市场分析数据');
+                }
             }
+            
+            // 总是存储所有岗位数据
             if (data.data.all_jobs) {
                 allJobs = data.data.all_jobs;
             }
         }
+    }
+    
+    // 更新阶段指示器
+    function updateStageIndicators(progress, message) {
+        const stageItems = document.querySelectorAll('.stage-item');
+        
+        // 重置所有阶段
+        stageItems.forEach(item => {
+            const circle = item.querySelector('div');
+            const text = item.querySelector('div:last-child');
+            circle.className = 'w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1';
+            text.className = 'text-xs text-center text-gray-500';
+        });
+        
+        // 根据进度和消息内容更准确地判断阶段
+        let currentStage = '';
+        
+        if (progress >= 5 && progress <= 50) {
+            currentStage = 'search';
+        } else if (progress > 50 && (message.includes('AI') || message.includes('智能') || message.includes('分析') || progress <= 80)) {
+            currentStage = 'extract'; // 实际上是AI分析阶段
+        } else if (progress > 80 && progress < 100) {
+            currentStage = 'analysis'; // 实际上是保存和整理阶段
+        } else if (progress >= 100) {
+            currentStage = 'complete';
+        }
+        
+        // 阶段1：搜索岗位 (5-50%)
+        const searchStage = document.querySelector('[data-stage="search"]');
+        if (searchStage) {
+            const circle = searchStage.querySelector('div');
+            const text = searchStage.querySelector('div:last-child');
+            if (currentStage === 'search') {
+                circle.className = 'w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1 animate-pulse';
+                circle.innerHTML = '1';
+                text.className = 'text-xs text-center text-blue-600 font-medium';
+            } else if (progress > 50) {
+                circle.className = 'w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1';
+                circle.innerHTML = '✓';
+                text.className = 'text-xs text-center text-green-600';
+            }
+        }
+        
+        // 阶段2：AI分析 (50-80%) - 重新标记为AI分析
+        const extractStage = document.querySelector('[data-stage="extract"]');
+        if (extractStage) {
+            const circle = extractStage.querySelector('div');
+            const text = extractStage.querySelector('div:last-child');
+            // 更新标签文本
+            text.textContent = 'AI分析';
+            
+            if (currentStage === 'extract') {
+                circle.className = 'w-8 h-8 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1 animate-pulse';
+                circle.innerHTML = '2';
+                text.className = 'text-xs text-center text-purple-600 font-medium';
+            } else if (progress > 80) {
+                circle.className = 'w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1';
+                circle.innerHTML = '✓';
+                text.className = 'text-xs text-center text-green-600';
+            }
+        }
+        
+        // 阶段3：整理结果 (80-95%)
+        const analysisStage = document.querySelector('[data-stage="analysis"]');
+        if (analysisStage) {
+            const circle = analysisStage.querySelector('div');
+            const text = analysisStage.querySelector('div:last-child');
+            // 更新标签文本
+            text.textContent = '整理结果';
+            
+            if (currentStage === 'analysis') {
+                circle.className = 'w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1 animate-pulse';
+                circle.innerHTML = '3';
+                text.className = 'text-xs text-center text-orange-600 font-medium';
+            } else if (progress >= 100) {
+                circle.className = 'w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1';
+                circle.innerHTML = '✓';
+                text.className = 'text-xs text-center text-green-600';
+            }
+        }
+        
+        if (progress >= 100) {
+            // 阶段4：完成
+            const completeStage = document.querySelector('[data-stage="complete"]');
+            if (completeStage) {
+                const circle = completeStage.querySelector('div');
+                const text = completeStage.querySelector('div:last-child');
+                circle.className = 'w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-xs font-bold mx-auto mb-1';
+                circle.innerHTML = '🎉';
+                text.className = 'text-xs text-center text-green-600 font-medium';
+            }
+        }
+    }
+    
+    // 切换日志显示
+    window.toggleProgressLogs = function() {
+        const logs = document.getElementById('progress-logs');
+        const toggleBtn = document.getElementById('toggle-logs');
+        
+        if (logs && toggleBtn) {
+            if (logs.style.display === 'none' || logs.style.display === '') {
+                logs.style.display = 'block';
+                toggleBtn.textContent = '收起';
+            } else {
+                logs.style.display = 'none';
+                toggleBtn.textContent = '展开';
+            }
+        }
+    }
+    
+    // 显示需要简历的提示消息
+    function displayResumeRequiredMessage(data) {
+        console.log('📋 显示需要简历的提示');
+        
+        // 显示统计信息（搜索到的岗位数量）
+        if (data.stats) {
+            const totalEl = document.getElementById('total-jobs');
+            const qualifiedEl = document.getElementById('qualified-jobs');
+            if (totalEl) totalEl.textContent = data.stats.total;
+            if (qualifiedEl) qualifiedEl.textContent = '需要简历';
+            if (statsCard) statsCard.style.display = 'block';
+        }
+        
+        // 显示提示消息
+        const jobsList = document.getElementById('jobs-list');
+        if (jobsList) {
+            jobsList.innerHTML = `
+                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                    <div class="w-16 h-16 bg-yellow-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                        <span class="text-3xl">📄</span>
+                    </div>
+                    <h3 class="text-lg font-semibold text-yellow-800 mb-2">需要上传简历</h3>
+                    <p class="text-yellow-700 mb-4">
+                        已搜索到 <strong>${data.stats?.total || 0}</strong> 个岗位，但需要先上传简历才能进行AI智能分析和匹配
+                    </p>
+                    <p class="text-sm text-yellow-600 mb-4">
+                        上传简历后，系统将为每个岗位提供：
+                    </p>
+                    <ul class="text-sm text-yellow-600 text-left max-w-md mx-auto mb-4">
+                        <li class="flex items-center mb-1">
+                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
+                            1-10分的匹配度评分
+                        </li>
+                        <li class="flex items-center mb-1">
+                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
+                            详细的匹配原因分析
+                        </li>
+                        <li class="flex items-center mb-1">
+                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
+                            个性化的推荐建议
+                        </li>
+                        <li class="flex items-center">
+                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
+                            市场趋势分析报告
+                        </li>
+                    </ul>
+                    <button onclick="showPage('resume')" class="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+                        前往上传简历
+                    </button>
+                </div>
+            `;
+        }
+        
+        if (emptyState) emptyState.style.display = 'none';
     }
     
     // 显示结果
@@ -533,6 +807,52 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 console.warn('⚠️ 市场分析数据为空:', marketAnalysis);
             }
+        } else {
+            // 没有合格岗位时，清空岗位列表并显示相应提示
+            console.log('📋 没有合格岗位，清空之前的结果');
+            qualifiedJobs = [];
+            
+            // 清空岗位列表
+            const jobsList = document.getElementById('jobs-list');
+            if (jobsList) {
+                if (marketAnalysis) {
+                    // 如果有市场分析，显示分析结果但提示没有合格岗位
+                    jobsList.innerHTML = '';
+                    displayMarketAnalysis(marketAnalysis);
+                    
+                    // 添加无合格岗位的提示
+                    const noJobsMessage = document.createElement('div');
+                    noJobsMessage.className = 'bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center mt-6';
+                    noJobsMessage.innerHTML = `
+                        <div class="w-16 h-16 bg-yellow-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <span class="text-3xl">📊</span>
+                        </div>
+                        <h3 class="text-lg font-semibold text-yellow-800 mb-2">暂无合格岗位</h3>
+                        <p class="text-yellow-700 mb-4">
+                            虽然搜索到了 <strong>${stats?.total || 0}</strong> 个岗位，但根据当前简历分析，没有找到评分达标的岗位。
+                        </p>
+                        <p class="text-sm text-yellow-600">
+                            建议：调整搜索关键词或查看市场分析报告了解技能要求差距
+                        </p>
+                    `;
+                    jobsList.appendChild(noJobsMessage);
+                } else {
+                    // 没有市场分析时的提示
+                    jobsList.innerHTML = `
+                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+                            <div class="w-16 h-16 bg-gray-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                                <span class="text-3xl">🔍</span>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">暂无合格岗位</h3>
+                            <p class="text-gray-600">
+                                搜索到了 <strong>${stats?.total || 0}</strong> 个岗位，但没有找到评分达标的岗位。
+                            </p>
+                        </div>
+                    `;
+                }
+            }
+            
+            if (emptyState) emptyState.style.display = 'none';
         }
     }
     
@@ -813,14 +1133,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                 ).join('')}
                             </div>
                         ` : ''}
-                        ${analysis.extra_advantages && analysis.extra_advantages.length > 0 ? `
-                            <div class="flex flex-wrap gap-1">
-                                <span class="text-xs text-yellow-700 font-medium">⭐ 额外优势:</span>
-                                ${analysis.extra_advantages.map(adv => 
-                                    `<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">${adv}</span>`
-                                ).join('')}
-                            </div>
-                        ` : ''}
                     </div>
                 `;
             }
@@ -837,12 +1149,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // 维度评分（只显示核心维度）
             if (analysis.dimension_scores) {
                 const dimensions = [
-                    { key: 'job_match', label: '岗位匹配' },
-                    { key: 'skill_match', label: '技能匹配' },
-                    { key: 'experience_match', label: '经验匹配' },
-                    { key: 'skill_coverage', label: '技能覆盖' },
-                    { key: 'keyword_match', label: '关键词匹配' },
-                    { key: 'hard_requirements', label: '硬性要求' }
+                    { key: 'job_match', label: '岗位匹配', weight: '25%' },
+                    { key: 'skill_match', label: '技能匹配', weight: '25%' },
+                    { key: 'experience_match', label: '经验匹配', weight: '25%' },
+                    { key: 'skill_coverage', label: '技能覆盖', weight: '25%' }
                 ];
                 
                 analysisHTML += `
@@ -854,7 +1164,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             return `
                                 <div class="text-xs">
                                     <div class="flex justify-between mb-1">
-                                        <span class="text-gray-600">${dim.label}</span>
+                                        <span class="text-gray-600">${dim.label} <span class="text-xs text-gray-400">(${dim.weight})</span></span>
                                         <span class="font-medium">${score}/10</span>
                                     </div>
                                     <div class="w-full bg-gray-200 rounded-full h-1.5">
