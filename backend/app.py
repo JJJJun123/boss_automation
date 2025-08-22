@@ -18,9 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_manager import ConfigManager
 from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
-from analyzer.job_analyzer import JobAnalyzer
 from analyzer.enhanced_job_analyzer import EnhancedJobAnalyzer
-from analyzer.smart_job_analyzer import SmartJobAnalyzer
 
 
 # 创建Flask应用
@@ -168,78 +166,117 @@ def upload_resume():
         
         logger.info(f"简历解析成功，文本长度: {len(resume_text)} 字符")
         
+        # 调试：保存简历文本用于调试
+        try:
+            with open("debug_resume_text.txt", "w", encoding='utf-8') as f:
+                f.write("=== 上传的简历文本 ===\n")
+                f.write(f"文件名: {file.filename}\n")
+                f.write(f"长度: {len(resume_text)}\n")
+                f.write(f"前100字符: {repr(resume_text[:100])}\n")
+                f.write("\n=== 完整文本 ===\n")
+                f.write(resume_text)
+            print(f"简历文本已保存到 debug_resume_text.txt")
+        except Exception as debug_e:
+            print(f"保存简历文本失败: {debug_e}")
+        
         # AI分析简历 - 使用统一的AI架构，从配置读取AI提供商
         try:
             from config.config_manager import ConfigManager
             config_manager = ConfigManager()
-            ai_provider = config_manager.get_app_config('ai.default_provider', 'deepseek')
+            ai_provider = config_manager.get_app_config('ai.default_provider', 'claude')
         except Exception:
-            ai_provider = 'deepseek'
+            ai_provider = 'claude'
         
         analyzer = ResumeAnalyzer(ai_provider=ai_provider)
         ai_analysis = analyzer.analyze_resume(resume_text)
         
-        # 从AI分析结果中提取基本信息用于显示
-        # 简化处理，直接使用AI分析的结果
-        resume_data = {
-            'name': '陈俊旭', # 临时硬编码，后续可从简历文本中简单提取
-            'current_position': '待AI分析',
-            'experience_years': '待AI分析',
-            'phone': '已脱敏',
-            'email': '已脱敏', 
-            'technical_skills': [],
-            'education': '待AI分析',
+        # 保存完整的简历分析结果到文件
+        from analyzer.resume.resume_manager import ResumeManager
+        resume_manager = ResumeManager()
+        
+        # 构建完整的简历数据 - 适配新的LangGPT格式
+        resume_core = ai_analysis.get('resume_core', {})
+        
+        # 从结构化数据中提取基本信息
+        education = resume_core.get('education', [])
+        work_experience = resume_core.get('work_experience', [])
+        skills = resume_core.get('skills', {})
+        
+        # 估算工作年限
+        experience_years = len(work_experience) * 2 if work_experience else 0  # 简单估算
+        
+        # 获取最高学历
+        highest_degree = '未提供'
+        if education and len(education) > 0:
+            highest_degree = education[0].get('degree', '未提供')
+        
+        resume_full_data = {
+            'basic_info': {
+                'name': '已解析',  # 新格式不再包含个人信息
+                'current_position': work_experience[0].get('position', '未提供') if work_experience else '未提供',
+                'phone': '已脱敏',  # 隐私保护
+                'email': '已脱敏'   # 隐私保护
+            },
+            'skills': skills.get('hard_skills', []) + skills.get('soft_skills', []),
+            'experience_years': experience_years,
+            'education_info': {'highest_degree': highest_degree},
+            'work_experience': work_experience,
+            'strengths': ai_analysis.get('strengths', []),
+            'weaknesses': ai_analysis.get('weaknesses', []),  # 新增劣势字段
+            'job_intentions': ai_analysis.get('recommended_positions', []),  # 使用新字段名
+            'salary_expectations': {'min': 15, 'max': 35},  # 默认值
+            'resume_core': resume_core,  # 保存完整的结构化数据
+            'resume_text': resume_text,  # 保存原始简历文本
             'filename': file.filename,
             'upload_time': datetime.now().isoformat()
         }
         
-        # 存储到session（避免存储大文本）
+        # 保存到文件
+        resume_manager.save_resume(resume_full_data)
+        logger.info("简历信息已保存到文件系统")
+        
+        # 构建用于显示的简化数据
+        resume_data = {
+            'name': resume_full_data['basic_info']['name'],
+            'current_position': resume_full_data['basic_info']['current_position'],
+            'experience_years': f"{resume_full_data['experience_years']}年",
+            'phone': '已脱敏',
+            'email': '已脱敏',
+            'technical_skills': resume_full_data['skills'][:5] if resume_full_data['skills'] else [],  # 只显示前5个技能
+            'education': ai_analysis.get('education_info', {}).get('highest_degree', '未提供'),
+            'filename': file.filename,
+            'upload_time': datetime.now().isoformat()
+        }
+        
+        # 存储到session（只存储摘要信息）
         session['resume_data'] = resume_data
-        # 只存储摘要信息，不存储完整文本
         session['resume_summary'] = {
             'length': len(resume_text),
             'has_text': True,
-            'analyzed': True
+            'analyzed': True,
+            'saved_to_file': True  # 标记已保存到文件
         }
-        # 只存储关键分析结果，避免session过大
         session['ai_analysis_summary'] = {
-            'competitiveness_score': ai_analysis.get('competitiveness_score', 0),
-            'recommended_jobs': ai_analysis.get('recommended_jobs', []),
+            'strengths_count': len(ai_analysis.get('strengths', [])),
+            'weaknesses_count': len(ai_analysis.get('weaknesses', [])),
+            'recommended_positions': ai_analysis.get('recommended_positions', []),
             'analyzed_at': datetime.now().isoformat()
         }
         
-        # 更新全局分析器
+        # 简历上传时不需要创建岗位分析器，只在岗位搜索时才创建
+        # 这里只保存简历分析结果，供后续岗位分析使用
         global job_analyzer_instance
-        if 'job_analyzer_instance' not in globals():
-            # 获取AI配置
-            try:
-                config_manager = ConfigManager()
-                ai_config = config_manager.get_app_config('ai', {})
-                use_enhanced_analyzer = ai_config.get('use_enhanced_analyzer', True)
-                
-                if use_enhanced_analyzer:
-                    print("🚀 创建增强型简历分析器（GLM+DeepSeek混合模式）")
-                    job_analyzer_instance = EnhancedJobAnalyzer(
-                        extraction_provider="glm",
-                        analysis_provider="deepseek"
-                    )
-                else:
-                    print("🔄 创建传统简历分析器")
-                    job_analyzer_instance = JobAnalyzer()
-            except Exception as e:
-                print(f"⚠️ 配置读取失败，使用默认增强分析器: {e}")
-                job_analyzer_instance = EnhancedJobAnalyzer(
-                    extraction_provider="glm",
-                    analysis_provider="deepseek"
-                )
+        if 'job_analyzer_instance' in globals():
+            # 如果已有分析器实例，更新简历分析数据
+            if hasattr(job_analyzer_instance, 'set_resume_analysis'):
+                job_analyzer_instance.set_resume_analysis(ai_analysis)
+            else:
+                job_analyzer_instance.resume_analysis = ai_analysis
+            print("🎯 简历分析结果已加载到现有岗位分析器")
         
-        # 设置简历分析数据（兼容两种分析器）
-        if hasattr(job_analyzer_instance, 'set_resume_analysis'):
-            job_analyzer_instance.set_resume_analysis(ai_analysis)
-        else:
-            job_analyzer_instance.resume_analysis = ai_analysis
-        
-        logger.info(f"简历分析完成: {resume_data['name']}, 竞争力评分: {ai_analysis.get('competitiveness_score')}/10")
+        strengths_count = len(ai_analysis.get('strengths', []))
+        weaknesses_count = len(ai_analysis.get('weaknesses', []))
+        logger.info(f"简历分析完成: {resume_data['name']}, 优势: {strengths_count}项, 改进点: {weaknesses_count}项")
         
         return jsonify({
             'success': True,
@@ -266,13 +303,87 @@ def delete_resume():
         if 'job_analyzer_instance' in globals():
             job_analyzer_instance.resume_analysis = None
         
-        # 这里可以添加删除文件的逻辑
+        # 清除持久化的简历文件
+        from analyzer.resume.resume_manager import ResumeManager
+        resume_manager = ResumeManager()
+        resume_manager.clear_resume()
         
         return jsonify({'success': True})
         
     except Exception as e:
         print(f"删除简历失败: {e}")
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/resume/info', methods=['GET'])
+def get_resume_info():
+    """获取当前保存的简历信息"""
+    try:
+        from analyzer.resume.resume_manager import ResumeManager
+        resume_manager = ResumeManager()
+        
+        if resume_manager.has_resume():
+            profile = resume_manager.get_personal_profile()
+            return jsonify({
+                'success': True,
+                'has_resume': True,
+                'resume_info': {
+                    'name': profile.get('name', '未知'),
+                    'skills': profile.get('skills', []),
+                    'experience_years': profile.get('experience_years', 0),
+                    'strengths': profile.get('strengths', []),
+                    'weaknesses': profile.get('weaknesses', []),
+                    'job_intentions': profile.get('job_intentions', [])
+                }
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'has_resume': False,
+                'message': '请先上传简历'
+            })
+            
+    except Exception as e:
+        logger.error(f"获取简历信息失败: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/api/resume/update_intentions', methods=['POST'])
+def update_job_intentions():
+    """更新求职意向"""
+    try:
+        data = request.json
+        intentions = data.get('intentions', [])
+        
+        from analyzer.resume.resume_manager import ResumeManager
+        resume_manager = ResumeManager()
+        
+        if not resume_manager.has_resume():
+            return jsonify({
+                'success': False,
+                'error': '请先上传简历'
+            })
+        
+        success = resume_manager.update_job_intentions(intentions)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': '求职意向已更新'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': '更新失败'
+            })
+            
+    except Exception as e:
+        logger.error(f"更新求职意向失败: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/api/jobs/search', methods=['POST'])
 def start_job_search():
@@ -289,8 +400,14 @@ def start_job_search():
         # 启动后台任务
         current_job = {'status': 'starting', 'start_time': datetime.now()}
         
+        # 传递session数据给后台任务（避免在线程中使用session）
+        session_data = {
+            'has_resume_data': 'resume_data' in session,
+            'resume_data': session.get('resume_data', None)
+        }
+        
         # 在新线程中执行搜索任务
-        thread = threading.Thread(target=run_job_search_task, args=(data,))
+        thread = threading.Thread(target=run_job_search_task, args=(data, session_data))
         thread.daemon = True
         thread.start()
         
@@ -304,7 +421,7 @@ def start_job_search():
         return jsonify({'error': str(e)}), 500
 
 
-def run_job_search_task(params):
+def run_job_search_task(params, session_data):
     """在后台运行岗位搜索任务"""
     global current_job, current_spider
     
@@ -352,7 +469,72 @@ def run_job_search_task(params):
         
         emit_progress(f"📊 找到 {len(jobs)} 个岗位，开始AI分析...", 50)
         
-        # 5. AI分析 - 支持动态模型选择
+        # 5. 检查是否有简历，无简历时不进行AI分析
+        from analyzer.resume.resume_manager import ResumeManager
+        resume_manager = ResumeManager()
+        
+        # 双重检查：既要文件存在，也要session中有简历记录
+        has_file_resume = resume_manager.has_resume()
+        has_session_resume = session_data.get('has_resume_data', False)
+        
+        if not has_file_resume or not has_session_resume:
+            # 无简历时直接返回原始岗位数据，不进行AI分析
+            if not has_file_resume:
+                emit_progress("⚠️ 未检测到简历文件，跳过AI分析", 80)
+            else:
+                emit_progress("⚠️ 当前会话无简历记录，跳过AI分析", 80)
+            
+            # 为所有岗位标记为"需要简历"
+            jobs_without_analysis = []
+            for job in jobs:
+                job['analysis'] = {
+                    'score': -1,
+                    'overall_score': -1,
+                    'recommendation': '需要简历',
+                    'reason': '请先上传简历后再进行岗位匹配分析',
+                    'summary': '上传简历后可获得详细的匹配度分析',
+                    'requires_resume': True
+                }
+                jobs_without_analysis.append(job)
+            
+            # 7. 保存结果（无分析版本）
+            emit_progress("💾 保存搜索结果...", 95)
+            from utils.data_saver import save_all_job_results
+            save_all_job_results(jobs_without_analysis, [])  # 保存原始岗位，合格岗位为空
+            
+            # 9. 完成（无分析版本）
+            current_job.update({
+                'status': 'completed',
+                'end_time': datetime.now(),
+                'results': [],  # 无合格岗位
+                'analyzed_jobs': jobs_without_analysis,
+                'total_jobs': len(jobs),
+                'analyzed_jobs_count': 0,  # 未进行分析
+                'qualified_jobs': 0,
+                'market_analysis': None,
+                'requires_resume': True  # 标记需要简历
+            })
+            
+            emit_progress(f"📋 搜索完成! 找到 {len(jobs)} 个岗位，请上传简历后进行AI分析", 100, {
+                'results': [],
+                'all_jobs': jobs_without_analysis,
+                'market_analysis': None,
+                'requires_resume': True,
+                'stats': {
+                    'total': len(jobs),
+                    'analyzed': 0,
+                    'qualified': 0
+                }
+            })
+            
+            # 发送搜索完成事件，重置前端按钮状态
+            socketio.emit('search_complete', {'status': 'success', 'message': '搜索完成，请上传简历进行分析'})
+            return
+        
+        # 有简历时继续AI分析流程
+        emit_progress("📝 检测到简历，开始AI智能分析...", 50)
+        
+        # 6. AI分析 - 支持动态模型选择
         global job_analyzer_instance
         
         # 如果没有现有实例，创建新的分析器
@@ -362,35 +544,46 @@ def run_job_search_task(params):
             # 检查是否启用混合AI模式（GLM+DeepSeek）- 强制使用以获得市场分析报告
             use_enhanced_analyzer = True  # 强制启用EnhancedJobAnalyzer以获得完整的市场分析
             
-            # 保存之前的简历分析数据（如果有）
-            previous_resume_analysis = None
-            if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
-                previous_resume_analysis = job_analyzer_instance.resume_analysis
+            # 从ResumeManager获取最新的简历分析数据
+            current_resume_analysis = None
+            try:
+                from analyzer.resume.resume_manager import ResumeManager
+                resume_manager = ResumeManager()
+                current_resume_data = resume_manager.get_current_resume()
+                if current_resume_data:
+                    current_resume_analysis = current_resume_data
+                    print(f"📋 从ResumeManager获取到简历数据: {current_resume_data.get('basic_info', {}).get('name', '未知')}")
+            except Exception as e:
+                print(f"⚠️ 获取简历数据失败: {e}")
+                # 尝试从现有实例获取（fallback）
+                if 'job_analyzer_instance' in globals() and hasattr(job_analyzer_instance, 'resume_analysis'):
+                    current_resume_analysis = job_analyzer_instance.resume_analysis
             
             if use_smart_analyzer:
                 print(f"💎 创建智能分层JobAnalyzer实例（GLM批量提取+DeepSeek批量评分+Claude深度分析）")
                 print(f"💰 预期成本: $0.65/100个岗位")
                 
-                # 创建智能分析器实例
-                job_analyzer_instance = SmartJobAnalyzer()
+                # 创建智能分析器实例 - 实际不会执行，因为use_smart_analyzer总是False
+                # job_analyzer_instance = SmartJobAnalyzer()  # 已弃用
+                pass
                 
                 # 恢复简历分析数据（如果有）
-                if previous_resume_analysis:
-                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                if current_resume_analysis:
+                    job_analyzer_instance.resume_analysis = current_resume_analysis
                     print("🎯 已恢复简历数据到智能分析器实例")
                     
             elif use_enhanced_analyzer:
-                print(f"🚀 创建增强型JobAnalyzer实例（GLM+DeepSeek混合模式）")
+                print(f"🚀 创建增强型JobAnalyzer实例（GLM+Claude混合模式）")
                 
                 # 创建增强分析器实例
                 job_analyzer_instance = EnhancedJobAnalyzer(
                     extraction_provider="glm",  # GLM-4.5用于信息提取
-                    analysis_provider="deepseek"  # DeepSeek用于分析
+                    analysis_provider="claude"  # Claude用于分析
                 )
                 
                 # 恢复简历分析数据
-                if previous_resume_analysis:
-                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                if current_resume_analysis:
+                    job_analyzer_instance.resume_analysis = current_resume_analysis
                     print("🎯 已恢复简历数据到增强分析器实例")
             else:
                 print(f"🔄 创建传统JobAnalyzer实例，模型: {ai_config['provider']}")
@@ -399,13 +592,18 @@ def run_job_search_task(params):
                 job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
                 
                 # 恢复简历分析数据
-                if previous_resume_analysis:
-                    job_analyzer_instance.resume_analysis = previous_resume_analysis
+                if current_resume_analysis:
+                    job_analyzer_instance.resume_analysis = current_resume_analysis
                     print("🎯 已恢复简历数据到传统分析器实例")
         else:
-            # 使用现有实例
-            if hasattr(job_analyzer_instance, 'resume_analysis') and job_analyzer_instance.resume_analysis:
-                print("🎯 使用已加载的简历数据进行智能匹配")
+            # 使用现有实例，但更新最新的简历数据
+            if current_resume_analysis:
+                job_analyzer_instance.resume_analysis = current_resume_analysis
+                print("🎯 更新现有分析器的简历数据")
+            elif hasattr(job_analyzer_instance, 'resume_analysis') and job_analyzer_instance.resume_analysis:
+                print("🎯 使用现有分析器中的简历数据")
+            else:
+                print("⚠️ 现有分析器中没有简历数据")
         
         analyzer = job_analyzer_instance
         
@@ -417,25 +615,11 @@ def run_job_search_task(params):
         
         try:
             # 检查是否使用智能分层分析器
-            if isinstance(analyzer, SmartJobAnalyzer):
-                # 使用智能分层分析（包含智能打分和TOP岗位深度分析）
-                result = analyzer.analyze_jobs_smart(jobs, session.get('resume_data'))
-                
-                # 从结果中提取分析后的岗位
-                all_jobs_with_analysis = result.get('all_jobs_with_scores', [])
-                
-                # 保存市场分析报告
-                analyzer.market_analysis = result.get('statistics', {})
-                
-                # 显示成本统计
-                cost_info = result.get('cost_analysis', {})
-                emit_progress(f"💰 分析完成 - API调用: {cost_info.get('total_api_calls', 0)}次, 缓存命中: {cost_info.get('cache_hits', 0)}次, 成本: {cost_info.get('estimated_cost', '$0')}", 80)
-            else:
-                # 使用新的分析方法（包含岗位要求总结）
-                all_jobs_with_analysis = analyzer.analyze_jobs(jobs)
-                
-                # 市场分析已完成，不再需要单独的成本报告
-                emit_progress(f"📊 市场分析完成", 80)
+            # 使用增强分析器的分析方法（包含岗位要求总结）
+            all_jobs_with_analysis = analyzer.analyze_jobs(jobs)
+            
+            # 市场分析已完成
+            emit_progress(f"📊 市场分析完成", 80)
             
         except Exception as e:
             logger.error(f"新分析方法失败，降级到传统分析: {e}")
@@ -462,34 +646,26 @@ def run_job_search_task(params):
                 
                 all_jobs_with_analysis.append(job)
         
-        # 6. 过滤和排序
+        # 7. 过滤和排序
         emit_progress("🎯 过滤和排序结果...", 85)
         # 筛选合格岗位
         filtered_jobs = analyzer.filter_and_sort_jobs(all_jobs_with_analysis, ai_config['min_score'])
         
-        # 7. 保存结果
+        # 8. 保存结果
         emit_progress("💾 保存结果...", 95)
         # 使用新的保存函数，保存所有岗位
         from utils.data_saver import save_all_job_results
         save_all_job_results(all_jobs_with_analysis, filtered_jobs)  # 保存所有岗位
         
-        # 8. 获取市场分析结果
-        if isinstance(analyzer, SmartJobAnalyzer):
-            # 智能分析器的市场分析已在analyze_jobs_smart中返回
-            market_analysis = getattr(analyzer, 'market_analysis', None)
-            logger.info(f"SmartJobAnalyzer市场分析: {market_analysis is not None}")
-        elif isinstance(analyzer, EnhancedJobAnalyzer):
-            # EnhancedJobAnalyzer有完整的市场分析
-            market_analysis = analyzer.get_market_analysis()
-            logger.info(f"EnhancedJobAnalyzer市场分析获取: {market_analysis is not None}")
-            if market_analysis:
-                logger.info(f"市场分析包含技能要求: {'skill_requirements' in market_analysis}")
-                logger.info(f"市场分析包含核心职责: {'core_responsibilities' in market_analysis}")
-        else:
-            market_analysis = analyzer.get_market_analysis() if hasattr(analyzer, 'get_market_analysis') else None
-            logger.info(f"其他分析器市场分析: {market_analysis is not None}")
+        # 9. 获取市场分析结果
+        # EnhancedJobAnalyzer有完整的市场分析
+        market_analysis = analyzer.get_market_analysis()
+        logger.info(f"EnhancedJobAnalyzer市场分析获取: {market_analysis is not None}")
+        if market_analysis:
+            logger.info(f"市场分析包含技能要求: {'skill_requirements' in market_analysis}")
+            logger.info(f"市场分析包含核心职责: {'core_responsibilities' in market_analysis}")
         
-        # 9. 完成
+        # 10. 完成
         current_job.update({
             'status': 'completed',
             'end_time': datetime.now(),
@@ -512,14 +688,24 @@ def run_job_search_task(params):
             }
         })
         
+        # 发送搜索完成事件，重置前端按钮状态
+        socketio.emit('search_complete', {'status': 'success', 'message': '搜索完成'})
+        
     except Exception as e:
         logger.error(f"搜索任务失败: {e}")
+        # 打印详细错误信息用于调试
+        import traceback
+        logger.error(f"详细错误信息: {traceback.format_exc()}")
+        
         current_job.update({
             'status': 'failed',
             'error': str(e),
             'end_time': datetime.now()
         })
         emit_progress(f"❌ 任务失败: {str(e)}", None)
+        
+        # 发送搜索完成事件，重置前端按钮状态
+        socketio.emit('search_complete', {'status': 'failed', 'message': f'搜索失败: {str(e)}'})
         
     finally:
         # 清理资源

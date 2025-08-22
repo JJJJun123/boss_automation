@@ -43,9 +43,9 @@ class AIClientFactory:
             try:
                 from config.config_manager import ConfigManager
                 config_manager = ConfigManager()
-                provider = config_manager.get_app_config('ai.default_provider', 'deepseek')
+                provider = config_manager.get_app_config('ai.default_provider', 'claude')
             except Exception:
-                provider = 'deepseek'
+                provider = 'claude'
         
         provider = provider.lower()
         
@@ -95,11 +95,6 @@ class AIClientFactory:
     def get_available_models():
         """获取所有可用的AI模型配置"""
         return {
-            'deepseek': {
-                'models': ['deepseek-chat', 'deepseek-reasoner'],
-                'display_name': 'DeepSeek',
-                'default_model': 'deepseek-chat'
-            },
             'claude': {
                 'models': ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
                 'display_name': 'Claude',

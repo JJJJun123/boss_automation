@@ -25,7 +25,7 @@ search:
     - "hangzhou"
   
   # 搜索数量设置
-  max_jobs: 80           # 搜索岗位总数（支持50-100+岗位）
+  max_jobs: 100           # 搜索岗位总数（支持50-100+岗位）
   max_analyze_jobs: 50   # AI分析岗位数（智能批量分析）
   fetch_details: true    # 获取岗位详细信息（AI要求总结需要）
   
@@ -46,50 +46,19 @@ ai_analysis:
   # 分析深度
   analysis_depth: "standard"  # standard/detailed/quick
 
-# 个人信息配置（用于AI分析匹配）
-personal_profile:
-  # 基本信息
-  experience_years: 5
-  current_location: "shanghai"
-  
-  # 技能标签
-  skills:
-    - "风险管理"
-    - "数据分析"
-    - "Python"
-    - "金融建模"
-    - "量化分析"
-  
-  # 求职意向
-  job_intentions:
-    - "市场风险管理相关岗位"
-    - "咨询相关岗位（战略咨询、管理咨询、行业分析）"
-    - "AI/人工智能相关岗位"
-    - "金融相关岗位（银行、证券、基金、保险）"
-  
-  # 薪资期望范围
-  salary_range:
-    min: 15000    # 最低期望薪资(K/月)
-    max: 35000    # 最高期望薪资(K/月)
-  
-  # 公司偏好
-  company_preferences:
-    sizes:        # 偏好的公司规模
-      - "100-499人"
-      - "500-999人"
-      - "1000人以上"
-    industries:   # 偏好的行业
-      - "互联网"
-      - "人工智能"
-      - "金融科技"
-      - "咨询服务"
-    
-  # 不接受的岗位类型
-  excluded_job_types:
-    - "纯销售岗位"
-    - "客服岗位"
-    - "纯技术开发（除非AI相关）"
-    - "初级行政岗位"
+# ===========================
+# 重要说明：个人信息现在通过简历自动解析
+# ===========================
+# 系统不再使用此处的手动配置
+# 请通过Web界面上传简历，系统会自动：
+# 1. 解析简历内容
+# 2. 提取技能、经验、教育背景等信息
+# 3. 保存到 data/resume_profile.json
+# 4. 基于简历信息进行岗位匹配
+#
+# 如需修改求职意向或薪资期望，请使用API接口：
+# - GET  /api/resume/info - 查看当前简历信息
+# - POST /api/resume/update_intentions - 更新求职意向
 
 # 界面显示偏好
 ui_preferences:
