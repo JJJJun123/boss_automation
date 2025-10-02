@@ -38,3 +38,92 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', 'Helveti
     border-left-color: #2563eb;
     background-color: #f8fafc;
 }
+
+/* 岗位卡片展开面板样式 */
+.job-details-panel, .job-analysis-panel {
+    transition: all 0.3s ease-in-out;
+    overflow: hidden;
+}
+
+.job-details-panel.hidden, .job-analysis-panel.hidden {
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.job-details-panel:not(.hidden), .job-analysis-panel:not(.hidden) {
+    max-height: 1000px;
+    opacity: 1;
+    margin-top: 1rem;
+    margin-bottom: 0;
+}
+
+/* 按钮悬停效果优化 */
+.card button[onclick*="toggle"] {
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.card button[onclick*="toggle"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 市场分析图表样式优化 */
+.market-analysis-bar {
+    transition: all 0.3s ease-in-out;
+}
+
+.market-analysis-bar:hover {
+    transform: scaleX(1.02);
+    filter: brightness(1.1);
+}
+
+/* 投递建议标签样式 */
+.application-advice-tag {
+    transition: all 0.2s ease;
+}
+
+.application-advice-tag:hover {
+    transform: scale(1.05);
+}
+
+/* 技能标签样式 */
+.skill-tag {
+    transition: all 0.2s ease;
+}
+
+.skill-tag:hover {
+    transform: scale(1.05);
+    filter: brightness(0.95);
+}
+
+/* 面板展开动画关键帧 */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.job-details-panel:not(.hidden), .job-analysis-panel:not(.hidden) {
+    animation: fadeInUp 0.3s ease-out;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .card button[onclick*="toggle"] {
+        font-size: 0.75rem;
+        padding: 0.5rem 0.75rem;
+    }
+    
+    .grid.grid-cols-2 {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+}

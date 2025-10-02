@@ -49,21 +49,9 @@ def test_claude_configuration():
     except Exception as e:
         print(f"❌ 客户端创建失败: {e}")
     
-    # 3. 测试简历分析器
-    try:
-        from analyzer.resume.resume_analyzer import ResumeAnalyzer
-        
-        print(f"\n📝 测试简历分析器...")
-        analyzer = ResumeAnalyzer()  # 使用默认配置
-        
-        if analyzer.ai_provider == 'claude':
-            print("✅ 简历分析器默认使用Claude")
-        else:
-            print(f"❌ 简历分析器使用错误的提供商: {analyzer.ai_provider}")
-            
-    except Exception as e:
-        print(f"❌ 简历分析器测试失败: {e}")
-    
+    # 3. 测试简历分析器（已移除）
+    print(f"\n📝 简历分析器已移除（采用直接匹配模式）")
+
     # 4. 测试增强分析器
     try:
         from analyzer.enhanced_job_analyzer import EnhancedJobAnalyzer

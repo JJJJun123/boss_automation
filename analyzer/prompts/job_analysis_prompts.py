@@ -45,21 +45,13 @@ class JobAnalysisPrompts:
         Returns:
             完整的岗位匹配分析提示词
         """
-        # 提取简历分析的关键信息
-        resume_strengths = resume_analysis.get('strengths', [])
-        resume_skills = resume_analysis.get('dimension_scores', {})
-        competitiveness_score = resume_analysis.get('competitiveness_score', 0)
-        career_advice = resume_analysis.get('career_advice', '暂无')
+        # 直接使用简历原文进行分析
+        resume_text = resume_analysis.get('resume_text', '')
         
-        return f"""请基于候选人简历分析结果，对以下岗位进行精准匹配分析：
+        return f"""请基于候选人的简历原文，对以下岗位进行精准匹配分析：
 
-【候选人简历分析摘要】
-- 综合竞争力评分：{competitiveness_score}/10
-- 核心优势：{', '.join(resume_strengths) if resume_strengths else '暂无'}
-- 专业技能水平：{resume_skills.get('professional_skills', 0)}/10
-- 工作经验价值：{resume_skills.get('work_experience', 0)}/10
-- 发展潜力：{resume_skills.get('development_potential', 0)}/10
-- 职业发展建议：{career_advice}
+【候选人简历原文】
+{resume_text[:1000] if resume_text else '简历内容为空'}
 
 【目标岗位信息】
 - 岗位标题：{job_info.get('title', '未知')}
@@ -126,14 +118,24 @@ class JobAnalysisPrompts:
         "experience_match": 经验匹配度分数(1-10),
         "skill_coverage": 技能覆盖率分数(1-10),
         "keyword_match": 关键词匹配度分数(1-10),
-        "hard_requirements": 硬性要求符合度分数(1-10)
+        "hard_requirements": 硬性要求符合度分数(1-10),
+        "education_match": 学历匹配度分数(1-10),
+        "project_relevance": 项目相关性分数(1-10)
     }},
     "matched_skills": ["列出候选人掌握且岗位需要的技能"],
     "missing_skills": ["列出岗位要求但候选人缺失的技能"],
     "interview_preparation": ["2-3个基于JD分析的面试重点准备方向"],
     "skill_coverage_detail": "技能覆盖情况说明（如：掌握8/10个要求的技能）",
     "priority_level": "投递优先级（高/中/低）",
-    "action_recommendation": "明确的行动建议（建议投递/可以尝试/不建议投递，附简要原因）"
+    "action_recommendation": "明确的行动建议（建议投递/可以尝试/不建议投递，附简要原因）",
+    "application_advice": "建议投递/条件投递/不建议投递",
+    "resume_optimization": ["针对此岗位的简历优化建议1", "优化建议2", "优化建议3"],
+    "decision_reason": "投递决策的具体理由说明",
+    "detailed_dimension_scores": {{
+        "education": 学历维度评分(1-10),
+        "experience": 经验维度评分(1-10),
+        "skills": 技能维度评分(1-10)
+    }}
 }}
 
 评分参考示例：

@@ -80,7 +80,7 @@ The project uses a simplified unified crawler architecture with multiple AI anal
 ### Data Flow
 
 1. User configures search parameters via web interface or CLI
-2. Configuration validated and stored by ConfigManager  
+2. Configuration validated and stored by ConfigManager
 3. Unified crawler interface uses the Real Playwright Spider engine
 4. Crawler fetches job listings with integrated caching, session management and anti-detection
 5. AI analyzer processes job descriptions using selected provider (DeepSeek/Claude/Gemini/GPT/GLM)
@@ -118,7 +118,7 @@ GLM_API_KEY=xxx            # Optional for enhanced analyzer
 2. **Large-Scale Processing**: Supports 50-100+ job listings with intelligent batching
 3. **Smart Data Extraction**: Multi-stage extraction with 90%+ success rate and adaptive CSS selectors
 4. **Session Persistence**: Automatic cookie and session management with persistent browser profile
-5. **AI Cost Optimization**: 
+5. **AI Cost Optimization**:
    - Intelligent caching system with batch processing (5-10 jobs/API call)
    - Enhanced analyzer using GLM for extraction + DeepSeek for scoring
    - Smart analyzer with layered approach: GLM batch extraction → DeepSeek batch scoring → Claude deep analysis
@@ -134,13 +134,13 @@ GLM_API_KEY=xxx            # Optional for enhanced analyzer
 - Main crawler engine: Update `crawler/real_playwright_spider.py` (core crawler with persistent login)
 - Crawler interface: Modify `crawler/unified_crawler_interface.py` for API changes
 - Large-scale processing: Modify `crawler/large_scale_crawler.py` for 50-100+ job handling
-- Smart extraction: Update `crawler/enhanced_extractor.py` and `crawler/smart_selector.py`  
+- Smart extraction: Update `crawler/enhanced_extractor.py` and `crawler/smart_selector.py`
 - Session/retry logic: Update `crawler/session_manager.py` or `crawler/retry_handler.py`
 
 **AI Analysis Enhancements**:
 - New AI providers: Create client in `analyzer/clients/` following existing pattern, register in `ai_client_factory.py`
 - Job requirement analysis: Modify `analyzer/job_requirement_summarizer.py` for structured analysis
-- Analysis logic: Modify `analyzer/job_analyzer.py` for scoring algorithms  
+- Analysis logic: Modify `analyzer/job_analyzer.py` for scoring algorithms
 - Enhanced analyzer: Update `analyzer/enhanced_job_analyzer.py` for GLM+DeepSeek mixed mode
 - Smart analyzer: Update `analyzer/smart_job_analyzer.py` for batch processing logic
 - Prompt engineering: Update templates in `analyzer/prompts/`
@@ -177,7 +177,7 @@ try:
     result = api_call()
 except:
     return {"score": 5, "status": "需要评估"}  # 假数据！
-    
+
 try:
     data = parse_json(response)
 except:
@@ -189,7 +189,7 @@ try:
 except Exception as e:
     logger.error(f"API调用失败: {e}")
     raise Exception(f"API调用失败: {e}")  # 明确失败！
-    
+
 try:
     data = parse_json(response)
 except Exception as e:
@@ -202,5 +202,5 @@ except Exception as e:
 
 ### 原则总结
 - **透明性优于稳定性**: 宁可让用户看到错误，也不要用假数据欺骗用户
-- **调试友好**: 清晰的错误信息让问题定位变得简单
+- **调试友好**: 清晰的错误信息，让问题定位尽量变得简单
 - **不要过度工程**: 简单的失败比复杂的恢复机制更好

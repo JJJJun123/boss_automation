@@ -102,8 +102,8 @@ def main():
     
     try:
         logger.info("\n🌟 服务已启动!")
-        logger.info(f"📱 Web界面: http://localhost:5000")
-        logger.info(f"🔗 API文档: http://localhost:5000/api/health")
+        logger.info(f"📱 Web界面: http://localhost:3001")
+        logger.info(f"🔗 API文档: http://localhost:3001/api/health")
         
         if not has_frontend:
             logger.info("\n💡 提示: 当前只有后端服务，如需完整Web界面请安装前端依赖")

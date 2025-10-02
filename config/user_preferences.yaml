@@ -25,7 +25,7 @@ search:
     - "hangzhou"
   
   # 搜索数量设置
-  max_jobs: 100           # 搜索岗位总数（支持50-100+岗位）
+  max_jobs: 5            # 搜索岗位总数（默认5个用于测试）
   max_analyze_jobs: 50   # AI分析岗位数（智能批量分析）
   fetch_details: true    # 获取岗位详细信息（AI要求总结需要）
   
