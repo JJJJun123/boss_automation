@@ -301,28 +301,25 @@ class JobAnalyzer:
         return None
     
     def generate_market_analysis(self, jobs_list):
-        """从岗位列表生成市场分析数据"""
+        """从岗位列表生成市场分析数据 - 使用AI分析器"""
         if not jobs_list:
             return None
-            
+
         try:
-            # 统计技能需求
-            skill_counter = {}
+            # 使用AI市场分析器进行深度分析
+            logger.info(f"🤖 调用MarketAnalyzer进行AI市场分析，岗位数: {len(jobs_list)}")
+
+            # 调用异步方法
+            import asyncio
+            ai_result = asyncio.run(self.market_analyzer.analyze_market_trends(jobs_list))
+
+            # 补充统计学历和经验分布（AI可能不包含）
             education_counter = {}
             experience_counter = {}
-            
+
             for job in jobs_list:
                 job_desc = job.get('job_description', '') + ' ' + job.get('job_requirements', '')
-                
-                # 统计常见技能关键词
-                common_skills = ['Python', 'SQL', 'Java', 'JavaScript', '机器学习', '数据分析', 
-                               '深度学习', 'AI', '风控', '风险管理', '金融', 'Excel', 'R语言',
-                               '统计', '建模', '算法', '大数据', 'Hadoop', 'Spark']
-                
-                for skill in common_skills:
-                    if skill.lower() in job_desc.lower() or skill in job_desc:
-                        skill_counter[skill] = skill_counter.get(skill, 0) + 1
-                
+
                 # 统计学历要求
                 if '博士' in job_desc:
                     education_counter['博士'] = education_counter.get('博士', 0) + 1
@@ -330,7 +327,9 @@ class JobAnalyzer:
                     education_counter['硕士'] = education_counter.get('硕士', 0) + 1
                 elif '本科' in job_desc:
                     education_counter['本科'] = education_counter.get('本科', 0) + 1
-                    
+                else:
+                    education_counter['不限'] = education_counter.get('不限', 0) + 1
+
                 # 统计经验要求
                 import re
                 experience_matches = re.findall(r'(\d+)[年\-]', job_desc)
@@ -346,52 +345,78 @@ class JobAnalyzer:
                         experience_counter['5年+'] = experience_counter.get('5年+', 0) + 1
                 else:
                     experience_counter['不限'] = experience_counter.get('不限', 0) + 1
-            
-            # 生成TOP5技能，转换为百分比
-            total_jobs = len(jobs_list)
-            hard_skills_top5 = []
-            for skill, count in sorted(skill_counter.items(), key=lambda x: x[1], reverse=True)[:5]:
-                percentage = int((count / total_jobs) * 100)
-                hard_skills_top5.append({'name': skill, 'frequency': percentage, 'count': count})
-            
+
             # 转换学历分布为百分比
             education_distribution = {}
             edu_total = sum(education_counter.values()) or 1
             for edu, count in education_counter.items():
                 education_distribution[edu] = int((count / edu_total) * 100)
-            
-            # 转换经验分布为百分比  
+
+            # 转换经验分布为百分比
             experience_distribution = {}
             exp_total = sum(experience_counter.values()) or 1
             for exp, count in experience_counter.items():
                 experience_distribution[exp] = int((count / exp_total) * 100)
-            
-            # 生成关键洞察
+
+            # 从AI结果提取技能数据
+            hard_skills_top5 = []
+            if ai_result.common_skills:
+                for skill_dict in ai_result.common_skills[:5]:
+                    hard_skills_top5.append({
+                        'name': skill_dict.get('name', ''),
+                        'frequency': skill_dict.get('percentage', 0),
+                        'count': skill_dict.get('percentage', 0)  # 使用percentage作为count的近似
+                    })
+
+            # 生成关键洞察（结合AI分析和统计数据）
             key_insights = []
+
+            # 从AI的差异化分析中提取洞察
+            if ai_result.differentiation_analysis.get('analysis'):
+                diff_text = ai_result.differentiation_analysis['analysis']
+                # 提取前3句作为关键洞察
+                sentences = diff_text.split('。')[:3]
+                key_insights.extend([s.strip() + '。' for s in sentences if s.strip()])
+
+            # 添加技能洞察
             if hard_skills_top5:
                 top_skill = hard_skills_top5[0]
                 key_insights.append(f"最热门技能是{top_skill['name']}，{top_skill['frequency']}%的岗位都要求掌握")
-            
+
+            # 添加学历洞察
             if '本科' in education_distribution:
                 key_insights.append(f"学历门槛：本科占主导({education_distribution['本科']}%)")
-                
-            # 创建market_analysis对象
-            class MarketAnalysis:
-                def __init__(self):
-                    self.hard_skills_top5 = hard_skills_top5
-                    self.education_distribution = education_distribution  
-                    self.experience_distribution = experience_distribution
-                    self.key_insights = key_insights
-                    self.total_jobs_analyzed = total_jobs
-                    self.common_skills = [item['name'] for item in hard_skills_top5]
-                    self.keyword_cloud = skill_counter
-                    self.differentiation_analysis = f"基于{total_jobs}个岗位的分析结果"
-            
-            self.market_analysis = MarketAnalysis()
+
+            # 创建增强的market_analysis对象
+            class EnhancedMarketAnalysis:
+                def __init__(self, ai_result, edu_dist, exp_dist, skills, insights):
+                    # AI分析结果
+                    self.common_skills = ai_result.common_skills
+                    self.keyword_cloud = ai_result.keyword_cloud
+                    self.differentiation_analysis = ai_result.differentiation_analysis
+                    self.total_jobs_analyzed = ai_result.total_jobs_analyzed
+
+                    # 补充统计数据
+                    self.education_distribution = edu_dist
+                    self.experience_distribution = exp_dist
+                    self.hard_skills_top5 = skills
+                    self.key_insights = insights
+
+            self.market_analysis = EnhancedMarketAnalysis(
+                ai_result,
+                education_distribution,
+                experience_distribution,
+                hard_skills_top5,
+                key_insights
+            )
+
+            logger.info(f"✅ AI市场分析完成，提取到 {len(hard_skills_top5)} 个核心技能")
             return True
-            
+
         except Exception as e:
-            logger.error(f"生成市场分析失败: {e}")
+            logger.error(f"❌ AI市场分析失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     
