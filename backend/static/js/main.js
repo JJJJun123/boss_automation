@@ -958,6 +958,14 @@ document.addEventListener('DOMContentLoaded', function() {
         // 关键洞察
         const keyInsights = analysis.key_insights || [];
         if (keyInsights.length > 0) {
+            // 处理Markdown格式
+            const formatInsight = (text) => {
+                return text
+                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')  // **加粗** -> <strong>加粗</strong>
+                    .replace(/\*(.+?)\*/g, '<em>$1</em>')              // *斜体* -> <em>斜体</em>
+                    .replace(/`(.+?)`/g, '<code class="bg-gray-200 px-1 rounded text-xs">$1</code>'); // `代码` -> <code>代码</code>
+            };
+
             analysisHTML += `
                 <div class="bg-blue-50 rounded-lg p-4">
                     <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察</h4>
@@ -965,7 +973,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         ${keyInsights.map(insight => `
                             <li class="flex items-start">
                                 <span class="text-blue-500 mr-2 flex-shrink-0">•</span>
-                                <span>${insight}</span>
+                                <span>${formatInsight(insight)}</span>
                             </li>
                         `).join('')}
                     </ul>
