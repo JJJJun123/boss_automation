@@ -848,12 +848,12 @@ document.addEventListener('DOMContentLoaded', function() {
             </h3>
         `;
         
-        // 共同技能要求 - AI智能提取
+        // 共同技能要求
         const commonSkills = analysis.common_skills || [];
         if (commonSkills.length > 0) {
             analysisHTML += `
                 <div class="mb-6">
-                    <h4 class="text-sm font-medium text-gray-700 mb-4">🔧 共同技能要求（AI识别）</h4>
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">🔧 共同技能要求</h4>
                     <div class="space-y-3">
                         ${commonSkills.map(skill => {
                             const barWidth = Math.max(skill.percentage || 0, 5); // 最小宽度5%
@@ -876,37 +876,22 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
         }
 
-        // 关键词云 - AI提取
+        // 关键词云
         const keywordCloud = analysis.keyword_cloud || [];
         if (keywordCloud.length > 0) {
             analysisHTML += `
                 <div class="mb-6">
-                    <h4 class="text-sm font-medium text-gray-700 mb-4">☁️ 关键词云（AI提取）</h4>
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">☁️ 关键词云</h4>
                     <div class="flex flex-wrap gap-2">
                         ${keywordCloud.map(keyword => {
                             const count = keyword.count || 0;
-                            const fontSize = Math.min(16 + count * 0.5, 24); // 根据频率调整字体大小
                             return `
-                                <span class="inline-flex items-center px-3 py-1 rounded-full bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors"
-                                      style="font-size: ${fontSize}px">
+                                <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors text-xs">
                                     ${keyword.word || keyword}
-                                    <span class="ml-1 text-xs text-purple-500">(${count})</span>
+                                    <span class="ml-1 text-gray-500">(${count})</span>
                                 </span>
                             `;
                         }).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        // 差异化分析 - AI深度分析
-        const diffAnalysis = analysis.differentiation_analysis?.analysis || analysis.differentiation_analysis;
-        if (diffAnalysis && diffAnalysis !== '暂无差异化分析') {
-            analysisHTML += `
-                <div class="mb-6 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg p-4 border border-yellow-200">
-                    <h4 class="text-sm font-medium text-gray-700 mb-3">🔍 差异化分析（AI洞察）</h4>
-                    <div class="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
-                        ${diffAnalysis}
                     </div>
                 </div>
             `;
@@ -970,12 +955,12 @@ document.addEventListener('DOMContentLoaded', function() {
             analysisHTML += '</div>';
         }
         
-        // 关键洞察 - 完全来自AI，无硬编码兜底
+        // 关键洞察
         const keyInsights = analysis.key_insights || [];
         if (keyInsights.length > 0) {
             analysisHTML += `
                 <div class="bg-blue-50 rounded-lg p-4">
-                    <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察（AI生成）</h4>
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察</h4>
                     <ul class="space-y-2 text-sm text-gray-700">
                         ${keyInsights.map(insight => `
                             <li class="flex items-start">
@@ -987,11 +972,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             `;
         } else {
-            // AI未生成洞察时，明确说明而非使用硬编码
+            // AI未生成洞察时，明确说明
             analysisHTML += `
                 <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
                     <h4 class="text-sm font-medium text-gray-700 mb-2">💡 关键洞察</h4>
-                    <p class="text-sm text-gray-500">AI未生成关键洞察，请查看上方的差异化分析和技能要求。</p>
+                    <p class="text-sm text-gray-500">暂无市场洞察数据，请查看上方的技能要求和学历经验分布。</p>
                 </div>
             `;
         }
