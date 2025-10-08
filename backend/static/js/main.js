@@ -848,29 +848,65 @@ document.addEventListener('DOMContentLoaded', function() {
             </h3>
         `;
         
-        // 技能需求TOP5 - 使用新的数据格式
-        const hardSkillsTop5 = analysis.hard_skills_top5 || [];
-        if (hardSkillsTop5.length > 0) {
+        // 共同技能要求 - AI智能提取
+        const commonSkills = analysis.common_skills || [];
+        if (commonSkills.length > 0) {
             analysisHTML += `
                 <div class="mb-6">
-                    <h4 class="text-sm font-medium text-gray-700 mb-4">🔧 核心技能要求 TOP 5</h4>
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">🔧 共同技能要求（AI识别）</h4>
                     <div class="space-y-3">
-                        ${hardSkillsTop5.map(skill => {
-                            const barWidth = Math.max(skill.frequency || 0, 5); // 最小宽度5%
+                        ${commonSkills.map(skill => {
+                            const barWidth = Math.max(skill.percentage || 0, 5); // 最小宽度5%
                             return `
                                 <div class="flex items-center text-sm">
-                                    <div class="w-20 text-gray-700 font-medium flex-shrink-0">${skill.name}</div>
+                                    <div class="w-24 text-gray-700 font-medium flex-shrink-0">${skill.name || '未知'}</div>
                                     <div class="flex-1 mx-3">
                                         <div class="bg-gray-200 rounded-full h-4 relative">
                                             <div class="bg-blue-500 h-4 rounded-full flex items-center justify-end pr-2" style="width: ${barWidth}%">
-                                                <span class="text-xs text-white font-medium">${skill.frequency}%</span>
+                                                <span class="text-xs text-white font-medium">${skill.percentage || 0}%</span>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="text-xs text-gray-500 w-16 text-right">(${skill.count || 0}个岗位)</div>
+                                    <div class="text-xs text-gray-500 w-16 text-right">${skill.percentage || 0}%岗位</div>
                                 </div>
                             `;
                         }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // 关键词云 - AI提取
+        const keywordCloud = analysis.keyword_cloud || [];
+        if (keywordCloud.length > 0) {
+            analysisHTML += `
+                <div class="mb-6">
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">☁️ 关键词云（AI提取）</h4>
+                    <div class="flex flex-wrap gap-2">
+                        ${keywordCloud.map(keyword => {
+                            const count = keyword.count || 0;
+                            const fontSize = Math.min(16 + count * 0.5, 24); // 根据频率调整字体大小
+                            return `
+                                <span class="inline-flex items-center px-3 py-1 rounded-full bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors"
+                                      style="font-size: ${fontSize}px">
+                                    ${keyword.word || keyword}
+                                    <span class="ml-1 text-xs text-purple-500">(${count})</span>
+                                </span>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // 差异化分析 - AI深度分析
+        const diffAnalysis = analysis.differentiation_analysis?.analysis || analysis.differentiation_analysis;
+        if (diffAnalysis && diffAnalysis !== '暂无差异化分析') {
+            analysisHTML += `
+                <div class="mb-6 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg p-4 border border-yellow-200">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">🔍 差异化分析（AI洞察）</h4>
+                    <div class="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+                        ${diffAnalysis}
                     </div>
                 </div>
             `;
@@ -934,12 +970,12 @@ document.addEventListener('DOMContentLoaded', function() {
             analysisHTML += '</div>';
         }
         
-        // 关键洞察
+        // 关键洞察 - 完全来自AI，无硬编码兜底
         const keyInsights = analysis.key_insights || [];
         if (keyInsights.length > 0) {
             analysisHTML += `
                 <div class="bg-blue-50 rounded-lg p-4">
-                    <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察</h4>
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察（AI生成）</h4>
                     <ul class="space-y-2 text-sm text-gray-700">
                         ${keyInsights.map(insight => `
                             <li class="flex items-start">
@@ -951,47 +987,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             `;
         } else {
-            // 如果没有预设的关键洞察，生成一些通用的洞察
-            const totalJobs = analysis.total_jobs_analyzed || window.currentSearchData?.all_jobs?.length || 0;
-            if (totalJobs > 0) {
-                const defaultInsights = [];
-                
-                // 基于技能数据生成洞察
-                if (hardSkillsTop5.length > 0) {
-                    const topSkill = hardSkillsTop5[0];
-                    defaultInsights.push(`市场主流要求：${topSkill.name} 是最热门技能，${topSkill.frequency}%的岗位都需要掌握`);
-                    
-                    if (hardSkillsTop5.length >= 2) {
-                        const secondSkill = hardSkillsTop5[1];
-                        defaultInsights.push(`技能组合建议：${topSkill.name} + ${secondSkill.name} 是常见的技能搭配`);
-                    }
-                }
-                
-                // 基于学历分布生成洞察
-                if (analysis.education_distribution && Object.keys(analysis.education_distribution).length > 0) {
-                    const eduEntries = Object.entries(analysis.education_distribution).sort((a, b) => b[1] - a[1]);
-                    if (eduEntries.length > 0) {
-                        const [topEdu, topPercent] = eduEntries[0];
-                        defaultInsights.push(`学历门槛：${topEdu}占主导(${topPercent}%)，是市场的主要要求`);
-                    }
-                }
-                
-                if (defaultInsights.length > 0) {
-                    analysisHTML += `
-                        <div class="bg-blue-50 rounded-lg p-4">
-                            <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察</h4>
-                            <ul class="space-y-2 text-sm text-gray-700">
-                                ${defaultInsights.map(insight => `
-                                    <li class="flex items-start">
-                                        <span class="text-blue-500 mr-2 flex-shrink-0">•</span>
-                                        <span>${insight}</span>
-                                    </li>
-                                `).join('')}
-                            </ul>
-                        </div>
-                    `;
-                }
-            }
+            // AI未生成洞察时，明确说明而非使用硬编码
+            analysisHTML += `
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">💡 关键洞察</h4>
+                    <p class="text-sm text-gray-500">AI未生成关键洞察，请查看上方的差异化分析和技能要求。</p>
+                </div>
+            `;
         }
         
         marketAnalysisEl.innerHTML = analysisHTML;
