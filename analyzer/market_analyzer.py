@@ -43,9 +43,12 @@ class MarketAnalyzer:
             analysis = await self._ai_analyze_market(processed_jobs)
             return analysis
         except Exception as e:
-            logger.error(f"❌ 市场分析失败: {e}")
-            # 降级到基于规则的分析
-            return self._rule_based_analysis(processed_jobs)
+            logger.error(f"❌ AI市场分析失败: {e}")
+            logger.error(f"❌ 不使用降级方案，返回空结果以保证数据真实性")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 返回空结果，拒绝使用硬编码降级方案
+            return self._create_empty_result()
     
     def _preprocess_jobs(self, jobs: List[Dict]) -> List[Dict]:
         """预处理岗位数据，提取关键信息"""
@@ -183,42 +186,6 @@ class MarketAnalyzer:
                 'analysis': diff_section.group(1).strip()
             }
         return {'analysis': '暂无差异化分析'}
-    
-    def _rule_based_analysis(self, jobs: List[Dict]) -> MarketAnalysisResult:
-        """基于规则的分析（降级方案）"""
-        # 统计所有描述和要求中的关键词
-        all_text = []
-        for job in jobs:
-            all_text.append(job.get('description', ''))
-            all_text.append(job.get('requirements', ''))
-            all_text.extend(job.get('tags', []))
-        
-        # 合并所有文本
-        combined_text = ' '.join(all_text)
-        
-        # 提取技能关键词
-        skill_keywords = ['Python', 'Java', 'SQL', '数据分析', '机器学习', 
-                         '风险管理', '沟通', '团队', '项目管理', 'Excel']
-        
-        common_skills = []
-        for skill in skill_keywords:
-            count = len(re.findall(skill, combined_text, re.IGNORECASE))
-            if count > 0:
-                percentage = min(100, count * 100 // len(jobs))
-                common_skills.append({
-                    'name': skill,
-                    'percentage': percentage
-                })
-        
-        # 按百分比排序
-        common_skills.sort(key=lambda x: x['percentage'], reverse=True)
-        
-        return MarketAnalysisResult(
-            common_skills=common_skills[:10],
-            keyword_cloud=[],
-            differentiation_analysis={'analysis': '基于规则的分析，建议查看具体岗位详情'},
-            total_jobs_analyzed=len(jobs)
-        )
     
     def _create_empty_result(self) -> MarketAnalysisResult:
         """创建空结果"""

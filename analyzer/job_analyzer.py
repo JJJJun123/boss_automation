@@ -368,24 +368,19 @@ class JobAnalyzer:
                         'count': skill_dict.get('percentage', 0)  # 使用percentage作为count的近似
                     })
 
-            # 生成关键洞察（结合AI分析和统计数据）
+            # 生成关键洞察（完全由AI生成，不使用固定模板）
             key_insights = []
 
             # 从AI的差异化分析中提取洞察
             if ai_result.differentiation_analysis.get('analysis'):
                 diff_text = ai_result.differentiation_analysis['analysis']
-                # 提取前3句作为关键洞察
-                sentences = diff_text.split('。')[:3]
-                key_insights.extend([s.strip() + '。' for s in sentences if s.strip()])
+                # 提取所有句子作为关键洞察（不限制数量）
+                sentences = [s.strip() + '。' for s in diff_text.split('。') if s.strip()]
+                key_insights.extend(sentences)
 
-            # 添加技能洞察
-            if hard_skills_top5:
-                top_skill = hard_skills_top5[0]
-                key_insights.append(f"最热门技能是{top_skill['name']}，{top_skill['frequency']}%的岗位都要求掌握")
-
-            # 添加学历洞察
-            if '本科' in education_distribution:
-                key_insights.append(f"学历门槛：本科占主导({education_distribution['本科']}%)")
+            # 如果AI没有生成洞察，记录警告但不使用硬编码模板
+            if not key_insights:
+                logger.warning("⚠️ AI未生成关键洞察，保持为空以确保数据真实性")
 
             # 创建增强的market_analysis对象
             class EnhancedMarketAnalysis:
