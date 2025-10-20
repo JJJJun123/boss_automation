@@ -11,48 +11,53 @@ app:
 ai:
   # 支持的AI服务商列表
   supported_providers:
-    - claude  
+    - claude
     - gemini
     - gpt
     - glm
+    - deepseek
   
   # 默认AI服务商
   default_provider: "claude"
   
-  # 分析器配置 - 系统使用EnhancedJobAnalyzer（GLM+Claude混合模式）
-  # 该分析器提供最佳的质量和性能平衡
-  
   # 各AI模型的默认配置
   models:
     claude:
-      model_name: "claude-3-5-sonnet-20241022"
+      model_name: "claude-sonnet-4-5-20250929"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "claude-3-5-sonnet-20241022"
-        - "claude-3-haiku-20240307"
+        - "claude-sonnet-4-5-20250929"
+        - "claude-3-5-haiku-20241022"
     gemini:
-      model_name: "gemini-pro"
+      model_name: "gemini-2.5-pro"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "gemini-pro"
-        - "gemini-pro-vision"
+        - "gemini-2.5-pro"
+        - "gemini-2.5-flash"
     gpt:
-      model_name: "gpt-4o"
+      model_name: "gpt-5-2025-08-07"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "gpt-4o"
-        - "gpt-4o-mini"
+        - "gpt-5-2025-08-07"
+        - "gpt-4.1-2025-04-14"
     glm:
-      model_name: "glm-4.5"
+      model_name: "glm-4.6"
       temperature: 0.3
       max_tokens: 1000
       available_models:
+        - "glm-4.6"
         - "glm-4.5"
         - "glm-4.5-air"
-        - "glm-4"
+    deepseek:
+      model_name: "deepseek-chat"
+      temperature: 0.3
+      max_tokens: 1000
+      available_models:
+        - "deepseek-chat"
+        - "deepseek-reasoner"
 
 # 爬虫配置
 crawler:

@@ -385,7 +385,39 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     };
-    
+
+    // ========== 加载配置 ==========
+    async function loadConfig() {
+        try {
+            const response = await axios.get('/api/config');
+            const config = response.data;
+
+            // 设置AI Provider默认值
+            if (config.ai_analysis && config.ai_analysis.provider) {
+                const aiProviderSelect = document.getElementById('ai-provider');
+                if (aiProviderSelect) {
+                    aiProviderSelect.value = config.ai_analysis.provider;
+                    console.log('✅ AI Provider已设置:', config.ai_analysis.provider);
+                }
+            }
+
+            // 设置其他默认值
+            if (config.search) {
+                if (config.search.keyword) {
+                    document.getElementById('keyword').value = config.search.keyword;
+                }
+                if (config.search.max_jobs) {
+                    document.getElementById('max_jobs').value = config.search.max_jobs;
+                }
+            }
+        } catch (error) {
+            console.error('❌ 加载配置失败:', error);
+        }
+    }
+
+    // 页面加载时获取配置
+    loadConfig();
+
     // ========== 岗位搜索功能 ==========
     if (startBtn) {
         startBtn.addEventListener('click', async () => {
@@ -393,7 +425,8 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const keyword = document.getElementById('keyword').value.trim();
             const city = document.getElementById('city').value;
-            
+            const aiProvider = document.getElementById('ai-provider').value;
+
             if (!keyword) {
                 alert('请输入搜索关键词');
                 return;
@@ -402,18 +435,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('请选择目标城市');
                 return;
             }
-            
+
             isSearching = true;
             startBtn.textContent = '搜索中...';
             startBtn.disabled = true;
-            
-            console.log('🔍 开始搜索:', { keyword, city });
-            
+
+            console.log('🔍 开始搜索:', { keyword, city, aiProvider });
+
             try {
                 const response = await axios.post('/api/jobs/search', {
                     keyword,
                     city,
-                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 5
+                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 5,
+                    ai_provider: aiProvider
                 });
                 
                 console.log('✅ 搜索任务已启动:', response.data);

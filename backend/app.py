@@ -352,16 +352,23 @@ def run_job_search_task(params, session_data):
     try:
         current_job['status'] = 'running'
         emit_progress("🚀 开始初始化爬虫...", 5)
-        
-        # 1. 从前端参数获取搜索配置，如果没有则使用默认配置
+
+        # 1. 如果前端传来了AI provider参数，先更新配置
+        if 'ai_provider' in params:
+            ai_provider = params['ai_provider']
+            logger.info(f"🤖 用户选择AI服务商: {ai_provider}")
+            config_manager.set_user_preference('ai_analysis.provider', ai_provider)
+            config_manager.save_user_preferences()
+            emit_progress(f"🤖 AI服务商: {ai_provider.upper()}", 8)
+
+        # 2. 从前端参数获取搜索配置，如果没有则使用默认配置
         search_config = config_manager.get_search_config()
         ai_config = config_manager.get_ai_config()
-        
+
         # 使用前端传来的参数覆盖配置文件中的值
         keyword = params.get('keyword', search_config['keyword'])
         max_jobs = params.get('max_jobs', search_config['max_jobs'])
         selected_city = params.get('city', 'shanghai')  # 默认上海
-        # ai_model参数已移除，系统固定使用EnhancedJobAnalyzer（GLM+DeepSeek）
         
         # 获取城市代码
         city_codes = search_config['city_codes']

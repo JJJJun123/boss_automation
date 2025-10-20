@@ -3,7 +3,6 @@
 用于替代单个岗位的AI总结功能，提供更有价值的市场洞察
 """
 
-import asyncio
 from typing import List, Dict
 from collections import Counter
 import re
@@ -28,23 +27,22 @@ class MarketAnalyzer:
         self.ai_provider = ai_provider
         self.ai_client = AIClientFactory.create_client(ai_provider)
         
-    async def analyze_market_trends(self, jobs: List[Dict]) -> MarketAnalysisResult:
+    def analyze_market_trends(self, jobs: List[Dict]) -> MarketAnalysisResult:
         """分析市场整体趋势"""
         logger.info(f"📊 开始分析 {len(jobs)} 个岗位的市场趋势...")
-        
+
         if not jobs:
             return self._create_empty_result()
-            
+
         # 预处理：提取所有岗位的关键信息
         processed_jobs = self._preprocess_jobs(jobs)
-        
+
         # AI分析：一次性分析所有岗位
         try:
-            analysis = await self._ai_analyze_market(processed_jobs)
+            analysis = self._ai_analyze_market(processed_jobs)
             return analysis
         except Exception as e:
             logger.error(f"❌ AI市场分析失败: {e}")
-            logger.error(f"❌ 不使用降级方案，返回空结果以保证数据真实性")
             import traceback
             logger.error(traceback.format_exc())
             # 返回空结果，拒绝使用硬编码降级方案
@@ -65,11 +63,11 @@ class MarketAnalyzer:
             })
         return processed
     
-    async def _ai_analyze_market(self, jobs: List[Dict]) -> MarketAnalysisResult:
+    def _ai_analyze_market(self, jobs: List[Dict]) -> MarketAnalysisResult:
         """使用AI分析市场趋势"""
         # 构建分析提示词
         prompt = self._build_market_analysis_prompt(jobs)
-        
+
         # 调用AI分析（重构后使用纯净客户端的标准接口）
         try:
             system_prompt = "你是专业的市场分析师，擅长分析职位市场趋势和技能需求。"
@@ -83,31 +81,34 @@ class MarketAnalyzer:
             except Exception as e2:
                 logger.error(f"❌ 降级方案也失败: {e2}")
                 raise e
-        
+
         # 解析AI响应
         return self._parse_ai_response(response, len(jobs))
     
     def _build_market_analysis_prompt(self, jobs: List[Dict]) -> str:
         """构建市场分析提示词"""
-        # 提取岗位摘要信息
+        # 提取所有岗位的完整信息（GLM-4.6支持128K上下文，可以处理所有岗位）
         job_summaries = []
-        for i, job in enumerate(jobs[:20], 1):  # 限制前20个避免token过多
+        for i, job in enumerate(jobs, 1):  # 处理所有岗位，不限制数量
+            # 使用完整的岗位描述，不截断
+            requirements = job.get('requirements', '') or job.get('job_description', '') or '无'
             summary = f"""
 岗位{i}: {job['title']} - {job['company']}
 薪资: {job['salary']}
-要求片段: {job['requirements'][:200] if job['requirements'] else '无'}
-"""
+地点: {job.get('location', '未知')}
+岗位要求: {requirements}
+---"""
             job_summaries.append(summary)
-        
+
         prompt = f"""请分析以下{len(jobs)}个岗位的市场整体趋势。
 
-岗位样本:
+岗位数据（共{len(jobs)}个）:
 {''.join(job_summaries)}
 
 请提供以下分析:
 
 1. 【共同技能要求】
-分析所有岗位中频繁出现的技能和要求，按出现频率排序，格式如下:
+分析所有{len(jobs)}个岗位中频繁出现的技能和要求，按出现频率排序，格式如下:
 - 技能名称 (出现率%)
 例如:
 - Python编程 (85%)
@@ -127,8 +128,8 @@ class MarketAnalyzer:
 - 大公司vs小公司的要求差异
 - 不同行业的侧重点
 
-请用简洁的文字描述，避免冗长。"""
-        
+请基于所有{len(jobs)}个岗位进行全面分析，用简洁的文字描述。"""
+
         return prompt
     
     def _parse_ai_response(self, response: str, total_jobs: int) -> MarketAnalysisResult:

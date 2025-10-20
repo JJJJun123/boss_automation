@@ -3,7 +3,6 @@ from .prompts.job_analysis_prompts import JobAnalysisPrompts
 from .job_requirement_summarizer import JobRequirementSummarizer, JobRequirementSummary
 import os
 import json
-import asyncio
 import re
 import logging
 from typing import Dict, Any
@@ -29,14 +28,14 @@ class JobAnalyzer:
         self.ai_client = self._create_ai_client(self.ai_provider, model_name)
         self.user_requirements = self.get_default_requirements()
 
-        # 初始化市场分析器（替代原有的单岗位总结器）
+        # 初始化市场分析器（固定使用GLM模型）
         from analyzer.market_analyzer import MarketAnalyzer
-        self.market_analyzer = MarketAnalyzer(ai_provider=self.ai_provider)
-        
-        print(f"🤖 使用AI服务: {self.ai_provider.upper()}")
+        self.market_analyzer = MarketAnalyzer(ai_provider="glm")
+
+        print(f"🤖 岗位匹配使用AI服务: {self.ai_provider.upper()}")
         if model_name:
             print(f"🎯 指定模型: {model_name}")
-        print(f"📊 启用市场整体分析引擎")
+        print(f"📊 市场分析固定使用: GLM")
 
     def get_default_requirements(self):
         """获取用户要求（从配置文件读取默认偏好）"""
@@ -309,9 +308,8 @@ class JobAnalyzer:
             # 使用AI市场分析器进行深度分析
             logger.info(f"🤖 调用MarketAnalyzer进行AI市场分析，岗位数: {len(jobs_list)}")
 
-            # 调用异步方法
-            import asyncio
-            ai_result = asyncio.run(self.market_analyzer.analyze_market_trends(jobs_list))
+            # 调用市场分析器
+            ai_result = self.market_analyzer.analyze_market_trends(jobs_list)
 
             # 补充统计学历和经验分布（AI可能不包含）
             education_counter = {}

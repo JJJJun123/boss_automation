@@ -36,10 +36,7 @@ search:
 ai_analysis:
   # 当前使用的AI服务商
   provider: "deepseek"
-  
-  # 当前使用的AI模型
-  model: "deepseek-chat"    # 默认使用deepseek-chat模型
-  
+
   # 评分标准
   min_score: 6           # 最低接受评分（6分为合格线）
   
