@@ -56,11 +56,10 @@ The project uses a simplified unified crawler architecture with multiple AI anal
 2. **AI Analysis System** (`analyzer/`):
    - **AI Client Factory** (`ai_client_factory.py`): Multi-provider support with dynamic model selection
    - **Supported Providers**: DeepSeek (default, cost-effective), Claude (high quality), Gemini (balanced), GPT, GLM
-   - **Job Analyzer** (`job_analyzer.py`): Unified analysis interface with 1-10 scoring system
+   - **Job Analyzer** (`job_analyzer.py`): Unified analysis interface with 1-10 scoring system and 8-dimension matching
    - **Enhanced Job Analyzer** (`enhanced_job_analyzer.py`): GLM+DeepSeek mixed mode for better cost-performance
-   - **Smart Job Analyzer** (`smart_job_analyzer.py`): Batch processing with intelligent layered analysis
    - **Job Requirement Summarizer** (`job_requirement_summarizer.py`): Structured job requirement analysis with AI
-   - **Market Analyzer** (`market_analyzer.py`): Industry and market trend analysis
+   - **Market Analyzer** (`market_analyzer.py`): Industry and market trend analysis (fixed to use GLM model)
    - **Resume Components** (`resume/`): Resume parsing and matching capabilities
    - **Prompt Templates** (`prompts/`): Structured prompts for consistent AI analysis
    - **Cost Optimization**: Intelligent caching (`data/job_requirements_cache.json`) and batch processing
@@ -201,6 +200,7 @@ except Exception as e:
 ```
 
 ### 原则总结
-- **透明性优于稳定性**: 宁可让用户看到错误，也不要用假数据欺骗用户
-- **调试友好**: 清晰的错误信息，让问题定位尽量变得简单
-- **不要过度工程**: 简单的失败比复杂的恢复机制更好
+- **绝不造假数据**: 这是数据驱动的Web应用，代码中的假数据会掩盖真实错误，导致问题难以发现
+- **所有错误必须log**: 遇到报错必须记录日志，否则定位问题会非常困难
+- **程序跑不通就报错**: 遇到问题直接抛出Exception，不要试图绕过或掩盖问题
+- **及时清理测试文件**: 测试文件用完后立即删除，保持代码库整洁
