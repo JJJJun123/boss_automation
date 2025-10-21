@@ -40,8 +40,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const uploadProgress = document.getElementById('upload-progress');
     const uploadBar = document.getElementById('upload-bar');
     const uploadPercentage = document.getElementById('upload-percentage');
-    const analysisEmpty = document.getElementById('analysis-empty');
-    const analysisResult = document.getElementById('analysis-result');
+    // 移除分析相关元素
     
     // 岗位搜索相关元素
     const startBtn = document.getElementById('start-search-btn');
@@ -53,36 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const jobsList = document.getElementById('jobs-list');
     const emptyState = document.getElementById('empty-state');
     
-    // ========== 页面切换功能 ==========
-    window.showPage = function(pageId) {
-        console.log('🔄 切换到页面:', pageId);
-        
-        // 隐藏所有页面
-        document.querySelectorAll('.page-content').forEach(page => {
-            page.classList.remove('active');
-        });
-        
-        // 显示目标页面
-        const targetPage = document.getElementById(pageId + '-page');
-        if (targetPage) {
-            targetPage.classList.add('active');
-            console.log('✅ 页面已显示:', pageId);
-        } else {
-            console.error('❌ 页面不存在:', pageId);
-        }
-        
-        // 更新导航按钮状态
-        document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
-            btn.classList.add('text-gray-600');
-        });
-        
-        const activeBtn = document.getElementById('nav-' + pageId);
-        if (activeBtn) {
-            activeBtn.classList.remove('text-gray-600');
-            activeBtn.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
-        }
-    };
+    // ========== 单页面应用，移除页面切换功能 ==========
     
     // ========== WebSocket连接处理 ==========
     socket.on('connect', () => {
@@ -158,108 +128,51 @@ document.addEventListener('DOMContentLoaded', function() {
     
     
     // 显示AI分析结果 - 适配新的LangGPT格式
-    function displayAIAnalysis(aiAnalysis) {
-        console.log('🤖 显示AI分析结果:', aiAnalysis);
-        if (analysisEmpty) analysisEmpty.style.display = 'none';
-        if (analysisResult) analysisResult.style.display = 'block';
-        
-        // 显示优势
-        const strengthsDiv = document.getElementById('strengths-display');
-        const strengths = aiAnalysis.strengths || [];
-        if (strengthsDiv) {
-            if (strengths.length > 0) {
-                strengthsDiv.innerHTML = strengths.map(strength => 
-                    `<div class="px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">✅ ${strength}</div>`
-                ).join('');
-            } else {
-                strengthsDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
-            }
-        }
-        
-        // 显示改进建议（劣势）
-        const weaknessesDiv = document.getElementById('weaknesses-display');
-        const weaknesses = aiAnalysis.weaknesses || [];
-        if (weaknessesDiv) {
-            if (weaknesses.length > 0) {
-                weaknessesDiv.innerHTML = weaknesses.map(weakness => 
-                    `<div class="px-3 py-2 bg-yellow-50 text-yellow-700 rounded-lg text-sm">📈 ${weakness}</div>`
-                ).join('');
-            } else {
-                weaknessesDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
-            }
-        }
-        
-        // 显示推荐岗位（兼容对象和字符串两种格式）
-        const recommendedJobsDiv = document.getElementById('recommended-jobs');
-        const recommendedPositions = aiAnalysis.recommended_positions || [];
-        if (recommendedJobsDiv) {
-            if (recommendedPositions.length > 0) {
-                recommendedJobsDiv.innerHTML = recommendedPositions.map(job => {
-                    // 兼容处理：如果是对象，提取position字段；如果是字符串，直接使用
-                    const jobText = typeof job === 'object' ? 
-                        `${job.position || job} (匹配度: ${job.match_score || 'N/A'})` : 
-                        job;
-                    return `<div class="px-3 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm">🎯 ${jobText}</div>`;
-                }).join('');
-            } else {
-                recommendedJobsDiv.innerHTML = '<div class="px-3 py-2 bg-gray-50 text-gray-500 rounded-lg text-sm">• 待分析</div>';
-            }
-        }
-        
-        // 存储AI原始输出（保留用于调试）
-        window.resumeAIOutput = aiAnalysis.full_output || '';
-    }
+    // 移除复杂的AI分析显示功能，改为简单的简历状态更新
     
     // 重置上传区域
     function resetUploadArea() {
         if (uploadProgress) uploadProgress.style.display = 'none';
         if (uploadArea) uploadArea.style.display = 'block';
-        if (analysisResult) analysisResult.style.display = 'none';
-        if (analysisEmpty) analysisEmpty.style.display = 'block';
+        // 移除分析结果相关元素的处理
     }
     
-    // 更新简历状态（简历管理页）
+    // 更新简历状态（简化版本）
     function updateResumeStatus(resumeData) {
         const resumeStatusEl = document.getElementById('resume-status');
-        const searchSection = document.getElementById('search-section');
         
         if (resumeStatusEl && resumeData) {
             resumeStatusEl.innerHTML = `
-                <div class="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                            <span class="text-green-600 text-sm font-bold">${resumeData.name ? resumeData.name.charAt(0) : '✓'}</span>
+                <div class="flex items-center justify-between py-2">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+                            <span class="text-green-600 text-xs font-bold">✓</span>
                         </div>
                         <div>
-                            <div class="text-sm font-medium text-green-900">简历已成功上传</div>
-                            <div class="text-xs text-green-600">${resumeData.name || '可以开始岗位分析了'}</div>
+                            <div class="text-sm font-medium text-gray-900">${resumeData.name || '简历已上传'}</div>
+                            <div class="text-xs text-gray-500">${resumeData.current_position || '已加载个人信息'}</div>
                         </div>
                     </div>
-                    <button onclick="window.deleteResume()" class="text-red-600 hover:text-red-700 text-sm font-medium">
-                        删除简历
+                    <button onclick="window.deleteResume()" class="text-red-600 hover:text-red-700 text-xs font-medium">
+                        删除
                     </button>
                 </div>
             `;
-            // 启用岗位分析页面的搜索功能
-            if (searchSection) searchSection.style.display = 'block';
         }
     }
     
-    // 重置简历状态（简历管理页）
+    // 重置简历状态（简化版本）
     function resetResumeStatus() {
         const resumeStatusEl = document.getElementById('resume-status');
-        const searchSection = document.getElementById('search-section');
         
         if (resumeStatusEl) {
             resumeStatusEl.innerHTML = `
-                <div class="text-center py-6">
-                    <div class="text-4xl mb-2">📄</div>
+                <div class="text-center py-2">
                     <p class="text-sm text-gray-600">未上传简历</p>
-                    <p class="text-xs text-gray-500 mt-1">请先上传简历文件</p>
+                    <p class="text-xs text-gray-500">上传后获得更精准匹配</p>
                 </div>
             `;
         }
-        if (searchSection) searchSection.style.display = 'none';
     }
     
     // ========== 全局函数导出 ==========
@@ -472,7 +385,39 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     };
-    
+
+    // ========== 加载配置 ==========
+    async function loadConfig() {
+        try {
+            const response = await axios.get('/api/config');
+            const config = response.data;
+
+            // 设置AI Provider默认值
+            if (config.ai_analysis && config.ai_analysis.provider) {
+                const aiProviderSelect = document.getElementById('ai-provider');
+                if (aiProviderSelect) {
+                    aiProviderSelect.value = config.ai_analysis.provider;
+                    console.log('✅ AI Provider已设置:', config.ai_analysis.provider);
+                }
+            }
+
+            // 设置其他默认值
+            if (config.search) {
+                if (config.search.keyword) {
+                    document.getElementById('keyword').value = config.search.keyword;
+                }
+                if (config.search.max_jobs) {
+                    document.getElementById('max_jobs').value = config.search.max_jobs;
+                }
+            }
+        } catch (error) {
+            console.error('❌ 加载配置失败:', error);
+        }
+    }
+
+    // 页面加载时获取配置
+    loadConfig();
+
     // ========== 岗位搜索功能 ==========
     if (startBtn) {
         startBtn.addEventListener('click', async () => {
@@ -480,7 +425,8 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const keyword = document.getElementById('keyword').value.trim();
             const city = document.getElementById('city').value;
-            
+            const aiProvider = document.getElementById('ai-provider').value;
+
             if (!keyword) {
                 alert('请输入搜索关键词');
                 return;
@@ -489,18 +435,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('请选择目标城市');
                 return;
             }
-            
+
             isSearching = true;
             startBtn.textContent = '搜索中...';
             startBtn.disabled = true;
-            
-            console.log('🔍 开始搜索:', { keyword, city });
-            
+
+            console.log('🔍 开始搜索:', { keyword, city, aiProvider });
+
             try {
                 const response = await axios.post('/api/jobs/search', {
                     keyword,
                     city,
-                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 20
+                    max_jobs: parseInt(document.getElementById('max_jobs').value) || 5,
+                    ai_provider: aiProvider
                 });
                 
                 console.log('✅ 搜索任务已启动:', response.data);
@@ -592,6 +539,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 处理结果数据
         if (data.data) {
+            console.log('📦 收到数据:', Object.keys(data.data));
+            
             // 检查是否需要简历
             if (data.data.requires_resume) {
                 displayResumeRequiredMessage(data.data);
@@ -600,10 +549,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // 存储并自动显示市场分析报告
                 if (data.data.market_analysis) {
-                    console.log('📊 存储并自动显示市场分析报告');
+                    console.log('📊 收到市场分析数据:', data.data.market_analysis);
+                    console.log('📊 市场分析数据结构:', Object.keys(data.data.market_analysis));
                     currentMarketAnalysis = data.data.market_analysis;
                     displayMarketAnalysis(data.data.market_analysis);
                 } else {
+                    console.log('❌ 未收到市场分析数据');
                     // 如果没有市场分析，清除之前的数据
                     currentMarketAnalysis = null;
                     console.log('🧹 清除之前的市场分析数据');
@@ -868,6 +819,31 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (!analysis || typeof analysis !== 'object') {
             console.error('❌ 市场分析数据无效:', analysis);
+            // 如果没有市场分析，显示基本提示
+            let marketAnalysisEl = document.getElementById('market-analysis');
+            if (!marketAnalysisEl) {
+                marketAnalysisEl = document.createElement('div');
+                marketAnalysisEl.id = 'market-analysis';
+                marketAnalysisEl.className = 'bg-blue-50 border border-blue-200 rounded-xl p-6 mb-6';
+                
+                const jobsList = document.getElementById('jobs-list');
+                if (jobsList) {
+                    jobsList.insertBefore(marketAnalysisEl, jobsList.firstChild);
+                }
+            }
+            
+            marketAnalysisEl.innerHTML = `
+                <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                    <span class="text-2xl mr-2">📊</span>
+                    市场整体分析报告
+                    <span class="text-sm font-normal text-gray-600 ml-2">
+                        (基于 ${window.currentSearchData?.all_jobs?.length || 0} 个岗位)
+                    </span>
+                </h3>
+                <div class="text-sm text-gray-600">
+                    <p>市场分析功能暂未启用，请查看具体岗位的详细匹配分析。</p>
+                </div>
+            `;
             return;
         }
         
@@ -895,79 +871,154 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
         
-        // 构建市场分析内容
+        // 构建新的可视化市场分析内容
         let analysisHTML = `
-            <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+            <h3 class="text-lg font-semibold text-gray-800 mb-6 flex items-center">
                 <span class="text-2xl mr-2">📊</span>
                 市场整体分析报告
                 <span class="text-sm font-normal text-gray-600 ml-2">
-                    (基于 ${analysis.market_overview?.total_jobs_analyzed || 0} 个岗位)
+                    基于 ${analysis.total_jobs_analyzed || window.currentSearchData?.all_jobs?.length || 0} 个岗位分析
                 </span>
             </h3>
         `;
         
-        // 核心必备技能
-        if (analysis.skill_requirements?.hard_skills?.core_required?.length > 0) {
+        // 共同技能要求
+        const commonSkills = analysis.common_skills || [];
+        if (commonSkills.length > 0) {
             analysisHTML += `
-                <div class="mb-4">
-                    <h4 class="text-sm font-medium text-gray-700 mb-2">🔧 核心必备技能</h4>
-                    <div class="space-y-1">
-                        ${analysis.skill_requirements.hard_skills.core_required.slice(0, 5).map(skill => `
-                            <div class="flex items-center text-sm">
-                                <span class="text-gray-700 flex-1">${cleanMarkdown(skill.name)}</span>
-                                <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                                    ${skill.frequency}
-                                </span>
-                            </div>
-                        `).join('')}
+                <div class="mb-6">
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">🔧 共同技能要求</h4>
+                    <div class="space-y-3">
+                        ${commonSkills.map(skill => {
+                            const barWidth = Math.max(skill.percentage || 0, 5); // 最小宽度5%
+                            return `
+                                <div class="flex items-center text-sm">
+                                    <div class="w-24 text-gray-700 font-medium flex-shrink-0">${skill.name || '未知'}</div>
+                                    <div class="flex-1 mx-3">
+                                        <div class="bg-gray-200 rounded-full h-4 relative">
+                                            <div class="bg-blue-500 h-4 rounded-full flex items-center justify-end pr-2" style="width: ${barWidth}%">
+                                                <span class="text-xs text-white font-medium">${skill.percentage || 0}%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="text-xs text-gray-500 w-16 text-right">${skill.percentage || 0}%岗位</div>
+                                </div>
+                            `;
+                        }).join('')}
                     </div>
                 </div>
             `;
         }
-        
-        // 重要加分技能
-        if (analysis.skill_requirements?.hard_skills?.important_preferred?.length > 0) {
+
+        // 关键词云
+        const keywordCloud = analysis.keyword_cloud || [];
+        if (keywordCloud.length > 0) {
             analysisHTML += `
-                <div class="mb-4">
-                    <h4 class="text-sm font-medium text-gray-700 mb-2">⭐ 重要加分技能</h4>
+                <div class="mb-6">
+                    <h4 class="text-sm font-medium text-gray-700 mb-4">☁️ 关键词云</h4>
                     <div class="flex flex-wrap gap-2">
-                        ${analysis.skill_requirements.hard_skills.important_preferred.slice(0, 8).map(skill => `
-                            <span class="text-xs bg-white px-3 py-1 rounded-full border border-gray-200">
-                                ${cleanMarkdown(skill.name)} 
-                                <span class="text-gray-500">(${skill.frequency})</span>
-                            </span>
-                        `).join('')}
+                        ${keywordCloud.map(keyword => {
+                            const count = keyword.count || 0;
+                            return `
+                                <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors text-xs">
+                                    ${keyword.word || keyword}
+                                    <span class="ml-1 text-gray-500">(${count})</span>
+                                </span>
+                            `;
+                        }).join('')}
                     </div>
                 </div>
             `;
         }
         
-        // 核心职责
-        if (analysis.core_responsibilities && analysis.core_responsibilities.length > 0) {
+        // 学历和经验要求分布
+        const hasDistributionData = (analysis.education_distribution && Object.keys(analysis.education_distribution).length > 0) ||
+                                   (analysis.experience_distribution && Object.keys(analysis.experience_distribution).length > 0);
+        
+        if (hasDistributionData) {
             analysisHTML += `
-                <div class="mb-4">
-                    <h4 class="text-sm font-medium text-gray-700 mb-2">📋 核心职责</h4>
-                    <ul class="list-disc list-inside text-sm text-gray-600 space-y-1">
-                        ${analysis.core_responsibilities.slice(0, 5).map(resp => `
-                            <li>${cleanMarkdown(resp)}</li>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            `;
+            
+            // 学历要求分布
+            if (analysis.education_distribution && Object.keys(analysis.education_distribution).length > 0) {
+                const eduData = analysis.education_distribution;
+                analysisHTML += `
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-700 mb-3">🎓 学历要求分布</h4>
+                        <div class="space-y-2">
+                            ${Object.entries(eduData).map(([edu, percentage]) => `
+                                <div class="flex items-center text-sm">
+                                    <div class="w-12 text-gray-700 font-medium">${edu}</div>
+                                    <div class="flex-1 mx-3">
+                                        <div class="bg-gray-200 rounded h-3 relative">
+                                            <div class="bg-green-500 h-3 rounded" style="width: ${percentage}%"></div>
+                                        </div>
+                                    </div>
+                                    <div class="text-xs text-gray-600 w-10 text-right">${percentage}%</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 经验要求分布
+            if (analysis.experience_distribution && Object.keys(analysis.experience_distribution).length > 0) {
+                const expData = analysis.experience_distribution;
+                analysisHTML += `
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-700 mb-3">📅 经验要求分布</h4>
+                        <div class="space-y-2">
+                            ${Object.entries(expData).map(([exp, percentage]) => `
+                                <div class="flex items-center text-sm">
+                                    <div class="w-16 text-gray-700 font-medium">${exp}</div>
+                                    <div class="flex-1 mx-3">
+                                        <div class="bg-gray-200 rounded h-3 relative">
+                                            <div class="bg-purple-500 h-3 rounded" style="width: ${percentage}%"></div>
+                                        </div>
+                                    </div>
+                                    <div class="text-xs text-gray-600 w-10 text-right">${percentage}%</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            analysisHTML += '</div>';
+        }
+        
+        // 关键洞察
+        const keyInsights = analysis.key_insights || [];
+        if (keyInsights.length > 0) {
+            // 处理Markdown格式
+            const formatInsight = (text) => {
+                return text
+                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')  // **加粗** -> <strong>加粗</strong>
+                    .replace(/\*(.+?)\*/g, '<em>$1</em>')              // *斜体* -> <em>斜体</em>
+                    .replace(/`(.+?)`/g, '<code class="bg-gray-200 px-1 rounded text-xs">$1</code>'); // `代码` -> <code>代码</code>
+            };
+
+            analysisHTML += `
+                <div class="bg-blue-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">💡 关键洞察</h4>
+                    <ul class="space-y-2 text-sm text-gray-700">
+                        ${keyInsights.map(insight => `
+                            <li class="flex items-start">
+                                <span class="text-blue-500 mr-2 flex-shrink-0">•</span>
+                                <span>${formatInsight(insight)}</span>
+                            </li>
                         `).join('')}
                     </ul>
                 </div>
             `;
-        }
-        
-        // 关键发现
-        if (analysis.key_findings && analysis.key_findings.length > 0) {
+        } else {
+            // AI未生成洞察时，明确说明
             analysisHTML += `
-                <div class="mb-2">
-                    <h4 class="text-sm font-medium text-gray-700 mb-2">🎯 关键发现</h4>
-                    <div class="space-y-2">
-                        ${analysis.key_findings.map(finding => `
-                            <div class="text-sm text-gray-600 bg-white p-2 rounded border-l-4 border-blue-400">
-                                ${cleanMarkdown(finding)}
-                            </div>
-                        `).join('')}
-                    </div>
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">💡 关键洞察</h4>
+                    <p class="text-sm text-gray-500">暂无市场洞察数据，请查看上方的技能要求和学历经验分布。</p>
                 </div>
             `;
         }
@@ -1036,21 +1087,50 @@ document.addEventListener('DOMContentLoaded', function() {
                 ${job.url ? `
                     <div class="text-gray-600 mb-2">
                         🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm">
-                            查看岗位详情
+                            职位链接
                         </a>
                     </div>
+                ` : ''}
+                
+                ${isAnalyzed ? `
+                    <div class="mt-3 pt-3 border-t border-gray-100">
+                        <div class="text-sm text-gray-700 mb-2">
+                            🎯 <strong>投递建议:</strong> 
+                            <span class="px-2 py-1 rounded text-xs ${analysis.application_advice === '建议投递' ? 'bg-green-100 text-green-700' : analysis.application_advice === '条件投递' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
+                                ${analysis.application_advice || analysis.action_recommendation || '建议投递'} ${analysis.application_advice === '建议投递' ? '✅' : analysis.application_advice === '条件投递' ? '⚠️' : '❌'}
+                            </span>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+            
+            <!-- 两个展开按钮 -->
+            <div class="mt-4 flex gap-2">
+                <button 
+                    onclick="toggleJobDetails(${index})" 
+                    class="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                    id="toggle-details-${index}"
+                >
+                    📋 查看岗位详情 ↓
+                </button>
+                ${isAnalyzed ? `
+                    <button 
+                        onclick="toggleJobAnalysis(${index})" 
+                        class="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                        id="toggle-analysis-${index}"
+                    >
+                        📊 查看匹配分析 ↓
+                    </button>
                 ` : ''}
             </div>
         `;
         
-        // 添加岗位要求展示（合并工作职责和任职资格）
-        if ((job.job_description && job.job_description !== '具体要求请查看岗位详情' && 
+        // 准备岗位详情内容（隐藏状态，等待展开）
+        const hasJobDetails = (job.job_description && job.job_description !== '具体要求请查看岗位详情' && 
             !job.job_description.includes('基于文本解析的岗位描述')) ||
-            (job.job_requirements && job.job_requirements !== '具体要求请查看岗位详情')) {
+            (job.job_requirements && job.job_requirements !== '具体要求请查看岗位详情');
             
-            const jobDetailsDiv = document.createElement('div');
-            jobDetailsDiv.className = 'mt-4';
-            
+        if (hasJobDetails) {
             // 合并工作职责和任职资格内容
             let combinedContent = '';
             
@@ -1077,134 +1157,121 @@ document.addEventListener('DOMContentLoaded', function() {
                 const displayText = isLong ? cleanedContent.substring(0, 800) : cleanedContent;
                 const detailId = 'detail_' + Math.random().toString(36).substr(2, 9);
                 
-                const jobDetailsHTML = `
-                    <div class="bg-gray-50 p-3 rounded-lg">
-                        <div class="text-sm font-medium text-gray-900 mb-2">📋 岗位要求</div>
+                const jobDetailsDiv = document.createElement('div');
+                jobDetailsDiv.id = `job-details-${index}`;
+                jobDetailsDiv.className = 'job-details-panel hidden mt-4';
+                jobDetailsDiv.style.display = 'none';
+                
+                jobDetailsDiv.innerHTML = `
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <div class="text-sm font-medium text-gray-900 mb-3">📋 岗位详情</div>
                         <div class="text-xs text-gray-700 whitespace-pre-wrap" id="${detailId}_desc">
                             ${displayText}${isLong ? '...' : ''}
                         </div>
                         ${isLong ? `
                             <button data-detail-id="${detailId}_desc" data-full-text="${encodeURIComponent(cleanedContent)}" 
                                     onclick="toggleJobDetailSafe(this)" 
-                                    class="text-xs text-gray-600 hover:text-gray-800 mt-2 underline">
+                                    class="text-xs text-blue-600 hover:text-blue-800 mt-2 underline">
                                 展开全文
                             </button>
                         ` : ''}
                     </div>
                 `;
                 
-                jobDetailsDiv.innerHTML = jobDetailsHTML;
                 div.appendChild(jobDetailsDiv);
             }
         }
         
         
-        // 添加详细的智能匹配分析展示
+        // 准备匹配分析面板（隐藏状态）
         if (isAnalyzed && analysis) {
             const analysisDiv = document.createElement('div');
-            analysisDiv.className = 'mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-100';
+            analysisDiv.id = `job-analysis-${index}`;
+            analysisDiv.className = 'job-analysis-panel hidden mt-4';
+            analysisDiv.style.display = 'none';
             
             let analysisHTML = `
-                <div class="flex justify-between items-center mb-3">
-                    <div class="text-sm font-semibold text-gray-900">🎯 智能匹配分析</div>
-                    <div class="text-sm font-medium ${getScoreColor(score, true).replace('bg-', 'text-').replace('-100', '-600')}">
-                        ${analysis.priority_level || '中优先级'}
-                    </div>
-                </div>
-            `;
-            
-            // 技能匹配情况
-            if (analysis.matched_skills || analysis.missing_skills) {
-                analysisHTML += `
-                    <div class="mb-3 space-y-2">
-                        ${analysis.matched_skills && analysis.matched_skills.length > 0 ? `
-                            <div class="flex flex-wrap gap-1">
-                                <span class="text-xs text-green-700 font-medium">✅ 匹配技能:</span>
-                                ${analysis.matched_skills.map(skill => 
-                                    `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">${skill}</span>`
-                                ).join('')}
-                            </div>
-                        ` : ''}
-                        ${analysis.missing_skills && analysis.missing_skills.length > 0 ? `
-                            <div class="flex flex-wrap gap-1">
-                                <span class="text-xs text-red-700 font-medium">❌ 缺失技能:</span>
-                                ${analysis.missing_skills.map(skill => 
-                                    `<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">${skill}</span>`
-                                ).join('')}
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-            }
-            
-            // 技能覆盖率
-            if (analysis.skill_coverage_detail) {
-                analysisHTML += `
-                    <div class="text-xs text-gray-600 mb-2">
-                        📋 技能覆盖: <span class="font-medium">${analysis.skill_coverage_detail}</span>
-                    </div>
-                `;
-            }
-            
-            // 维度评分（只显示核心维度）
-            if (analysis.dimension_scores) {
-                const dimensions = [
-                    { key: 'job_match', label: '岗位匹配', weight: '25%' },
-                    { key: 'skill_match', label: '技能匹配', weight: '25%' },
-                    { key: 'experience_match', label: '经验匹配', weight: '25%' },
-                    { key: 'skill_coverage', label: '技能覆盖', weight: '25%' }
-                ];
-                
-                analysisHTML += `
-                    <div class="grid grid-cols-2 gap-2 mb-3">
-                        ${dimensions.map(dim => {
-                            const score = analysis.dimension_scores[dim.key];
-                            if (score === undefined) return '';
-                            const percentage = score * 10;
-                            return `
-                                <div class="text-xs">
-                                    <div class="flex justify-between mb-1">
-                                        <span class="text-gray-600">${dim.label} <span class="text-xs text-gray-400">(${dim.weight})</span></span>
-                                        <span class="font-medium">${score}/10</span>
-                                    </div>
-                                    <div class="w-full bg-gray-200 rounded-full h-1.5">
-                                        <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${percentage}%"></div>
-                                    </div>
+                <div class="bg-gradient-to-br from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
+                    <div class="text-sm font-semibold text-gray-900 mb-4">📊 匹配度详情</div>
+                    
+                    <!-- 综合评分 -->
+                    <div class="mb-4">
+                        <div class="text-sm font-medium text-gray-700 mb-2">综合评分: ${score}/10</div>
+                        ${analysis.detailed_dimension_scores ? `
+                            <div class="grid grid-cols-3 gap-3 text-xs">
+                                <div class="flex justify-between">
+                                    <span>学历:</span>
+                                    <span class="font-medium">${analysis.detailed_dimension_scores.education || 'N/A'}/10</span>
                                 </div>
-                            `;
-                        }).filter(html => html).join('')}
+                                <div class="flex justify-between">
+                                    <span>经验:</span>
+                                    <span class="font-medium">${analysis.detailed_dimension_scores.experience || 'N/A'}/10</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>技能:</span>
+                                    <span class="font-medium">${analysis.detailed_dimension_scores.skills || 'N/A'}/10</span>
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
-                `;
-            }
-            
-            // 面试准备建议（可展开）
-            if (analysis.interview_preparation && analysis.interview_preparation.length > 0) {
-                analysisHTML += `
-                    <details class="text-xs">
-                        <summary class="cursor-pointer text-gray-700 hover:text-gray-900 font-medium">
-                            📝 查看面试准备建议
-                        </summary>
-                        <ul class="mt-2 space-y-1 text-gray-600">
-                            ${analysis.interview_preparation.map(tip => 
-                                `<li class="pl-4">• ${tip}</li>`
-                            ).join('')}
-                        </ul>
-                    </details>
-                `;
-            }
-            
-            // 行动建议
-            if (analysis.action_recommendation) {
-                const actionColor = analysis.priority_level === '高' ? 'green' : 
-                                  analysis.priority_level === '低' ? 'red' : 'yellow';
-                analysisHTML += `
-                    <div class="mt-3 pt-3 border-t border-gray-200">
-                        <div class="text-xs bg-${actionColor}-50 text-${actionColor}-700 p-2 rounded">
-                            💡 <strong>建议:</strong> ${analysis.action_recommendation}
+                    
+                    <!-- 匹配情况 -->
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <div class="text-xs font-medium text-green-700 mb-2">✅ 符合要求 (${analysis.matched_skills?.length || 0}项)</div>
+                            ${analysis.matched_skills && analysis.matched_skills.length > 0 ? `
+                                <div class="space-y-1">
+                                    ${analysis.matched_skills.slice(0, 5).map(skill => 
+                                        `<div class="text-xs text-gray-600">• ${skill}</div>`
+                                    ).join('')}
+                                </div>
+                            ` : '<div class="text-xs text-gray-500">暂无匹配技能</div>'}
+                        </div>
+                        <div>
+                            <div class="text-xs font-medium text-red-700 mb-2">❌ 能力缺口 (${analysis.missing_skills?.length || 0}项)</div>
+                            ${analysis.missing_skills && analysis.missing_skills.length > 0 ? `
+                                <div class="space-y-1">
+                                    ${analysis.missing_skills.slice(0, 5).map(skill => 
+                                        `<div class="text-xs text-gray-600">• ${skill}</div>`
+                                    ).join('')}
+                                </div>
+                            ` : '<div class="text-xs text-gray-500">暂无缺失技能</div>'}
                         </div>
                     </div>
-                `;
-            }
+                    
+                    <!-- 简历优化建议 -->
+                    ${analysis.resume_optimization && analysis.resume_optimization.length > 0 ? `
+                        <div class="mb-4">
+                            <div class="text-xs font-medium text-gray-700 mb-2">📝 简历优化建议</div>
+                            <ol class="text-xs text-gray-600 space-y-1">
+                                ${analysis.resume_optimization.map((tip, idx) => 
+                                    `<li class="pl-4">${idx + 1}. ${tip}</li>`
+                                ).join('')}
+                            </ol>
+                        </div>
+                    ` : ''}
+                    
+                    <!-- 投递决策 -->
+                    <div class="mb-4">
+                        <div class="text-xs font-medium text-gray-700 mb-2">💡 投递决策: ${analysis.application_advice || '建议投递'}</div>
+                        ${analysis.decision_reason ? `
+                            <div class="text-xs text-gray-600">理由: ${analysis.decision_reason}</div>
+                        ` : ''}
+                    </div>
+                    
+                    <!-- 面试准备 -->
+                    ${analysis.interview_preparation && analysis.interview_preparation.length > 0 ? `
+                        <div class="text-xs">
+                            <div class="font-medium text-gray-700 mb-2">🎯 面试准备</div>
+                            <div class="flex flex-wrap gap-2">
+                                ${analysis.interview_preparation.map(tip => 
+                                    `<span class="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs">• ${tip}</span>`
+                                ).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
             
             analysisDiv.innerHTML = analysisHTML;
             div.appendChild(analysisDiv);
@@ -1212,6 +1279,50 @@ document.addEventListener('DOMContentLoaded', function() {
         
         return div;
     }
+    
+    // 切换岗位详情展示
+    window.toggleJobDetails = function(index) {
+        const detailsPanel = document.getElementById(`job-details-${index}`);
+        const toggleBtn = document.getElementById(`toggle-details-${index}`);
+        
+        if (detailsPanel && toggleBtn) {
+            const isHidden = detailsPanel.style.display === 'none' || detailsPanel.style.display === '';
+            
+            if (isHidden) {
+                detailsPanel.style.display = 'block';
+                detailsPanel.classList.remove('hidden');
+                toggleBtn.innerHTML = '📋 收起岗位详情 ↑';
+                toggleBtn.className = toggleBtn.className.replace('bg-blue-50 hover:bg-blue-100 text-blue-700', 'bg-gray-100 hover:bg-gray-200 text-gray-700');
+            } else {
+                detailsPanel.style.display = 'none';
+                detailsPanel.classList.add('hidden');
+                toggleBtn.innerHTML = '📋 查看岗位详情 ↓';
+                toggleBtn.className = toggleBtn.className.replace('bg-gray-100 hover:bg-gray-200 text-gray-700', 'bg-blue-50 hover:bg-blue-100 text-blue-700');
+            }
+        }
+    };
+    
+    // 切换匹配分析展示  
+    window.toggleJobAnalysis = function(index) {
+        const analysisPanel = document.getElementById(`job-analysis-${index}`);
+        const toggleBtn = document.getElementById(`toggle-analysis-${index}`);
+        
+        if (analysisPanel && toggleBtn) {
+            const isHidden = analysisPanel.style.display === 'none' || analysisPanel.style.display === '';
+            
+            if (isHidden) {
+                analysisPanel.style.display = 'block';
+                analysisPanel.classList.remove('hidden');
+                toggleBtn.innerHTML = '📊 收起匹配分析 ↑';
+                toggleBtn.className = toggleBtn.className.replace('bg-green-50 hover:bg-green-100 text-green-700', 'bg-gray-100 hover:bg-gray-200 text-gray-700');
+            } else {
+                analysisPanel.style.display = 'none';
+                analysisPanel.classList.add('hidden');
+                toggleBtn.innerHTML = '📊 查看匹配分析 ↓';
+                toggleBtn.className = toggleBtn.className.replace('bg-gray-100 hover:bg-gray-200 text-gray-700', 'bg-green-50 hover:bg-green-100 text-green-700');
+            }
+        }
+    };
     
     // 获取所有岗位
     async function fetchAllJobs() {
@@ -1316,14 +1427,10 @@ document.addEventListener('DOMContentLoaded', function() {
             
             setTimeout(() => {
                 if (response.data.success) {
-                    // 隐藏上传进度，显示分析结果
+                    // 隐藏上传进度
                     if (uploadProgress) uploadProgress.style.display = 'none';
                     
-                    if (response.data.ai_analysis) {
-                        displayAIAnalysis(response.data.ai_analysis);
-                    }
-                    
-                    // 更新简历状态
+                    // 更新简历状态 - 简化版本，不再显示AI分析
                     updateResumeStatus(response.data.resume_data);
                     
                     console.log('✅ 简历上传成功:', response.data.resume_data.name);
