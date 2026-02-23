@@ -64,3 +64,6 @@ cookies.json
 session_data/
 browser_profile/
 crawler/sessions/
+
+# Git worktrees
+.worktrees/
