@@ -1,6 +1,5 @@
 from .ai_client_factory import AIClientFactory
 from .prompts.job_analysis_prompts import JobAnalysisPrompts
-from .job_requirement_summarizer import JobRequirementSummarizer, JobRequirementSummary
 import os
 import json
 import re
@@ -28,14 +27,9 @@ class JobAnalyzer:
         self.ai_client = self._create_ai_client(self.ai_provider, model_name)
         self.user_requirements = self.get_default_requirements()
 
-        # 初始化市场分析器（固定使用GLM模型）
-        from analyzer.market_analyzer import MarketAnalyzer
-        self.market_analyzer = MarketAnalyzer(ai_provider="glm")
-
         logger.debug(f"🤖 岗位匹配使用AI服务: {self.ai_provider.upper()}")
         if model_name:
             logger.debug(f"🎯 指定模型: {model_name}")
-        logger.debug(f"📊 市场分析固定使用: GLM")
 
     def get_default_requirements(self):
         """获取用户要求（从配置文件读取默认偏好）"""
@@ -147,27 +141,6 @@ class JobAnalyzer:
         analyzed_jobs = []
         
         logger.debug(f"🤖 开始AI分析 {len(jobs_list)} 个岗位...")
-        
-        # 第一步：生成市场整体分析（新功能）
-        logger.debug(f"📊 步骤1: 生成市场整体分析...")
-        try:
-            # 使用新的市场分析方法
-            if self.generate_market_analysis(jobs_list):
-                logger.debug(f"✅ 市场分析完成，分析了 {self.market_analysis.total_jobs_analyzed} 个岗位")
-                
-                # 显示分析摘要
-                if hasattr(self.market_analysis, 'hard_skills_top5') and self.market_analysis.hard_skills_top5:
-                    top_skills = [skill['name'] for skill in self.market_analysis.hard_skills_top5[:3]]
-                    logger.debug(f"🔝 最常见技能: {', '.join(top_skills)}")
-                elif hasattr(self.market_analysis, 'common_skills') and self.market_analysis.common_skills:
-                    logger.debug(f"🔝 最常见技能: {', '.join(self.market_analysis.common_skills[:3])}")
-            else:
-                logger.debug(f"⚠️ 市场分析生成失败")
-                self.market_analysis = None
-            
-        except Exception as e:
-            logger.debug(f"⚠️ 市场分析失败: {e}")
-            self.market_analysis = None
         
         # 第二步：进行匹配度分析
         logger.debug(f"🤖 步骤2: 进行智能匹配分析...")
@@ -281,136 +254,6 @@ class JobAnalyzer:
             'strengths': self.resume_analysis.get('strengths', []),
             'improvement_suggestions': self.resume_analysis.get('improvement_suggestions', [])
         }
-    
-    def get_market_analysis(self):
-        """获取市场分析结果"""
-        if hasattr(self, 'market_analysis') and self.market_analysis:
-            # 返回兼容新格式的数据
-            return {
-                'common_skills': self.market_analysis.common_skills,
-                'keyword_cloud': self.market_analysis.keyword_cloud,
-                'differentiation_analysis': self.market_analysis.differentiation_analysis,
-                'total_jobs_analyzed': self.market_analysis.total_jobs_analyzed,
-                # 新增可视化所需字段
-                'hard_skills_top5': self.market_analysis.hard_skills_top5 if hasattr(self.market_analysis, 'hard_skills_top5') else [],
-                'education_distribution': self.market_analysis.education_distribution if hasattr(self.market_analysis, 'education_distribution') else {},
-                'experience_distribution': self.market_analysis.experience_distribution if hasattr(self.market_analysis, 'experience_distribution') else {},
-                'key_insights': self.market_analysis.key_insights if hasattr(self.market_analysis, 'key_insights') else []
-            }
-        return None
-    
-    def generate_market_analysis(self, jobs_list):
-        """从岗位列表生成市场分析数据 - 使用AI分析器"""
-        if not jobs_list:
-            return None
-
-        try:
-            # 使用AI市场分析器进行深度分析
-            logger.info(f"🤖 调用MarketAnalyzer进行AI市场分析，岗位数: {len(jobs_list)}")
-
-            # 调用市场分析器
-            ai_result = self.market_analyzer.analyze_market_trends(jobs_list)
-
-            # 补充统计学历和经验分布（AI可能不包含）
-            education_counter = {}
-            experience_counter = {}
-
-            for job in jobs_list:
-                job_desc = job.get('job_description', '') + ' ' + job.get('job_requirements', '')
-
-                # 统计学历要求
-                if '博士' in job_desc:
-                    education_counter['博士'] = education_counter.get('博士', 0) + 1
-                elif '硕士' in job_desc or '研究生' in job_desc:
-                    education_counter['硕士'] = education_counter.get('硕士', 0) + 1
-                elif '本科' in job_desc:
-                    education_counter['本科'] = education_counter.get('本科', 0) + 1
-                else:
-                    education_counter['不限'] = education_counter.get('不限', 0) + 1
-
-                # 统计经验要求
-                import re
-                experience_matches = re.findall(r'(\d+)[年\-]', job_desc)
-                if experience_matches:
-                    exp_years = max([int(x) for x in experience_matches])
-                    if exp_years == 0:
-                        experience_counter['应届'] = experience_counter.get('应届', 0) + 1
-                    elif exp_years <= 3:
-                        experience_counter['1-3年'] = experience_counter.get('1-3年', 0) + 1
-                    elif exp_years <= 5:
-                        experience_counter['3-5年'] = experience_counter.get('3-5年', 0) + 1
-                    else:
-                        experience_counter['5年+'] = experience_counter.get('5年+', 0) + 1
-                else:
-                    experience_counter['不限'] = experience_counter.get('不限', 0) + 1
-
-            # 转换学历分布为百分比
-            education_distribution = {}
-            edu_total = sum(education_counter.values()) or 1
-            for edu, count in education_counter.items():
-                education_distribution[edu] = int((count / edu_total) * 100)
-
-            # 转换经验分布为百分比
-            experience_distribution = {}
-            exp_total = sum(experience_counter.values()) or 1
-            for exp, count in experience_counter.items():
-                experience_distribution[exp] = int((count / exp_total) * 100)
-
-            # 从AI结果提取技能数据
-            hard_skills_top5 = []
-            if ai_result.common_skills:
-                for skill_dict in ai_result.common_skills[:5]:
-                    hard_skills_top5.append({
-                        'name': skill_dict.get('name', ''),
-                        'frequency': skill_dict.get('percentage', 0),
-                        'count': skill_dict.get('percentage', 0)  # 使用percentage作为count的近似
-                    })
-
-            # 生成关键洞察（完全由AI生成，不使用固定模板）
-            key_insights = []
-
-            # 从AI的差异化分析中提取洞察
-            if ai_result.differentiation_analysis.get('analysis'):
-                diff_text = ai_result.differentiation_analysis['analysis']
-                # 提取所有句子作为关键洞察（不限制数量）
-                sentences = [s.strip() + '。' for s in diff_text.split('。') if s.strip()]
-                key_insights.extend(sentences)
-
-            # 如果AI没有生成洞察，记录警告但不使用硬编码模板
-            if not key_insights:
-                logger.warning("⚠️ AI未生成关键洞察，保持为空以确保数据真实性")
-
-            # 创建增强的market_analysis对象
-            class EnhancedMarketAnalysis:
-                def __init__(self, ai_result, edu_dist, exp_dist, skills, insights):
-                    # AI分析结果
-                    self.common_skills = ai_result.common_skills
-                    self.keyword_cloud = ai_result.keyword_cloud
-                    self.differentiation_analysis = ai_result.differentiation_analysis
-                    self.total_jobs_analyzed = ai_result.total_jobs_analyzed
-
-                    # 补充统计数据
-                    self.education_distribution = edu_dist
-                    self.experience_distribution = exp_dist
-                    self.hard_skills_top5 = skills
-                    self.key_insights = insights
-
-            self.market_analysis = EnhancedMarketAnalysis(
-                ai_result,
-                education_distribution,
-                experience_distribution,
-                hard_skills_top5,
-                key_insights
-            )
-
-            logger.info(f"✅ AI市场分析完成，提取到 {len(hard_skills_top5)} 个核心技能")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ AI市场分析失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return False
     
     
     def _parse_match_analysis_result(self, analysis_result):

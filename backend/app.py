@@ -452,9 +452,6 @@ def run_job_search_task(params, session_data):
         from utils.data_saver import save_all_job_results
         save_all_job_results(analyzed_jobs, qualified_jobs)
         
-        # 9. 市场分析已停用（见 design.md 超出范围章节）
-        market_analysis = None
-        
         # 10. 完成
         current_job.update({
             'status': 'completed',
