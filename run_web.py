@@ -10,8 +10,11 @@ import time
 import logging
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 # 设置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "WARNING").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.WARNING), format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def check_dependencies():
@@ -30,7 +33,7 @@ def check_dependencies():
 
 def check_config():
     """检查配置文件"""
-    config_dir = Path("config")
+    config_dir = PROJECT_ROOT / "config"
     required_files = [
         "secrets.env",
         "app_config.yaml", 
@@ -52,7 +55,7 @@ def check_config():
 def start_backend():
     """启动后端服务"""
     logger.info("🚀 启动后端服务...")
-    backend_script = Path("backend/app.py")
+    backend_script = PROJECT_ROOT / "backend" / "app.py"
     
     if not backend_script.exists():
         logger.error("❌ 找不到后端启动脚本")
@@ -61,7 +64,7 @@ def start_backend():
     try:
         process = subprocess.Popen([
             sys.executable, str(backend_script)
-        ], cwd=os.getcwd())
+        ], cwd=str(PROJECT_ROOT))
         logger.info("✅ 后端服务启动成功，端口: 5000")
         return process
     except Exception as e:
@@ -70,7 +73,7 @@ def start_backend():
 
 def check_frontend():
     """检查前端是否存在"""
-    frontend_dir = Path("frontend")
+    frontend_dir = PROJECT_ROOT / "frontend"
     package_json = frontend_dir / "package.json"
     
     if not package_json.exists():

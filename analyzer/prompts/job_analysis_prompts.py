@@ -355,3 +355,32 @@ class JobAnalysisPrompts:
         "关键发现3：行业开始重视AI相关技能"
     ]
 }}"""
+
+
+# 模块级常量：简历匹配 prompt（供 EnhancedJobAnalyzer 两阶段流水线使用）
+RESUME_MATCH_PROMPT = """你是一个严格的招聘评估专家。给你一份求职简历和一个招聘JD，请评估匹配程度。
+
+【简历】
+{resume_text}
+
+【岗位】
+职位：{job_title}
+公司：{company}
+薪资：{salary}
+岗位描述：{description}
+任职要求：{requirements}
+
+请严格按以下JSON格式返回（不要包含其他内容）：
+{{
+  "score": <1-10的整数，10表示完美匹配>,
+  "match_highlights": [<最多3条匹配亮点，字符串列表>],
+  "gaps": [<最多3条关键差距，字符串列表>],
+  "summary": "<一句话综合评价>"
+}}
+
+评分标准：
+- 9-10: 完全符合，强烈推荐
+- 7-8: 大部分符合，值得重点投递
+- 5-6: 部分符合，可以投递但需补强
+- 3-4: 匹配度低，建议低优先级
+- 1-2: 基本不符合"""

@@ -23,41 +23,40 @@ ai:
   # 各AI模型的默认配置
   models:
     claude:
-      model_name: "claude-sonnet-4-5-20250929"
+      model_name: "claude-sonnet-4-20250514"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "claude-sonnet-4-5-20250929"
-        - "claude-3-5-haiku-20241022"
+        - "claude-sonnet-4-20250514"
+        - "claude-opus-4-1-20250805"
     gemini:
-      model_name: "gemini-2.5-pro"
+      model_name: "gemini-3-pro-preview"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "gemini-2.5-pro"
-        - "gemini-2.5-flash"
+        - "gemini-3-pro-preview"
+        - "gemini-3-flash-preview"
     gpt:
-      model_name: "gpt-5-2025-08-07"
+      model_name: "gpt-5.1"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "gpt-5-2025-08-07"
-        - "gpt-4.1-2025-04-14"
+        - "gpt-5.1"
+        - "gpt-5.1-chat-latest"
     glm:
-      model_name: "glm-4.6"
+      model_name: "glm-4.6v"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "glm-4.6"
-        - "glm-4.5"
-        - "glm-4.5-air"
+        - "glm-4.7"
+        - "glm-4.6v"
     deepseek:
-      model_name: "deepseek-chat"
+      model_name: "deepseek-reasoner"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "deepseek-chat"
         - "deepseek-reasoner"
+        - "deepseek-chat"
 
 # 爬虫配置
 crawler:
@@ -68,9 +67,11 @@ crawler:
   browser:
     headless: false  # 是否无头模式
     timeout: 30      # 页面加载超时时间(秒)
+    diagnostic_logging: false  # 诊断日志开关（页面跳转/调试截图），默认关闭
+    channel: "chrome"  # 优先使用本机Chrome，失败自动回退到Playwright Chromium
     # Chrome用户数据目录（用于保持登录状态）
     user_data_dir: "~/Library/Application Support/boss_automation/browser_profile/boss_zhipin"  # 用户目录存储浏览器配置
-    use_persistent_context: true  # 是否使用持久化上下文
+    use_persistent_context: false  # Boss站点在persistent_context下会自动跳about:blank，默认关闭
     
   # 反爬虫设置
   anti_detection:
@@ -107,7 +108,7 @@ cities:
 
 # 日志配置
 logging:
-  level: "INFO"
+  level: "WARNING"
   file: "logs/app.log"
   max_size: "10MB"
   backup_count: 5

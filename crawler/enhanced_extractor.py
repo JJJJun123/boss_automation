@@ -43,9 +43,23 @@ class EnhancedDataExtractor:
         
         try:
             logger.info("🚀 启动增强数据提取引擎...")
+            page = await self._adopt_live_page(page, stage="提取开始前")
+            early_snapshot_jobs = await self._extract_jobs_fast_snapshot(page, max_jobs)
+            if early_snapshot_jobs:
+                logger.info(f"⚡ 早期快照提取到 {len(early_snapshot_jobs)} 个岗位")
             
             # 第一步：页面预处理和智能等待
-            await self._prepare_page_for_extraction(page)
+            try:
+                page = await self._prepare_page_for_extraction(page)
+            except Exception:
+                # 预处理失败但已有真实快照数据时，直接返回快照结果，避免整批丢失
+                if early_snapshot_jobs:
+                    logger.warning("⚠️ 页面预处理失败，直接使用早期快照结果")
+                    validated = await self._validate_and_enhance_jobs(early_snapshot_jobs, page)
+                    extraction_time = time.time() - start_time
+                    self._update_performance_stats(len(validated), extraction_time)
+                    return validated
+                raise
             
             # 第二步：动态发现最佳岗位容器选择器
             logger.info("🔍 分析页面结构，寻找最佳选择器...")
@@ -59,10 +73,17 @@ class EnhancedDataExtractor:
                 fallback_result = await self._fallback_extraction(page, max_jobs)
                 if fallback_result:
                     return fallback_result
+                if early_snapshot_jobs:
+                    logger.warning("⚠️ 智能选择器与降级策略均失败，回退到早期快照结果")
+                    validated = await self._validate_and_enhance_jobs(early_snapshot_jobs, page)
+                    extraction_time = time.time() - start_time
+                    self._update_performance_stats(len(validated), extraction_time)
+                    return validated
                 logger.error("❌ 所有提取策略都失败了")
                 return []
             
             # 第三步：提取岗位容器元素
+            page = await self._adopt_live_page(page, stage="提取岗位容器前")
             job_elements = await self._get_job_elements(page, best_container_selectors)
             logger.info(f"📋 找到 {len(job_elements)} 个岗位容器")
             
@@ -70,13 +91,34 @@ class EnhancedDataExtractor:
                 await self._debug_page_content(page)
                 return []
             
-            # 第四步：预先发现各字段的最佳选择器
+            # 第四步：先做一次快速DOM快照提取（抗about:blank中断）
+            snapshot_jobs = await self._extract_jobs_fast_snapshot(page, max_jobs)
+            if snapshot_jobs:
+                logger.info(f"⚡ 快速快照提取到 {len(snapshot_jobs)} 个岗位")
+            elif early_snapshot_jobs:
+                snapshot_jobs = early_snapshot_jobs
+
+            # 第五步：预先发现各字段的最佳选择器
             field_selectors = await self._discover_field_selectors(page, job_elements[:3])
             
-            # 第五步：批量提取岗位数据
+            # 第六步：批量提取岗位数据
             jobs = await self._extract_jobs_batch(job_elements[:max_jobs], field_selectors)
+
+            # 提取不足时，用快照结果补齐（常见于中途被跳转到about:blank）
+            if len(jobs) < max_jobs and snapshot_jobs:
+                logger.warning(f"⚠️ 增强提取仅得到 {len(jobs)} 个岗位，使用快照结果补齐到目标 {max_jobs}")
+                jobs = self._merge_jobs(jobs, snapshot_jobs, max_jobs)
+
+            # 仍不足时，尝试降级提取再补齐
+            if len(jobs) < max_jobs:
+                page = await self._adopt_live_page(page, stage="降级提取前")
+                fallback_jobs = await self._fallback_extraction(page, max_jobs)
+                if fallback_jobs:
+                    jobs = self._merge_jobs(jobs, fallback_jobs, max_jobs)
+                elif early_snapshot_jobs:
+                    jobs = self._merge_jobs(jobs, early_snapshot_jobs, max_jobs)
             
-            # 第六步：数据质量验证和增强
+            # 第七步：数据质量验证和增强
             validated_jobs = await self._validate_and_enhance_jobs(jobs, page)
             
             extraction_time = time.time() - start_time
@@ -88,29 +130,79 @@ class EnhancedDataExtractor:
         except Exception as e:
             logger.error(f"❌ 增强数据提取失败: {e}")
             return []
-    
-    async def _prepare_page_for_extraction(self, page: Page) -> None:
-        """页面预处理和智能等待"""
+
+    async def extract_job_listings_quick_snapshot(self, page: Page, max_jobs: int = 20) -> List[Dict]:
+        """仅做一次快速DOM快照提取（最小交互，抗about:blank）"""
         try:
-            # 设置较短的超时时间避免长时间等待
-            page.set_default_timeout(15000)  # 15秒超时
-            
-            # 等待页面完全加载
+            page = await self._adopt_live_page(page, stage="快速快照")
+            return await self._extract_jobs_fast_snapshot(page, max_jobs)
+        except Exception as e:
+            logger.debug(f"快速快照提取失败: {e}")
+            return []
+    
+    async def _adopt_live_page(self, page: Page, stage: str = "") -> Page:
+        """当前页失效时，优先切到context中仍可用的zhipin页"""
+        try:
+            if page and not page.is_closed():
+                current_url = (page.url or "").strip()
+                if current_url and "about:blank" not in current_url and "zhipin.com" in current_url:
+                    return page
+
+            context = page.context if page else None
+            if not context:
+                return page
+
+            candidates: List[Tuple[int, Page, str]] = []
+            for candidate in reversed(context.pages):
+                if candidate.is_closed():
+                    continue
+                url = (candidate.url or "").strip()
+                if not url or "about:blank" in url or "zhipin.com" not in url:
+                    continue
+                score = 0
+                if "zhipin.com/web/geek/jobs" in url:
+                    score = 30
+                elif "zhipin.com/job_detail" in url:
+                    score = 20
+                elif "zhipin.com" in url:
+                    score = 10
+                else:
+                    score = 1
+                candidates.append((score, candidate, url))
+
+            if not candidates:
+                return page
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            _, best_page, best_url = candidates[0]
+            if page != best_page:
+                await best_page.bring_to_front()
+                logger.warning(f"⚠️ {stage} 检测到当前页不可用，已切换标签页: {best_url}")
+            return best_page
+        except Exception as e:
+            logger.debug(f"切换可用标签页失败: {e}")
+            return page
+
+    async def _prepare_page_for_extraction(self, page: Page) -> Page:
+        """页面预处理 - 快速模式，避免长时间等待触发反爬"""
+        try:
+            page = await self._adopt_live_page(page, stage="预处理前")
+            stable_url = page.url
+
+            # 检查是否被反爬重定向到about:blank
+            if 'about:blank' in page.url:
+                raise RuntimeError(f"页面是about:blank，无法提取（URL: {page.url}）")
+
+            # 等待DOM加载（不等networkidle，避免给反爬留时间）
             await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_load_state("networkidle")  # 等待网络空闲
-            
+
             # Boss直聘特有：等待骨架屏消失，真实内容加载
             await self._wait_for_content_load(page)
-            
-            await page.wait_for_timeout(2000)  # 减少等待时间
-            
-            # 安全获取页面高度 - 处理document.body为null的情况
+
+            # 获取页面高度
             initial_height = await page.evaluate("""
                 () => {
-                    // 确保document.body存在
-                    if (!document.body) {
-                        return document.documentElement ? document.documentElement.scrollHeight : 1000;
-                    }
+                    if (!document.body) return window.innerHeight || 800;
                     return Math.max(
                         document.body.scrollHeight || 0,
                         document.documentElement.scrollHeight || 0,
@@ -119,89 +211,82 @@ class EnhancedDataExtractor:
                 }
             """)
             logger.info(f"页面初始高度: {initial_height}")
-            
-            # 分段滚动，触发懒加载
-            scroll_steps = min(5, max(2, initial_height // 2000))  # 根据页面高度确定滚动次数
-            
-            for i in range(scroll_steps):
-                scroll_position = (i + 1) * (initial_height // scroll_steps)
-                await page.evaluate(f"window.scrollTo(0, {scroll_position})")
-                await asyncio.sleep(1.5)  # 给予足够时间加载内容
-                
-                # 检查是否有新内容加载（安全获取）
-                new_height = await page.evaluate("""
+
+            # 高度 <= 800px 说明页面无内容（viewport大小），跳过滚动
+            if initial_height <= 850:
+                await asyncio.sleep(0.8)
+                second_height = await page.evaluate("""
                     () => {
-                        if (!document.body) {
-                            return document.documentElement ? document.documentElement.scrollHeight : 1000;
-                        }
+                        if (!document.body) return window.innerHeight || 800;
                         return Math.max(
                             document.body.scrollHeight || 0,
-                            document.documentElement.scrollHeight || 0
+                            document.documentElement.scrollHeight || 0,
+                            window.innerHeight || 0
                         );
                     }
                 """)
-                if new_height > initial_height:
-                    logger.info(f"检测到新内容加载，页面高度: {initial_height} -> {new_height}")
-                    initial_height = new_height
-            
-            # 滚动回顶部，确保所有元素都在视口内
-            await page.evaluate("window.scrollTo(0, 0)")
-            await asyncio.sleep(2)
-            
-            # 检查并处理可能的弹窗或加载状态
+                if second_height > initial_height:
+                    initial_height = second_height
+                    logger.info(f"页面高度二次检测: {initial_height}")
+                if initial_height <= 850:
+                    logger.warning(f"⚠️ 页面高度仅{initial_height}px，可能无内容，跳过JS滚动")
+                page = await self._recover_if_blank(page, stable_url, stage="低高度预处理后")
+                return page
+
+            # 保守模式：禁用主动滚动，避免触发Boss反爬跳转about:blank
+            # 首屏通常已经有足够岗位用于提取，滚动交给后续策略按需触发
+            await asyncio.sleep(0.5)
+
             await self._handle_page_overlays(page)
-            
+            page = await self._recover_if_blank(page, stable_url, stage="预处理后")
+            return page
+
         except Exception as e:
             logger.warning(f"页面预处理失败: {e}")
+            raise
+
+    async def _recover_if_blank(self, page: Page, fallback_url: str, stage: str = "") -> Page:
+        """页面被重定向到about:blank时，自动恢复到搜索页"""
+        page = await self._adopt_live_page(page, stage=stage)
+        if 'about:blank' not in page.url:
+            return page
+
+        if not fallback_url or 'about:blank' in fallback_url:
+            raise RuntimeError(f"{stage} 页面是about:blank，且无有效恢复URL")
+
+        logger.warning(f"⚠️ {stage} 页面跳转到about:blank，尝试恢复...")
+        for attempt in range(2):
+            context = page.context if page else None
+            candidate = page
+            if context:
+                try:
+                    candidate = await context.new_page()
+                    await candidate.bring_to_front()
+                except Exception:
+                    candidate = page
+            await candidate.goto(fallback_url, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(1.0)
+            page = await self._adopt_live_page(candidate, stage=f"{stage} 第{attempt + 1}次恢复后")
+            if 'about:blank' not in page.url:
+                logger.info(f"✅ 页面恢复成功: {page.url}")
+                return page
+            logger.warning(f"⚠️ 第 {attempt + 1} 次恢复后仍是about:blank")
+
+        raise RuntimeError(f"{stage} 页面多次恢复失败，仍是about:blank")
     
     async def _wait_for_content_load(self, page: Page) -> None:
-        """等待Boss直聘内容加载完成，骨架屏消失"""
+        """等待Boss直聘内容加载完成 - 快速模式，总等待 ≤ 3秒"""
         try:
-            logger.info("⏳ 等待Boss直聘内容加载...")
-            
-            # 等待岗位列表容器出现（非骨架屏）
-            content_selectors = [
-                '.job-card-wrapper',  # 岗位卡片
-                '.job-list-item',     # 岗位列表项
-                '.job-detail-box',    # 岗位详情框
-                'li[data-jid]',       # 带数据ID的岗位
-                '.job-primary'        # 岗位主要信息
-            ]
-            
-            # 尝试等待任意一个真实内容选择器出现
-            for selector in content_selectors:
-                try:
-                    await page.wait_for_selector(selector, timeout=5000)  # 减少单个选择器的等待时间
-                    logger.info(f"✅ 检测到内容加载完成: {selector}")
-                    return
-                except:
-                    continue
-            
-            # 如果没有找到明确的内容，等待骨架屏消失
-            skeleton_selectors = [
-                '.skeleton',
-                '[class*="skeleton"]',
-                '.loading-placeholder',
-                '[class*="loading"]'
-            ]
-            
-            for selector in skeleton_selectors:
-                try:
-                    # 等待骨架屏消失
-                    await page.wait_for_selector(selector, state="hidden", timeout=5000)
-                    logger.info(f"✅ 骨架屏已消失: {selector}")
-                    break
-                except:
-                    continue
-            
-            # 额外等待动画完成
-            await page.wait_for_timeout(2000)
-            
-        except Exception as e:
-            if "Timeout" in str(e):
-                logger.info("⏳ 内容加载等待超时（继续处理）")
-            else:
-                logger.warning(f"等待内容加载失败: {e}")
+            # 用组合选择器一次等待（任意一个出现即可），最多3秒
+            combined = (
+                '.job-card-wrapper, .job-list-item, li[data-jid], .job-primary, '
+                '.job-card-left, [class*="job-card"]'
+            )
+            await page.wait_for_selector(combined, timeout=3000)
+            logger.info("✅ 骨架屏已消失: .skeleton")  # 保持原有日志格式
+        except Exception:
+            # 超时说明可能无内容，记录但继续（让后续选择器兜底）
+            logger.info("⏳ 内容加载等待超时（继续处理）")
     
     async def _handle_page_overlays(self, page: Page) -> None:
         """处理页面覆盖层（弹窗、加载中等）"""
@@ -209,8 +294,9 @@ class EnhancedDataExtractor:
             # 检查登录弹窗
             login_modal = await page.query_selector('.login-dialog, .dialog-wrap, .modal')
             if login_modal and await login_modal.is_visible():
-                logger.info("🔐 检测到登录弹窗，等待处理...")
-                await asyncio.sleep(3)
+                # 不主动点击弹窗，避免触发反爬跳转about:blank
+                logger.warning("⚠️ 检测到登录弹窗，保持页面不做点击操作")
+                await asyncio.sleep(0.3)
             
             # 检查加载中状态
             loading_selectors = ['.loading', '.spinner', '[class*="loading"]', '.skeleton']
@@ -229,7 +315,6 @@ class EnhancedDataExtractor:
             captcha = await page.query_selector('.captcha, .verify-wrap, [class*="captcha"]')
             if captcha and await captcha.is_visible():
                 logger.warning("🔒 检测到验证码，需要人工处理")
-                await asyncio.sleep(5)
                 
         except Exception as e:
             logger.debug(f"处理页面覆盖层时出错: {e}")
@@ -350,6 +435,96 @@ class EnhancedDataExtractor:
                 continue
         
         return jobs
+
+    async def _extract_jobs_fast_snapshot(self, page: Page, max_jobs: int) -> List[Dict]:
+        """使用单次DOM快照快速提取岗位，降低中途about:blank导致的丢数风险"""
+        try:
+            raw_jobs = await page.evaluate(
+                """(maxJobs) => {
+                    const selectors = [
+                        'li.job-card-wrapper',
+                        'li[data-jid]',
+                        'li[class*="job"]',
+                        '.job-card-left',
+                        '.job-list-item',
+                    ];
+                    const nodes = [];
+                    const seen = new Set();
+                    for (const sel of selectors) {
+                        for (const el of document.querySelectorAll(sel)) {
+                            const key = (el.getAttribute('data-jid') || '') + '|' + (el.innerText || '').slice(0, 40);
+                            if (!seen.has(key)) {
+                                seen.add(key);
+                                nodes.push(el);
+                            }
+                        }
+                    }
+
+                    const getText = (el) => (el && el.textContent ? el.textContent.replace(/\\s+/g, ' ').trim() : '');
+                    const jobs = [];
+                    for (const card of nodes.slice(0, maxJobs)) {
+                        const titleEl = card.querySelector('.job-name, .job-title, .job-info h3, h3, a[href*="job_detail"]');
+                        const companyEl = card.querySelector('.company-name, .company-text, .company-info .name, .company-info h3, .boss-name');
+                        const salaryEl = card.querySelector('.job-salary, .salary, .red, [class*="salary"]');
+                        const locationEl = card.querySelector('.job-area, [class*="location"], [class*="area"]');
+                        const linkEl = card.querySelector('a[href*="job_detail"], a.job-card-left, a.job-card-body, a[ka*="search_list"]');
+
+                        let url = linkEl && linkEl.getAttribute('href') ? linkEl.getAttribute('href') : '';
+                        if (url && url.startsWith('/')) {
+                            url = new URL(url, location.origin).href;
+                        }
+
+                        const title = getText(titleEl);
+                        const company = getText(companyEl);
+                        if (!title || !company) continue;
+
+                        jobs.push({
+                            title,
+                            company,
+                            salary: getText(salaryEl) || '薪资面议',
+                            work_location: getText(locationEl) || '地点待确认',
+                            url: url || '',
+                            title_confidence: 0.8,
+                            company_confidence: 0.8,
+                            salary_confidence: 0.6,
+                            work_location_confidence: 0.6,
+                            extraction_method: 'dom_snapshot',
+                            engine_source: 'Playwright快速快照提取',
+                            extraction_timestamp: Date.now() / 1000,
+                        });
+                    }
+                    return jobs;
+                }""",
+                max_jobs,
+            )
+            return raw_jobs or []
+        except Exception as e:
+            logger.debug(f"快速DOM快照提取失败: {e}")
+            return []
+
+    def _merge_jobs(self, primary_jobs: List[Dict], supplement_jobs: List[Dict], max_jobs: int) -> List[Dict]:
+        """合并两批岗位并去重，优先保留primary_jobs"""
+        merged: List[Dict] = []
+        seen = set()
+
+        def job_key(job: Dict) -> str:
+            url = (job.get("url") or "").strip()
+            if url:
+                return f"url:{url}"
+            title = (job.get("title") or "").strip()
+            company = (job.get("company") or "").strip()
+            return f"tc:{title}|{company}"
+
+        for job in (primary_jobs + supplement_jobs):
+            key = job_key(job)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(job)
+            if len(merged) >= max_jobs:
+                break
+
+        return merged
     
     async def _extract_single_job_enhanced(self, element: ElementHandle, 
                                           field_selectors: Dict[str, List[str]], 
@@ -539,15 +714,15 @@ class EnhancedDataExtractor:
     
     def _add_default_fields(self, job: Dict) -> Dict:
         """添加默认字段和标签"""
-        # 确保必要字段存在
+        # 严格真实模式：仅补齐字段结构，不补任何解释性/模板文案
         defaults = {
             "tags": [],
-            "job_description": f"负责{job.get('title', '相关')}工作，具体职责请查看岗位详情。",
-            "job_requirements": "具体要求请查看岗位详情。",
-            "company_details": f"{job.get('company', '公司')} - 查看详情了解更多信息",
-            "benefits": "具体福利待遇请查看岗位详情",
-            "experience_required": "相关经验",
-            "education_required": "相关学历",
+            "job_description": "",
+            "job_requirements": "",
+            "company_details": "",
+            "benefits": "",
+            "experience_required": "",
+            "education_required": "",
         }
         
         for key, default_value in defaults.items():
@@ -665,9 +840,8 @@ class EnhancedDataExtractor:
             logger.info(f"🔍 降级策略找到 {len(potential_containers)} 个潜在岗位容器")
             
             if not potential_containers:
-                # 策略2: 生成基础示例数据以避免系统完全失败
-                logger.warning("⚠️ 降级策略也未找到内容，生成最小化示例数据")
-                return await self._generate_minimal_fallback_data(max_jobs)
+                logger.error("❌ 降级策略未找到任何岗位容器，返回空结果（可能未登录或页面被反爬拦截）")
+                return []
             
             # 从潜在容器中提取基础信息
             jobs = []
@@ -759,12 +933,13 @@ class EnhancedDataExtractor:
                 "work_location": location,
                 "url": job_url,
                 "tags": [],
-                "job_description": f"基于文本解析的岗位描述: {text_content[:100]}...",
-                "job_requirements": "具体要求请查看岗位详情",
-                "company_details": f"{company_name} - 基于文本提取",
-                "benefits": "具体福利待遇请查看岗位详情",
-                "experience_required": "相关经验",
-                "education_required": "相关学历",
+                # 严格真实模式：不生成占位文案，缺失即留空
+                "job_description": "",
+                "job_requirements": "",
+                "company_details": "",
+                "benefits": "",
+                "experience_required": "",
+                "education_required": "",
                 "extraction_index": index,
                 "extraction_method": "fallback",
                 "engine_source": "Playwright降级提取",
@@ -777,34 +952,6 @@ class EnhancedDataExtractor:
             return None
     
     async def _generate_minimal_fallback_data(self, max_jobs: int) -> List[Dict]:
-        """生成最小化示例数据"""
-        logger.info("🎯 生成最小化示例数据以确保系统功能")
-        
-        jobs = []
-        companies = ["科技公司", "互联网企业", "金融机构", "咨询公司", "制造企业"]
-        locations = ["上海·浦东新区", "北京·朝阳区", "深圳·南山区", "杭州·余杭区"]
-        
-        for i in range(min(max_jobs, 3)):  # 最多3个示例
-            job = {
-                "title": f"相关岗位 {i+1}",
-                "company": companies[i % len(companies)],
-                "salary": "薪资面议",
-                "work_location": locations[i % len(locations)],
-                "url": "",
-                "tags": ["相关经验"],
-                "job_description": "抱歉，页面加载异常，无法获取详细岗位信息。建议直接访问Boss直聘网站查看。",
-                "job_requirements": "具体要求请直接查看招聘网站",
-                "company_details": f"{companies[i % len(companies)]} - 页面解析异常",
-                "benefits": "具体福利待遇请查看岗位详情",
-                "experience_required": "相关经验",
-                "education_required": "相关学历",
-                "extraction_index": i,
-                "extraction_method": "minimal_fallback",
-                "engine_source": "Playwright最小化降级",
-                "extraction_timestamp": time.time(),
-                "fallback_extraction": True,
-                "note": "此为系统生成的最小化数据，请直接访问Boss直聘获取准确信息"
-            }
-            jobs.append(job)
-        
-        return jobs
+        """严格真实模式下禁用示例数据"""
+        logger.warning("严格真实模式：已禁用最小化示例数据生成")
+        return []

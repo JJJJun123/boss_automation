@@ -17,7 +17,7 @@ from datetime import datetime
 from .ai_client_factory import AIClientFactory
 from .job_analyzer import JobAnalyzer
 from .prompts.extraction_prompts import ExtractionPrompts
-from .prompts.job_analysis_prompts import JobAnalysisPrompts
+from .prompts.job_analysis_prompts import JobAnalysisPrompts, RESUME_MATCH_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,8 @@ class EnhancedJobAnalyzer:
     def __init__(self, extraction_provider: str = "glm", 
                  analysis_provider: Optional[str] = None, 
                  model_name: Optional[str] = None,
-                 screening_mode: bool = True):
+                 screening_mode: bool = True,
+                 extraction_model_name: Optional[str] = "glm-4.5"):
         """
         初始化增强版分析器
         
@@ -37,11 +38,14 @@ class EnhancedJobAnalyzer:
             analysis_provider: 分析阶段的AI提供商（默认从配置读取）
             model_name: 分析阶段的具体模型名称
             screening_mode: 是否启用快速筛选模式（默认True）
+            extraction_model_name: 信息提取阶段的具体模型名称
         """
         # 创建AI服务实例
-        self.extraction_service = AIClientFactory.create_client(extraction_provider, "glm-4.5")
+        self.extraction_service = AIClientFactory.create_client(extraction_provider, extraction_model_name)
         self.extraction_provider = extraction_provider  # 保存provider信息以便显示
         self.job_analyzer = JobAnalyzer(ai_provider=analysis_provider, model_name=model_name)
+        self._screening_fallback_active = False
+        self._screening_rule_fallback_active = False
         
         # 获取用户配置
         self.user_requirements = self._get_user_requirements()
@@ -50,10 +54,53 @@ class EnhancedJobAnalyzer:
         self.market_cognition_report = None
         self.screening_mode = screening_mode
         
-        print(f"🚀 增强版分析器初始化完成")
-        print(f"🎯 筛选模式: {'启用' if screening_mode else '禁用'}")
-        print(f"📋 筛选引擎: {self.extraction_provider.upper()}")
-        print(f"🧠 分析引擎: {self.job_analyzer.ai_provider.upper()}")
+        logger.debug(f"🚀 增强版分析器初始化完成")
+        logger.debug(f"🎯 筛选模式: {'启用' if screening_mode else '禁用'}")
+        logger.debug(f"📋 筛选引擎: {self.extraction_provider.upper()}")
+        logger.debug(f"🧠 分析引擎: {self.job_analyzer.ai_provider.upper()}")
+
+    def _is_ai_quota_error(self, error: Exception) -> bool:
+        """判断是否为各家AI配额/余额不足错误（GLM/Gemini等）"""
+        message = str(error).lower()
+        patterns = [
+            "429",
+            "quota exceeded",
+            "resource_exhausted",
+            "余额不足",
+            "无可用资源包",
+            "code': '1113'",
+            'code": "1113"',
+            "limit: 0",
+        ]
+        return any(p in message for p in patterns)
+
+    def _build_rule_screening_result(self, job: Dict[str, Any], keyword: str) -> str:
+        """AI不可用时的规则筛选结果（不调用任何模型）"""
+        title = (job.get("title") or "").lower()
+        company = (job.get("company") or "").lower()
+        desc = (job.get("job_description") or "").lower()
+        text = f"{title} {company} {desc}"
+
+        kw = (keyword or "").strip().lower()
+        if not kw:
+            return json.dumps({"relevant": True, "reason": "未提供关键词，规则筛选默认放行"}, ensure_ascii=False)
+
+        tokens = [t for t in kw.replace("，", " ").replace(",", " ").replace("/", " ").split() if t]
+        matched = kw in text or any(t in text for t in tokens)
+        if not matched and len(kw) >= 4:
+            matched = any(kw[i:i + 2] in text for i in range(len(kw) - 1))
+
+        reason = "规则筛选命中关键词" if matched else "规则筛选未命中关键词"
+        return json.dumps({"relevant": matched, "reason": reason}, ensure_ascii=False)
+
+    def _build_no_ai_match_result(self) -> Dict[str, Any]:
+        """AI不可用时返回透明占位结果（不伪造匹配）"""
+        return {
+            "score": 0,
+            "match_highlights": [],
+            "gaps": ["AI服务不可用（配额或余额不足），未完成匹配分析"],
+            "summary": "AI匹配阶段未执行，请补充额度后重试",
+        }
         
     def _get_user_requirements(self):
         """获取用户要求配置"""
@@ -124,27 +171,115 @@ class EnhancedJobAnalyzer:
     def set_resume_analysis(self, resume_analysis: Dict[str, Any]):
         """设置简历分析结果"""
         self.resume_analysis = resume_analysis
-        print(f"📝 简历分析结果已加载")
+        logger.debug(f"📝 简历分析结果已加载")
     
-    def analyze_jobs(self, jobs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def analyze_jobs(self, jobs_list: List[Dict[str, Any]], resume_text: str = "", keyword: str = "") -> List[Dict[str, Any]]:
         """
-        分析岗位（兼容原JobAnalyzer接口）
-        
+        两阶段流水线：GLM 类型筛选 → 主力模型简历匹配，按分数降序返回。
+
         Args:
             jobs_list: 岗位列表
-            
-        Returns:
-            分析后的岗位列表
+            resume_text: 简历全文（直接传入，不做额外结构化）
+            keyword: 搜索关键词（用于类型筛选）
         """
-        import asyncio
+        self._search_keyword = keyword
+
+        # 阶段1：GLM 类型过滤（判断岗位类型是否与搜索关键词相关，不比对简历）
+        screened = []
+        for i, job in enumerate(jobs_list, 1):
+            if i % 10 == 0:
+                logger.debug(f"   筛选进度: {i}/{len(jobs_list)}")
+            response = self._call_ai_for_screening(job)
+            result = self._parse_screening_result(response)
+            if result.get("relevant", False):
+                screened.append(job)
+
+        logger.debug(f"✅ 筛选出 {len(screened)}/{len(jobs_list)} 个相关岗位")
+
+        # 阶段2：主力模型简历匹配
+        results = []
+        for i, job in enumerate(screened, 1):
+            if i % 10 == 0:
+                logger.debug(f"   匹配进度: {i}/{len(screened)}")
+            response = self._call_ai_for_matching(job, resume_text)
+            match = self._parse_match_result(response)
+            try:
+                score = float(match.get("score", 0))
+                match["score"] = int(score) if score.is_integer() else score
+            except (TypeError, ValueError):
+                match["score"] = 0
+            results.append({**job, **match})
+
+        return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+
+    def _call_ai_for_screening(self, job: Dict[str, Any]) -> str:
+        """调用 GLM 判断岗位类型与搜索关键词的相关性。可被测试 mock 替换。"""
+        keyword = getattr(self, '_search_keyword', '')
+        prompt = ExtractionPrompts.get_job_relevance_screening_prompt(job, keyword)
         
-        # 运行三阶段分析
-        market_report, analyzed_jobs = asyncio.run(self.analyze_jobs_three_stages(jobs_list))
-        
-        # 存储市场报告供get_market_analysis使用
-        self.market_report = market_report
-        
-        return analyzed_jobs
+        if self._screening_rule_fallback_active:
+            return self._build_rule_screening_result(job, keyword)
+
+        if self._screening_fallback_active:
+            try:
+                return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+            except Exception as e:
+                if self._is_ai_quota_error(e):
+                    logger.warning(f"筛选阶段备用AI也不可用，切换规则筛选: {e}")
+                    self._screening_rule_fallback_active = True
+                    return self._build_rule_screening_result(job, keyword)
+                raise
+
+        try:
+            return self.extraction_service.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+        except Exception as e:
+            if self._is_ai_quota_error(e):
+                logger.warning(f"筛选阶段主AI不可用，尝试备用AI: {e}")
+                self._screening_fallback_active = True
+                try:
+                    return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+                except Exception as fallback_e:
+                    if self._is_ai_quota_error(fallback_e):
+                        logger.warning(f"筛选阶段主/备AI均不可用，切换规则筛选: {fallback_e}")
+                        self._screening_rule_fallback_active = True
+                        return self._build_rule_screening_result(job, keyword)
+                    raise
+            raise
+
+    def _call_ai_for_matching(self, job: Dict[str, Any], resume_text: str) -> str:
+        """调用主力模型进行简历×JD深度匹配。可被测试 mock 替换。"""
+        requirements_text = job.get('job_requirements') or ''
+        if not requirements_text.strip():
+            requirements_text = job.get('job_description', '')
+        prompt = RESUME_MATCH_PROMPT.format(
+            resume_text=resume_text[:2000] if resume_text else "（未提供简历）",
+            job_title=job.get('title', ''),
+            company=job.get('company', ''),
+            salary=job.get('salary', '未提供'),
+            description=job.get('job_description', '')[:800],
+            requirements=requirements_text[:800],
+        )
+        try:
+            return self.job_analyzer.ai_client.call_api_simple(prompt)
+        except Exception as e:
+            if self._is_ai_quota_error(e):
+                logger.warning(f"匹配阶段AI不可用（配额/余额），返回未分析结果: {e}")
+                return json.dumps(self._build_no_ai_match_result(), ensure_ascii=False)
+            raise
+
+    def _parse_match_result(self, response_text: str) -> Dict[str, Any]:
+        """解析主力模型返回的匹配结果 JSON。"""
+        import re
+        try:
+            m = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if m:
+                return json.loads(m.group(1))
+            m = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if m:
+                return json.loads(m.group())
+        except Exception as e:
+            logger.error(f"解析匹配结果失败: {e}")
+        return {"score": 0, "match_highlights": [], "gaps": [], "summary": "解析失败"}
     
     async def analyze_jobs_three_stages(self, jobs_list: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
@@ -156,7 +291,7 @@ class EnhancedJobAnalyzer:
         Returns:
             (市场认知报告, 分析后的岗位列表)
         """
-        print(f"\n🎯 开始三阶段智能分析，共{len(jobs_list)}个岗位...")
+        logger.debug(f"\n🎯 开始三阶段智能分析，共{len(jobs_list)}个岗位...")
         
         # 存储当前处理的岗位列表，用于默认报告
         self._current_job_list = jobs_list
@@ -164,26 +299,26 @@ class EnhancedJobAnalyzer:
         if self.screening_mode:
             # 新流程：快速筛选模式
             # 阶段1：快速筛选相关岗位
-            print(f"\n🔍 阶段1/3: 快速筛选相关岗位（使用{self.extraction_provider.upper()}）...")
+            logger.debug(f"\n🔍 阶段1/3: 快速筛选相关岗位（使用{self.extraction_provider.upper()}）...")
             relevant_jobs = await self._stage1_quick_screening(jobs_list)
             
             if not relevant_jobs:
-                print("⚠️ 没有找到相关岗位，返回空结果")
+                logger.debug("⚠️ 没有找到相关岗位，返回空结果")
                 return self._get_default_market_report(), []
             
-            print(f"✅ 筛选出 {len(relevant_jobs)}/{len(jobs_list)} 个相关岗位")
+            logger.debug(f"✅ 筛选出 {len(relevant_jobs)}/{len(jobs_list)} 个相关岗位")
             
             # 阶段2：信息提取（只对相关岗位）
-            print(f"\n📊 阶段2/3: 提取相关岗位信息（使用{self.extraction_provider.upper()}）...")
+            logger.debug(f"\n📊 阶段2/3: 提取相关岗位信息（使用{self.extraction_provider.upper()}）...")
             extracted_jobs = await self._stage1_extract_job_info(relevant_jobs)
             
             # 阶段3：市场认知分析
-            print(f"\n🧠 阶段3/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
+            logger.debug(f"\n🧠 阶段3/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             market_report = await self._stage2_market_cognition_analysis(extracted_jobs)
             self.market_cognition_report = market_report
             
             # 阶段4：个人匹配分析（只对相关岗位）
-            print(f"\n🎯 阶段4/4: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
+            logger.debug(f"\n🎯 阶段4/4: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             analyzed_jobs = await self._stage3_personal_match_analysis(relevant_jobs, extracted_jobs)
             
             # 标记不相关的岗位
@@ -193,16 +328,16 @@ class EnhancedJobAnalyzer:
         else:
             # 原流程：全量分析
             # 阶段1：信息提取
-            print(f"\n📊 阶段1/3: 岗位信息提取（使用{self.extraction_provider.upper()}）...")
+            logger.debug(f"\n📊 阶段1/3: 岗位信息提取（使用{self.extraction_provider.upper()}）...")
             extracted_jobs = await self._stage1_extract_job_info(jobs_list)
             
             # 阶段2：市场认知分析
-            print(f"\n🧠 阶段2/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
+            logger.debug(f"\n🧠 阶段2/3: 市场认知分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             market_report = await self._stage2_market_cognition_analysis(extracted_jobs)
             self.market_cognition_report = market_report
             
             # 阶段3：个人匹配分析
-            print(f"\n🎯 阶段3/3: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
+            logger.debug(f"\n🎯 阶段3/3: 个人匹配分析（使用{self.job_analyzer.ai_provider.upper()}）...")
             analyzed_jobs = await self._stage3_personal_match_analysis(jobs_list, extracted_jobs)
             
             return market_report, analyzed_jobs
@@ -216,7 +351,7 @@ class EnhancedJobAnalyzer:
         
         for i, job in enumerate(jobs_list, 1):
             if i % 10 == 0:
-                print(f"   提取进度: {i}/{len(jobs_list)}")
+                logger.debug(f"   提取进度: {i}/{len(jobs_list)}")
             
             try:
                 # 获取提取提示词
@@ -224,26 +359,26 @@ class EnhancedJobAnalyzer:
                 
                 # 调试：显示完整的输入输出
                 if i <= 2:
-                    print(f"\n{'='*60}")
-                    print(f"🔍 GLM调试信息 - 岗位{i}")
-                    print(f"{'='*60}")
-                    print(f"【输入提示词】")
-                    print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
-                    print(f"\n【岗位标题】{job.get('title', '')}")
-                    print(f"【岗位描述长度】{len(job.get('job_description', ''))}字符")
+                    logger.debug(f"\n{'='*60}")
+                    logger.debug(f"🔍 GLM调试信息 - 岗位{i}")
+                    logger.debug(f"{'='*60}")
+                    logger.debug(f"【输入提示词】")
+                    logger.debug(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+                    logger.debug(f"\n【岗位标题】{job.get('title', '')}")
+                    logger.debug(f"【岗位描述长度】{len(job.get('job_description', ''))}字符")
                 
                 # 调用GLM-4.5进行信息提取，设置较小的max_tokens避免深度思考模式，依赖reasoning_content提取
                 response = self.extraction_service.call_api_simple(prompt, max_tokens=800)
                 
                 # 调试：显示响应
                 if i <= 2:
-                    print(f"\n【GLM响应】")
-                    print(f"响应长度: {len(response)}字符")
+                    logger.debug(f"\n【GLM响应】")
+                    logger.debug(f"响应长度: {len(response)}字符")
                     if len(response) == 0:
-                        print("⚠️ 警告: GLM返回了空响应！")
+                        logger.debug("⚠️ 警告: GLM返回了空响应！")
                     else:
-                        print(f"响应内容: {response[:500]}..." if len(response) > 500 else f"响应内容: {response}")
-                    print(f"{'='*60}\n")
+                        logger.debug(f"响应内容: {response[:500]}..." if len(response) > 500 else f"响应内容: {response}")
+                    logger.debug(f"{'='*60}\n")
                 
                 # 检查空响应
                 if not response or len(response.strip()) == 0:
@@ -263,7 +398,7 @@ class EnhancedJobAnalyzer:
                 
                 # 如果是GLM网络错误，尝试降级到DeepSeek
                 if "GLM API网络请求失败" in str(e) or "Read timed out" in str(e):
-                    print(f"⚠️ GLM网络异常，尝试降级到DeepSeek进行岗位{i}的信息提取...")
+                    logger.debug(f"⚠️ GLM网络异常，尝试降级到DeepSeek进行岗位{i}的信息提取...")
                     try:
                         # 使用DeepSeek进行提取
                         fallback_response = self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=3000)
@@ -272,7 +407,7 @@ class EnhancedJobAnalyzer:
                         job_with_extraction = job.copy()
                         job_with_extraction['extracted_info'] = extracted_info
                         extracted_jobs.append(job_with_extraction)
-                        print(f"✅ DeepSeek降级提取成功")
+                        logger.debug(f"✅ DeepSeek降级提取成功")
                         continue
                         
                     except Exception as fallback_error:
@@ -291,45 +426,12 @@ class EnhancedJobAnalyzer:
                 }
                 extracted_jobs.append(job_with_extraction)
         
-        print(f"✅ 信息提取完成，成功提取{len(extracted_jobs)}个岗位")
+        logger.debug(f"✅ 信息提取完成，成功提取{len(extracted_jobs)}个岗位")
         return extracted_jobs
     
     async def _stage2_market_cognition_analysis(self, extracted_jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        阶段2：市场认知分析
-        基于所有岗位的提取信息生成市场洞察
-        """
-        try:
-            # 提取所有的extracted_info
-            extracted_data = [job.get('extracted_info', {}) for job in extracted_jobs]
-            
-            # 获取市场认知分析提示词
-            prompt = JobAnalysisPrompts.get_market_cognition_prompt(extracted_data)
-            
-            # 调用分析模型
-            response = self.job_analyzer.ai_client.call_api_simple(prompt)
-            
-            # 解析结果
-            market_report = self._parse_market_cognition_result(response)
-            
-            # 调试：显示市场分析报告内容
-            logger.info(f"市场分析报告内容: {json.dumps(market_report.get('market_overview', {}), ensure_ascii=False)}")
-            
-            # 显示关键洞察
-            if 'key_findings' in market_report:
-                print(f"\n🔍 关键发现：")
-                for finding in market_report['key_findings']:
-                    print(f"   • {finding}")
-            
-            # 显示分析的岗位数量
-            total_analyzed = market_report.get('market_overview', {}).get('total_jobs_analyzed', 0)
-            print(f"📊 市场分析基于 {total_analyzed} 个岗位")
-            
-            return market_report
-            
-        except Exception as e:
-            logger.error(f"市场认知分析失败: {e}")
-            raise e
+        # 已停用：市场认知分析已从核心流程中移除（见 design.md 超出范围章节）
+        return self._get_default_market_report()
     
     async def _stage3_personal_match_analysis(self, 
                                             original_jobs: List[Dict[str, Any]], 
@@ -342,7 +444,7 @@ class EnhancedJobAnalyzer:
         
         for i, (job, extracted_job) in enumerate(zip(original_jobs, extracted_jobs), 1):
             if i % 10 == 0:
-                print(f"   分析进度: {i}/{len(original_jobs)}")
+                logger.debug(f"   分析进度: {i}/{len(original_jobs)}")
             
             try:
                 # 使用简历进行智能匹配（此时必定有简历，因为上层已检查）
@@ -373,14 +475,14 @@ class EnhancedJobAnalyzer:
                 job['extracted_info'] = extracted_job.get('extracted_info', {})
                 analyzed_jobs.append(job)
         
-        print(f"✅ 个人匹配分析完成，共分析 {len(analyzed_jobs)} 个岗位")
+        logger.debug(f"✅ 个人匹配分析完成，共分析 {len(analyzed_jobs)} 个岗位")
         
         # 调试：显示前3个岗位的分析结果摘要
         for i, job in enumerate(analyzed_jobs[:3], 1):
             if 'analysis' in job:
                 score = job['analysis'].get('score', 0)
                 recommendation = job['analysis'].get('recommendation', '未知')
-                print(f"   岗位{i}: {job.get('title', '未知')} - 评分: {score}/10 - 推荐: {recommendation}")
+                logger.debug(f"   岗位{i}: {job.get('title', '未知')} - 评分: {score}/10 - 推荐: {recommendation}")
         
         return analyzed_jobs
     
@@ -602,7 +704,7 @@ class EnhancedJobAnalyzer:
             reverse=True
         )
         
-        print(f"🎯 筛选结果: {len(sorted_jobs)}/{len(analyzed_jobs)} 个岗位达到标准({min_score}分)")
+        logger.debug(f"🎯 筛选结果: {len(sorted_jobs)}/{len(analyzed_jobs)} 个岗位达到标准({min_score}分)")
         return sorted_jobs
     
     async def _stage1_quick_screening(self, jobs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -614,7 +716,7 @@ class EnhancedJobAnalyzer:
         
         for i, job in enumerate(jobs_list, 1):
             if i % 10 == 0:
-                print(f"   筛选进度: {i}/{len(jobs_list)}")
+                logger.debug(f"   筛选进度: {i}/{len(jobs_list)}")
             
             try:
                 # 获取筛选提示词
@@ -634,7 +736,7 @@ class EnhancedJobAnalyzer:
                     job['screening_reason'] = result.get('reason', '')
                     relevant_jobs.append(job)
                     if len(relevant_jobs) <= 3:
-                        print(f"   ✅ 相关岗位: {job.get('title', '')} - {result.get('reason', '')}")
+                        logger.debug(f"   ✅ 相关岗位: {job.get('title', '')} - {result.get('reason', '')}")
                 
             except Exception as e:
                 logger.error(f"筛选岗位{i}失败: {e}")

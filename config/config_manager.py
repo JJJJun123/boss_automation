@@ -4,6 +4,8 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 import logging
 
+logger = logging.getLogger(__name__)
+
 class ConfigManager:
     """配置管理器 - 统一管理应用配置、用户偏好和密钥"""
     
@@ -36,7 +38,6 @@ class ConfigManager:
             # 加载密钥配置
             self._load_secrets()
             
-            logging.info("所有配置文件加载完成")
             
         except Exception as e:
             logging.error(f"配置加载失败: {e}")
@@ -48,12 +49,11 @@ class ConfigManager:
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 self.app_config = yaml.safe_load(f) or {}
-            logging.info(f"应用配置加载成功: {config_path}")
         except FileNotFoundError:
-            logging.warning(f"应用配置文件不存在: {config_path}")
+            logger.warning(f"应用配置文件不存在: {config_path}")
             self.app_config = {}
         except yaml.YAMLError as e:
-            logging.error(f"应用配置文件格式错误: {e}")
+            logger.error(f"应用配置文件格式错误: {e}")
             raise
     
     def _load_user_preferences(self):
@@ -62,12 +62,11 @@ class ConfigManager:
         try:
             with open(preferences_path, 'r', encoding='utf-8') as f:
                 self.user_preferences = yaml.safe_load(f) or {}
-            logging.info(f"用户偏好配置加载成功: {preferences_path}")
         except FileNotFoundError:
-            logging.warning(f"用户偏好配置文件不存在: {preferences_path}")
+            logger.warning(f"用户偏好配置文件不存在: {preferences_path}")
             self.user_preferences = {}
         except yaml.YAMLError as e:
-            logging.error(f"用户偏好配置文件格式错误: {e}")
+            logger.error(f"用户偏好配置文件格式错误: {e}")
             raise
     
     def _load_secrets(self):
@@ -87,9 +86,8 @@ class ConfigManager:
                 'BAIDU_API_KEY': os.getenv('BAIDU_API_KEY'),
             }
             
-            logging.info(f"密钥配置加载成功: {secrets_path}")
         except FileNotFoundError:
-            logging.warning(f"密钥配置文件不存在: {secrets_path}")
+            logger.warning(f"密钥配置文件不存在: {secrets_path}")
             self.secrets = {}
     
     def get_app_config(self, key: str = None, default: Any = None) -> Any:
@@ -150,9 +148,9 @@ class ConfigManager:
             with open(preferences_path, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(self.user_preferences, f, default_flow_style=False, 
                               allow_unicode=True, indent=2)
-            logging.info(f"用户偏好配置保存成功: {preferences_path}")
+            logger.info(f"用户偏好配置保存成功: {preferences_path}")
         except Exception as e:
-            logging.error(f"保存用户偏好配置失败: {e}")
+            logger.error(f"保存用户偏好配置失败: {e}")
             raise
     
     def _get_nested_value(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
@@ -250,7 +248,7 @@ class ConfigManager:
         
         if errors:
             for error in errors:
-                logging.error(f"配置验证失败: {error}")
+                logger.error(f"配置验证失败: {error}")
             return False
         
         return True

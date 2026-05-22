@@ -70,16 +70,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'San Francisco', 'Helveti
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
-/* 市场分析图表样式优化 */
-.market-analysis-bar {
-    transition: all 0.3s ease-in-out;
-}
-
-.market-analysis-bar:hover {
-    transform: scaleX(1.02);
-    filter: brightness(1.1);
-}
-
 /* 投递建议标签样式 */
 .application-advice-tag {
     transition: all 0.2s ease;

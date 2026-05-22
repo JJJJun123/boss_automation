@@ -5,6 +5,7 @@ Claude API客户端 - 使用官方Anthropic SDK
 """
 
 import os
+import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from ..base_client import BaseAIClient
@@ -13,6 +14,7 @@ from ..base_client import BaseAIClient
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
 secrets_file = os.path.join(config_dir, 'secrets.env')
 load_dotenv(secrets_file)
+logger = logging.getLogger(__name__)
 
 # 导入Anthropic SDK
 try:
@@ -20,7 +22,7 @@ try:
     ANTHROPIC_SDK_AVAILABLE = True
 except ImportError:
     ANTHROPIC_SDK_AVAILABLE = False
-    print("⚠️ Anthropic SDK未安装，请运行: pip install anthropic")
+    logger.warning("Anthropic SDK未安装，请运行: pip install anthropic")
 
 
 class ClaudeClientSDK(BaseAIClient):
@@ -50,7 +52,7 @@ class ClaudeClientSDK(BaseAIClient):
         # 初始化Anthropic客户端
         api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
-            print("⚠️ 警告: 未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，请在config/secrets.env文件中配置")
+            logger.warning("未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，请在config/secrets.env文件中配置")
         
         self.client = Anthropic(api_key=api_key)
         
@@ -65,7 +67,7 @@ class ClaudeClientSDK(BaseAIClient):
             self.temperature = 0.3
             self.max_tokens = 1000
         
-        print(f"🤖 Claude客户端(SDK版)初始化完成，使用模型: {self.model_name}")
+        logger.debug(f"Claude客户端(SDK版)初始化完成，使用模型: {self.model_name}")
         
         # 验证配置
         self._validate_configuration()
@@ -73,7 +75,7 @@ class ClaudeClientSDK(BaseAIClient):
     def _validate_configuration(self) -> None:
         """验证Claude配置"""
         if not (os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')):
-            print("⚠️ 警告: 未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，API调用将失败")
+            logger.warning("未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，API调用将失败")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """

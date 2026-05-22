@@ -5,9 +5,11 @@ AI客户端工厂 - 简化版，直接创建纯净的AI客户端
 """
 
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class AIClientFactory:
@@ -60,7 +62,7 @@ class AIClientFactory:
                     from .clients.claude_client_sdk import ClaudeClientSDK
                     return ClaudeClientSDK(model_name)
                 except ImportError:
-                    print("⚠️ Claude SDK不可用，回退到HTTP客户端")
+                    logger.warning("Claude SDK不可用，回退到HTTP客户端")
             from .clients.claude_client import ClaudeClient
             return ClaudeClient(model_name)
             
@@ -70,7 +72,7 @@ class AIClientFactory:
                     from .clients.gemini_client_sdk import GeminiClientSDK
                     return GeminiClientSDK(model_name)
                 except ImportError:
-                    print("⚠️ Google Generative AI SDK不可用，回退到HTTP客户端")
+                    logger.warning("Google Generative AI SDK不可用，回退到HTTP客户端")
             from .clients.gemini_client import GeminiClient
             return GeminiClient(model_name)
             
@@ -80,7 +82,7 @@ class AIClientFactory:
                     from .clients.gpt_client_sdk import GPTClientSDK
                     return GPTClientSDK(model_name)
                 except ImportError:
-                    print("⚠️ OpenAI SDK不可用，回退到HTTP客户端")
+                    logger.warning("OpenAI SDK不可用，回退到HTTP客户端")
             from .clients.gpt_client import GPTClient
             return GPTClient(model_name)
             

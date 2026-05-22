@@ -5,6 +5,7 @@ Gemini API客户端 - 使用官方Google Generative AI SDK
 """
 
 import os
+import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from ..base_client import BaseAIClient
@@ -13,6 +14,7 @@ from ..base_client import BaseAIClient
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
 secrets_file = os.path.join(config_dir, 'secrets.env')
 load_dotenv(secrets_file)
+logger = logging.getLogger(__name__)
 
 # 导入Google Generative AI SDK
 try:
@@ -20,7 +22,7 @@ try:
     GOOGLE_SDK_AVAILABLE = True
 except ImportError:
     GOOGLE_SDK_AVAILABLE = False
-    print("⚠️ Google Generative AI SDK未安装，请运行: pip install google-generativeai")
+    logger.warning("Google Generative AI SDK未安装，请运行: pip install google-generativeai")
 
 
 class GeminiClientSDK(BaseAIClient):
@@ -50,7 +52,7 @@ class GeminiClientSDK(BaseAIClient):
         # 初始化Google Generative AI
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
-            print("⚠️ 警告: 未设置GEMINI_API_KEY，请在config/secrets.env文件中配置")
+            logger.warning("未设置GEMINI_API_KEY，请在config/secrets.env文件中配置")
         
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(self.model_name)
@@ -66,7 +68,7 @@ class GeminiClientSDK(BaseAIClient):
             self.temperature = 0.3
             self.max_tokens = 1000
         
-        print(f"🤖 Gemini客户端(SDK版)初始化完成，使用模型: {self.model_name}")
+        logger.debug(f"Gemini客户端(SDK版)初始化完成，使用模型: {self.model_name}")
         
         # 验证配置
         self._validate_configuration()
@@ -74,7 +76,7 @@ class GeminiClientSDK(BaseAIClient):
     def _validate_configuration(self) -> None:
         """验证Gemini配置"""
         if not os.getenv('GEMINI_API_KEY'):
-            print("⚠️ 警告: 未设置GEMINI_API_KEY，API调用将失败")
+            logger.warning("未设置GEMINI_API_KEY，API调用将失败")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """

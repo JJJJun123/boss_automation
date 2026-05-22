@@ -13,8 +13,10 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from datetime import datetime
 
-# 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 添加项目根目录到路径（放在最前，避免主目录与worktree混用时导入到错误模块）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config.config_manager import ConfigManager
 from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
@@ -36,7 +38,8 @@ socketio = SocketIO(app,
                    ping_interval=25)
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "WARNING").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.WARNING))
 logger = logging.getLogger(__name__)
 
 # 全局变量
@@ -69,7 +72,7 @@ def emit_progress(message, progress=None, data=None):
         payload['data'] = data
     
     socketio.emit('progress_update', payload)
-    logger.info(f"Progress: {message}")
+    logger.debug(f"Progress: {message}")
 
 
 @app.route('/')
@@ -191,9 +194,9 @@ def upload_resume():
                 f.write(f"前100字符: {repr(resume_text[:100])}\n")
                 f.write("\n=== 完整文本 ===\n")
                 f.write(resume_text)
-            print(f"简历文本已保存到 debug_resume_text.txt")
+            logger.debug("简历文本已保存到 debug_resume_text.txt")
         except Exception as debug_e:
-            print(f"保存简历文本失败: {debug_e}")
+            logger.warning(f"保存简历文本失败: {debug_e}")
         
         # 简化处理 - 只提取关键信息，不进行AI分析
         logger.info("使用简化模式处理简历，不进行AI分析")
@@ -244,7 +247,7 @@ def delete_resume():
         return jsonify({'success': True})
         
     except Exception as e:
-        print(f"删除简历失败: {e}")
+        logger.warning(f"删除简历失败: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/resume/info', methods=['GET'])
@@ -353,13 +356,10 @@ def run_job_search_task(params, session_data):
         current_job['status'] = 'running'
         emit_progress("🚀 开始初始化爬虫...", 5)
 
-        # 1. 如果前端传来了AI provider参数，先更新配置
-        if 'ai_provider' in params:
-            ai_provider = params['ai_provider']
-            logger.info(f"🤖 用户选择AI服务商: {ai_provider}")
-            config_manager.set_user_preference('ai_analysis.provider', ai_provider)
-            config_manager.save_user_preferences()
-            emit_progress(f"🤖 AI服务商: {ai_provider.upper()}", 8)
+        # 1. AI 模型固定：GLM 初筛 + Claude 匹配（并显式读取当前配置模型，避免日志与调用不一致）
+        glm_screening_model = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.6v')
+        claude_matching_model = config_manager.get_app_config('ai.models.claude.model_name', 'claude-sonnet-4-20250514')
+        emit_progress(f"🤖 AI模型: GLM({glm_screening_model}) + Claude({claude_matching_model})", 8)
 
         # 2. 从前端参数获取搜索配置，如果没有则使用默认配置
         search_config = config_manager.get_search_config()
@@ -402,93 +402,58 @@ def run_job_search_task(params, session_data):
         
         # 5. 检查是否有简历数据进行匹配优化
         has_session_resume = session_data.get('has_resume_data', False)
+        if not has_session_resume:
+            current_job.update({
+                'status': 'requires_resume',
+                'end_time': datetime.now(),
+                'results': [],
+                'analyzed_jobs': [],
+                'total_jobs': len(jobs),
+                'analyzed_jobs_count': 0,
+                'qualified_jobs': 0
+            })
+            emit_progress("❌ 请先上传简历后再进行AI匹配", 100, {
+                'requires_resume': True,
+                'results': [],
+                'all_jobs': [],
+                'stats': {
+                    'total': len(jobs),
+                    'analyzed': 0,
+                    'qualified': 0
+                }
+            })
+            socketio.emit('search_complete', {'status': 'requires_resume', 'message': '请先上传简历'})
+            return
         
-        # 6. AI岗位分析 - 恢复原有的深度分析功能
-        emit_progress("🤖 开始AI岗位分析...", 80)
-        
-        # 创建JobAnalyzer实例
-        global job_analyzer_instance
-        
-        # 如果没有现有实例，创建新的分析器
-        if 'job_analyzer_instance' not in globals():
-            # 使用标准的JobAnalyzer进行岗位分析
-            from analyzer.job_analyzer import JobAnalyzer
-            print(f"🔄 创建JobAnalyzer实例，模型: {ai_config['provider']}")
-            job_analyzer_instance = JobAnalyzer(ai_provider=ai_config['provider'])
-        
-        analyzer = job_analyzer_instance
-        
-        # 使用AI进行岗位分析
-        emit_progress("🧠 启动AI岗位匹配分析...", 82)
-        
-        try:
-            # 使用JobAnalyzer的analyze_jobs方法进行批量分析
-            analyzed_jobs = analyzer.analyze_jobs(jobs)
-            emit_progress(f"📈 AI分析完成", 90)
-            
-        except Exception as e:
-            logger.error(f"AI分析失败，使用降级分析: {e}")
-            # 降级到逐个分析
-            analyzed_jobs = []
-            for i, job in enumerate(jobs):
-                progress = 82 + (i / len(jobs)) * 8  # 82-90
-                emit_progress(f"🤖 分析第 {i+1}/{len(jobs)} 个岗位...", progress)
+        # 6. AI 两阶段分析（GLM 初筛 + Claude 匹配）
+        emit_progress("🤖 启动AI两阶段分析...", 60)
 
-                try:
-                    if has_session_resume and hasattr(analyzer, 'analyze_job_match'):
-                        # 有简历时使用智能匹配，直接传递原始简历文本
-                        resume_data = session_data.get('resume_data', {})
-                        resume_text = resume_data.get('resume_text', '')
-                        # 构建简历分析数据（包含原始文本）
-                        resume_analysis = {'resume_text': resume_text}
-                        analysis_result = analyzer.analyze_job_match(job, resume_analysis)
-                    else:
-                        # 无简历时使用简单匹配
-                        analysis_result = analyzer.analyze_job_match_simple(job, analyzer.user_requirements)
-                    
-                    job['analysis'] = analysis_result
-                except Exception as e:
-                    logger.error(f"分析岗位失败: {e}")
-                    job['analysis'] = {
-                        "score": 0,
-                        "overall_score": 0,
-                        "recommendation": "分析失败",
-                        "reason": f"分析过程中出错: {e}",
-                        "summary": "无法分析此岗位"
-                    }
-                
-                analyzed_jobs.append(job)
-            
-        # 7. 过滤和排序
-        emit_progress("🎯 过滤和排序结果...", 92)
-        qualified_jobs = analyzer.filter_and_sort_jobs(analyzed_jobs, ai_config['min_score'])
+        analyzer = EnhancedJobAnalyzer(
+            extraction_provider="glm",
+            analysis_provider="claude",
+            model_name=claude_matching_model,
+            extraction_model_name=glm_screening_model,
+        )
+
+        # 获取简历文本（如有）
+        resume_text = ""
+        if session_data.get('has_resume_data'):
+            resume_text = session_data.get('resume_data', {}).get('resume_text', '')
+
+        analyzed_jobs = analyzer.analyze_jobs(jobs, resume_text=resume_text, keyword=keyword)
+        emit_progress(f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
+
+        # 7. 结果已按 score 降序排列，按 min_score 过滤
+        min_score = ai_config.get('min_score', 0)
+        qualified_jobs = [j for j in analyzed_jobs if j.get('score', 0) >= min_score]
         
         # 8. 保存结果
         emit_progress("💾 保存结果...", 95)
         from utils.data_saver import save_all_job_results
         save_all_job_results(analyzed_jobs, qualified_jobs)
         
-        # 9. 生成并获取市场分析
+        # 9. 市场分析已停用（见 design.md 超出范围章节）
         market_analysis = None
-        logger.info(f"开始生成市场分析，岗位数量: {len(jobs)}")
-        if hasattr(analyzer, 'generate_market_analysis') and hasattr(analyzer, 'get_market_analysis'):
-            try:
-                # 先生成市场分析
-                logger.info("调用 analyzer.generate_market_analysis...")
-                analyzer.generate_market_analysis(jobs)
-                # 再获取分析结果
-                logger.info("调用 analyzer.get_market_analysis...")
-                market_analysis = analyzer.get_market_analysis()
-                logger.info(f"市场分析生成完成: {market_analysis is not None}")
-                if market_analysis:
-                    logger.info(f"市场分析数据结构: {list(market_analysis.keys()) if isinstance(market_analysis, dict) else type(market_analysis)}")
-            except Exception as e:
-                logger.error(f"市场分析生成失败: {e}")
-                import traceback
-                logger.error(f"详细错误: {traceback.format_exc()}")
-                market_analysis = None
-        else:
-            logger.warning("analyzer没有generate_market_analysis或get_market_analysis方法")
         
         # 10. 完成
         current_job.update({
@@ -496,18 +461,16 @@ def run_job_search_task(params, session_data):
             'end_time': datetime.now(),
             'results': qualified_jobs,
             'analyzed_jobs': analyzed_jobs,
-            'total_jobs': len(jobs),
+            'total_jobs': len(analyzed_jobs),
             'analyzed_jobs_count': len(analyzed_jobs),
-            'qualified_jobs': len(qualified_jobs),
-            'market_analysis': market_analysis
+            'qualified_jobs': len(qualified_jobs)
         })
         
         emit_progress(f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
             'results': qualified_jobs,
             'all_jobs': analyzed_jobs,
-            'market_analysis': market_analysis,
             'stats': {
-                'total': len(jobs),
+                'total': len(analyzed_jobs),
                 'analyzed': len(analyzed_jobs),
                 'qualified': len(qualified_jobs)
             }

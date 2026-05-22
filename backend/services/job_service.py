@@ -35,7 +35,7 @@ class JobSearchService:
         """发送进度更新"""
         if self.progress_callback:
             self.progress_callback(message, progress, data)
-        logger.info(f"Progress: {message}")
+        logger.debug(f"Progress: {message}")
     
     def _create_spider(self, engine: str = None) -> Any:
         """创建爬虫实例"""

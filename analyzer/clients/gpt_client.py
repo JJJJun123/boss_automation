@@ -5,6 +5,7 @@ GPT API客户端
 """
 
 import os
+import logging
 import requests
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
@@ -14,6 +15,7 @@ from ..base_client import BaseAIClient
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
 secrets_file = os.path.join(config_dir, 'secrets.env')
 load_dotenv(secrets_file)
+logger = logging.getLogger(__name__)
 
 
 class GPTClient(BaseAIClient):
@@ -56,7 +58,7 @@ class GPTClient(BaseAIClient):
             self.temperature = 0.3
             self.max_tokens = 1000
         
-        print(f"🤖 GPT客户端初始化完成，使用模型: {self.model_name}")
+        logger.debug(f"GPT客户端初始化完成，使用模型: {self.model_name}")
         
         # 验证配置
         self._validate_configuration()
@@ -64,7 +66,7 @@ class GPTClient(BaseAIClient):
     def _validate_configuration(self) -> None:
         """验证GPT配置"""
         if not self.api_key:
-            print("⚠️ 警告: 未设置OPENAI_API_KEY，请在config/secrets.env文件中配置")
+            logger.warning("未设置OPENAI_API_KEY，请在config/secrets.env文件中配置")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """

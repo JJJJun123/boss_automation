@@ -32,10 +32,10 @@ class JobAnalyzer:
         from analyzer.market_analyzer import MarketAnalyzer
         self.market_analyzer = MarketAnalyzer(ai_provider="glm")
 
-        print(f"🤖 岗位匹配使用AI服务: {self.ai_provider.upper()}")
+        logger.debug(f"🤖 岗位匹配使用AI服务: {self.ai_provider.upper()}")
         if model_name:
-            print(f"🎯 指定模型: {model_name}")
-        print(f"📊 市场分析固定使用: GLM")
+            logger.debug(f"🎯 指定模型: {model_name}")
+        logger.debug(f"📊 市场分析固定使用: GLM")
 
     def get_default_requirements(self):
         """获取用户要求（从配置文件读取默认偏好）"""
@@ -146,38 +146,38 @@ class JobAnalyzer:
         """批量分析岗位（基于简历智能匹配）"""
         analyzed_jobs = []
         
-        print(f"🤖 开始AI分析 {len(jobs_list)} 个岗位...")
+        logger.debug(f"🤖 开始AI分析 {len(jobs_list)} 个岗位...")
         
         # 第一步：生成市场整体分析（新功能）
-        print(f"📊 步骤1: 生成市场整体分析...")
+        logger.debug(f"📊 步骤1: 生成市场整体分析...")
         try:
             # 使用新的市场分析方法
             if self.generate_market_analysis(jobs_list):
-                print(f"✅ 市场分析完成，分析了 {self.market_analysis.total_jobs_analyzed} 个岗位")
+                logger.debug(f"✅ 市场分析完成，分析了 {self.market_analysis.total_jobs_analyzed} 个岗位")
                 
                 # 显示分析摘要
                 if hasattr(self.market_analysis, 'hard_skills_top5') and self.market_analysis.hard_skills_top5:
                     top_skills = [skill['name'] for skill in self.market_analysis.hard_skills_top5[:3]]
-                    print(f"🔝 最常见技能: {', '.join(top_skills)}")
+                    logger.debug(f"🔝 最常见技能: {', '.join(top_skills)}")
                 elif hasattr(self.market_analysis, 'common_skills') and self.market_analysis.common_skills:
-                    print(f"🔝 最常见技能: {', '.join(self.market_analysis.common_skills[:3])}")
+                    logger.debug(f"🔝 最常见技能: {', '.join(self.market_analysis.common_skills[:3])}")
             else:
-                print(f"⚠️ 市场分析生成失败")
+                logger.debug(f"⚠️ 市场分析生成失败")
                 self.market_analysis = None
             
         except Exception as e:
-            print(f"⚠️ 市场分析失败: {e}")
+            logger.debug(f"⚠️ 市场分析失败: {e}")
             self.market_analysis = None
         
         # 第二步：进行匹配度分析
-        print(f"🤖 步骤2: 进行智能匹配分析...")
+        logger.debug(f"🤖 步骤2: 进行智能匹配分析...")
         
         # 检查是否有简历分析结果
         if self.resume_analysis:
-            print(f"🔍 使用简历智能匹配模式")
+            logger.debug(f"🔍 使用简历智能匹配模式")
             return self._analyze_jobs_with_resume_match(jobs_list)
         else:
-            print(f"⚠️ 未上传简历，使用默认匹配模式")
+            logger.debug(f"⚠️ 未上传简历，使用默认匹配模式")
             return self._analyze_jobs_default_mode(jobs_list)
     
     def _analyze_jobs_with_resume_match(self, jobs_list):
@@ -185,7 +185,7 @@ class JobAnalyzer:
         analyzed_jobs = []
         
         for i, job in enumerate(jobs_list, 1):
-            print(f"分析第 {i}/{len(jobs_list)} 个岗位: {job.get('title', '未知')}")
+            logger.debug(f"分析第 {i}/{len(jobs_list)} 个岗位: {job.get('title', '未知')}")
             
             try:
                 # 使用新的智能匹配分析
@@ -196,10 +196,10 @@ class JobAnalyzer:
                 analyzed_jobs.append(job)
                 
                 overall_score = analysis_result.get('overall_score', 0)
-                print(f"✅ 智能匹配完成 - 综合评分: {overall_score}/10")
+                logger.debug(f"✅ 智能匹配完成 - 综合评分: {overall_score}/10")
                 
             except Exception as e:
-                print(f"❌ 分析失败: {e}")
+                logger.debug(f"❌ 分析失败: {e}")
                 job['analysis'] = {
                     'score': -1,
                     'overall_score': -1,
@@ -217,7 +217,7 @@ class JobAnalyzer:
         analyzed_jobs = []
         
         for i, job in enumerate(jobs_list, 1):
-            print(f"分析第 {i}/{len(jobs_list)} 个岗位: {job.get('title', '未知')}")
+            logger.debug(f"分析第 {i}/{len(jobs_list)} 个岗位: {job.get('title', '未知')}")
             
             try:
                 # 使用重构后的简单岗位匹配分析方法
@@ -230,10 +230,10 @@ class JobAnalyzer:
                 job['analysis'] = analysis_result
                 analyzed_jobs.append(job)
                 
-                print(f"✅ 分析完成 - 评分: {analysis_result['score']}/10")
+                logger.debug(f"✅ 分析完成 - 评分: {analysis_result['score']}/10")
                 
             except Exception as e:
-                print(f"❌ 分析失败: {e}")
+                logger.debug(f"❌ 分析失败: {e}")
                 job['analysis'] = {
                     'score': -1,
                     'overall_score': -1,
@@ -266,7 +266,7 @@ class JobAnalyzer:
             reverse=True
         )
         
-        print(f"🎯 过滤结果: {len(sorted_jobs)}/{len(analyzed_jobs)} 个岗位达到最低评分标准({min_score}分)")
+        logger.debug(f"🎯 过滤结果: {len(sorted_jobs)}/{len(analyzed_jobs)} 个岗位达到最低评分标准({min_score}分)")
         
         return sorted_jobs
     
@@ -464,7 +464,7 @@ class JobAnalyzer:
             return result
             
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"结果解析失败: {e}")
+            logger.debug(f"结果解析失败: {e}")
             return self._extract_match_info_from_text(str(analysis_result))
     
     def _get_default_match_value(self, field):

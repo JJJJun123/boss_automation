@@ -5,6 +5,7 @@ GPT API客户端 - 使用官方OpenAI SDK
 """
 
 import os
+import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from ..base_client import BaseAIClient
@@ -13,6 +14,7 @@ from ..base_client import BaseAIClient
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
 secrets_file = os.path.join(config_dir, 'secrets.env')
 load_dotenv(secrets_file)
+logger = logging.getLogger(__name__)
 
 # 导入OpenAI SDK
 try:
@@ -20,7 +22,7 @@ try:
     OPENAI_SDK_AVAILABLE = True
 except ImportError:
     OPENAI_SDK_AVAILABLE = False
-    print("⚠️ OpenAI SDK未安装，请运行: pip install openai")
+    logger.warning("OpenAI SDK未安装，请运行: pip install openai")
 
 
 class GPTClientSDK(BaseAIClient):
@@ -50,7 +52,7 @@ class GPTClientSDK(BaseAIClient):
         # 初始化OpenAI客户端
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
-            print("⚠️ 警告: 未设置OPENAI_API_KEY，请在config/secrets.env文件中配置")
+            logger.warning("未设置OPENAI_API_KEY，请在config/secrets.env文件中配置")
         
         self.client = OpenAI(api_key=api_key)
         
@@ -65,7 +67,7 @@ class GPTClientSDK(BaseAIClient):
             self.temperature = 0.3
             self.max_tokens = 1000
         
-        print(f"🤖 GPT客户端(SDK版)初始化完成，使用模型: {self.model_name}")
+        logger.debug(f"GPT客户端(SDK版)初始化完成，使用模型: {self.model_name}")
         
         # 验证配置
         self._validate_configuration()
@@ -73,7 +75,7 @@ class GPTClientSDK(BaseAIClient):
     def _validate_configuration(self) -> None:
         """验证GPT配置"""
         if not os.getenv('OPENAI_API_KEY'):
-            print("⚠️ 警告: 未设置OPENAI_API_KEY，API调用将失败")
+            logger.warning("未设置OPENAI_API_KEY，API调用将失败")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """
