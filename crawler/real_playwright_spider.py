@@ -11,7 +11,9 @@ import time
 import os
 from pathlib import Path
 from typing import List, Dict, Optional
-from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+# 使用 patchright（Playwright 反检测分支）：从驱动层避免 Runtime.enable 等 CDP 痕迹，
+# 绕过 Boss 的 security.html?code=37 反爬挑战。API 与 playwright 完全兼容。
+from patchright.async_api import async_playwright, Browser, Page, BrowserContext
 from .enhanced_extractor import EnhancedDataExtractor
 from .session_manager import SessionManager
 from .retry_handler import RetryHandler, RetryConfig, ErrorType, RetryStrategy, retry_on_error
@@ -32,6 +34,7 @@ class RealPlaywrightBossSpider:
         self.enhanced_extractor = EnhancedDataExtractor()  # 集成增强提取器
         self.session_manager = SessionManager()  # 集成会话管理器
         self.retry_handler = RetryHandler()  # 集成重试处理器
+        self.current_search_url: Optional[str] = None
         
         # 加载配置
         try:
@@ -42,6 +45,8 @@ class RealPlaywrightBossSpider:
             logger.warning("无法加载配置管理器，使用默认配置")
             self.config_manager = None
             self.browser_config = {}
+
+        self.diagnostic_logging = bool(self.browser_config.get('diagnostic_logging', False))
         
         # Boss直聘城市代码映射 (与app_config.yaml保持一致)
         self.city_codes = {
@@ -66,7 +71,7 @@ class RealPlaywrightBossSpider:
         
         if use_persistent:
             # 创建用户数据目录
-            user_data_path = Path(user_data_dir).absolute()
+            user_data_path = Path(os.path.expanduser(str(user_data_dir))).resolve()
             user_data_path.mkdir(parents=True, exist_ok=True)
             
             logger.info(f"📁 使用持久化浏览器配置: {user_data_path}")
@@ -78,24 +83,26 @@ class RealPlaywrightBossSpider:
                 logger.info("👤 请在打开的浏览器窗口中手动登录Boss直聘")
                 logger.info("✅ 登录成功后，您的登录状态将被自动保存")
             
-            # 使用持久化上下文启动浏览器
-            logger.info(f"🚀 正在启动浏览器，headless模式: {self.headless}")
+            # patchright 官方最佳实践：用真实 Chrome（channel="chrome"）+ 干净配置。
+            # 关键：不要叠加自定义 args / user_agent / stealth——patchright 已内置反检测，
+            # 额外"化妆"反而与真 Chrome 指纹冲突、制造破绽。no_viewport 让窗口用自然尺寸。
+            logger.info(f"🚀 正在启动浏览器（patchright + 真实 Chrome），headless={self.headless}")
             self.context = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_path),
+                channel="chrome",
                 headless=self.headless,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor',
-                    '--start-maximized'
-                ],
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                no_viewport=True,
             )
-            
+
+            # 监听跳转（默认关闭，避免日志噪音）
+            if self.diagnostic_logging:
+                self.context.on('page', lambda p: logger.debug(f"[诊断] 新页面打开: {p.url}"))
+
             # 获取或创建页面
             pages = self.context.pages
             self.page = pages[0] if pages else await self.context.new_page()
+            if self.diagnostic_logging:
+                self.page.on('framenavigated', lambda f: logger.debug(f"[诊断] 页面跳转: {f.url}") if f == self.page.main_frame else None)
             logger.info(f"✅ 浏览器启动成功！headless={self.headless}, 页面数: {len(pages)}")
             
         else:
@@ -159,62 +166,83 @@ class RealPlaywrightBossSpider:
         """核心搜索逻辑（内部方法，供重试使用）"""
         if not self.page:
             raise RuntimeError("浏览器未启动")
-        
-        # 首先确保已登录
-        logger.info("🔐 检查登录状态...")
-        if not await self._ensure_logged_in():
-            raise RuntimeError("登录失败，无法继续搜索")
-        
+
         # 获取城市代码
         city_code = self.city_codes.get(city, "101210100")  # 默认上海
-        
+
         logger.info(f"🔍 开始搜索: {keyword} | 城市: {city} ({city_code}) | 数量: {max_jobs}")
-        
-        # 使用更自然的搜索方式
-        logger.info(f"🔍 准备搜索: {keyword}")
-        
-        # 确保在首页（登录后可能还在登录页或其他页面）
-        logger.info("🏠 导航到Boss直聘首页...")
-        try:
-            await self.page.goto("https://www.zhipin.com", wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(3)
-        except Exception as e:
-            logger.warning(f"首页加载超时，尝试继续: {e}")
-        
-        # 直接使用URL导航（更稳定高效）
-        logger.info("🔍 使用URL导航进行搜索...")
+
+        # 直接导航搜索页（绕过首页——首页会触发反爬 about:blank）
+        # 未登录状态下也可获取前~15条结果；已登录可获取完整列表
         encoded_keyword = urllib.parse.quote(keyword)
-        search_url = f"https://www.zhipin.com/web/geek/job?query={encoded_keyword}&city={city_code}"
+        search_url = f"https://www.zhipin.com/web/geek/jobs?query={encoded_keyword}&city={city_code}"
+        self.current_search_url = search_url
+        logger.info(f"🔍 直接导航到搜索页: {search_url}")
         await self._navigate_to_search_page(search_url)
-        
+
+        # 最小交互快照：尽快抓取一次，防止后续被反爬重定向导致整批丢失
+        early_snapshot_jobs = await self.enhanced_extractor.extract_job_listings_quick_snapshot(self.page, max_jobs)
+        if early_snapshot_jobs:
+            logger.info(f"⚡ 搜索页早期快照拿到 {len(early_snapshot_jobs)} 个岗位")
+
         # 处理页面加载和预处理（传递目标岗位数量）
-        await self._prepare_search_page(max_jobs)
-        
-        # 根据岗位数量选择合适的抓取策略
-        if max_jobs <= 30:
-            # 小规模抓取：使用增强提取器
-            logger.info("🚀 启用增强数据提取引擎（小规模模式）...")
-            jobs = await self.enhanced_extractor.extract_job_listings_enhanced(self.page, max_jobs)
-        else:
-            # 大规模抓取：使用大规模爬虫引擎
-            logger.info(f"🏭 启用大规模抓取引擎（目标: {max_jobs} 个岗位）...")
-            large_scale_crawler = LargeScaleCrawler(self.page, self.session_manager, self.retry_handler)
-            jobs = await large_scale_crawler.extract_large_scale_jobs(max_jobs)
-        
+        await self._prepare_search_page(max_jobs, search_url)
+        # 提取前再次确认当前活动页可用，避免标签页被切到 about:blank
+        await self._ensure_search_page_ready(search_url, stage="提取前")
+
+        # 首次按规模选择策略抓取
+        jobs = await self._extract_jobs_by_strategy(max_jobs, early_snapshot_jobs)
+
+        # 会话过期自愈：提取为空且被弹回登录页时触发。Boss 反爬的安全校验重定向
+        # 常在提取阶段才完成（URL 此时才稳定为 /web/user/ 登录页），故在提取后
+        # 检测最可靠；早于此（导航后/prepare 后）检测会因重定向未完成而漏判。
+        if not jobs and await self._recover_session_if_needed(search_url):
+            await self._prepare_search_page(max_jobs, search_url)
+            await self._ensure_search_page_ready(search_url, stage="重登后提取前")
+            early_snapshot_jobs = await self.enhanced_extractor.extract_job_listings_quick_snapshot(self.page, max_jobs)
+            jobs = await self._extract_jobs_by_strategy(max_jobs, early_snapshot_jobs)
+
         # 验证结果
         if not jobs:
             await self._handle_no_jobs_found()
             return []
         
         logger.info(f"✅ 成功提取 {len(jobs)} 个岗位基础信息")
-        
+
         # 获取详情页信息
         logger.info("📄 开始获取岗位详情...")
         jobs_with_details = await self._fetch_job_details(jobs)
         
         logger.info(f"✅ 完成详情获取，共 {len(jobs_with_details)} 个岗位")
         return jobs_with_details
-    
+
+    async def _extract_jobs_by_strategy(self, max_jobs: int, early_snapshot_jobs: List[Dict]) -> List[Dict]:
+        """按目标数量选择抓取策略并提取岗位
+
+        参数：
+            max_jobs           - 目标岗位数（<=30 走增强提取器，否则走大规模引擎）
+            early_snapshot_jobs - 搜索页早期快照结果，作为增强提取失败时的兜底
+        返回：
+            List[Dict] - 提取到的岗位基础信息列表（可能为空）
+        """
+        if max_jobs <= 30:
+            # 小规模抓取：使用增强提取器
+            logger.info("🚀 启用增强数据提取引擎（小规模模式）...")
+            jobs = await self.enhanced_extractor.extract_job_listings_enhanced(self.page, max_jobs)
+            if not jobs:
+                logger.warning("⚠️ 首次提取为空，尝试恢复页面后重试一次...")
+                await self._ensure_search_page_ready(self.current_search_url, stage="提取重试前")
+                jobs = await self.enhanced_extractor.extract_job_listings_enhanced(self.page, max_jobs)
+            if not jobs and early_snapshot_jobs:
+                logger.warning("⚠️ 增强提取仍为空，回退使用搜索页早期快照结果")
+                jobs = early_snapshot_jobs
+            return jobs
+
+        # 大规模抓取：使用大规模爬虫引擎
+        logger.info(f"🏭 启用大规模抓取引擎（目标: {max_jobs} 个岗位）...")
+        large_scale_crawler = LargeScaleCrawler(self.page, self.session_manager, self.retry_handler)
+        return await large_scale_crawler.extract_large_scale_jobs(max_jobs)
+
     @retry_on_error(max_attempts=3, base_delay=2.0)
     async def _navigate_to_search_page(self, search_url: str) -> None:
         """导航到搜索页面"""
@@ -223,55 +251,117 @@ class RealPlaywrightBossSpider:
         
         await self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
     
-    async def _prepare_search_page(self, target_jobs: int = 20) -> None:
-        """准备搜索页面（页面加载、滚动等）
-        
-        Args:
-            target_jobs: 目标岗位数量
-        """
-        # 等待页面完全加载完成
-        logger.info("⏳ 等待页面完全加载...")
-        
-        # 检查页面是否还在加载状态
-        max_wait_time = 60  # 最大等待60秒
-        wait_start = time.time()
-        
-        while time.time() - wait_start < max_wait_time:
+    async def _prepare_search_page(self, target_jobs: int = 20, search_url: Optional[str] = None) -> None:
+        """准备搜索页面 - 快速模式，避免触发延迟反爬检测"""
+        # 缩短等待窗口，减少被延迟反爬跳转about:blank的概率
+        logger.info("⏳ 等待搜索页面初始内容渲染（1.5秒）...")
+        await asyncio.sleep(1.5)
+
+        # 检查是否被反爬重定向，并尝试自动恢复
+        await self._ensure_search_page_ready(search_url, stage="初始渲染后")
+        current_url = self.page.url
+
+        title = await self.page.title()
+        logger.info(f"✅ 搜索页面就绪，URL: {current_url}，标题: {title}")
+
+        # 诊断截图：默认关闭，避免每次任务产生无效文件
+        if self.diagnostic_logging:
+            diag_screenshot = f"search_diag_{int(time.time())}.png"
             try:
-                # 检查页面标题是否还是"请稍候"
-                title = await self.page.title()
-                if title != "请稍候":
-                    logger.info(f"✅ 页面加载完成，标题: {title}")
-                    break
-                
-                # 检查是否有岗位内容出现
-                job_indicators = await self.page.query_selector_all('li, .job-card, [data-jobid], .job-item')
-                if job_indicators:
-                    logger.info(f"✅ 检测到 {len(job_indicators)} 个潜在岗位元素")
-                    break
-                
-                logger.info("⏳ 页面仍在加载中，继续等待...")
-                await asyncio.sleep(3)
-                
+                await self.page.screenshot(path=diag_screenshot)
+                logger.debug(f"[诊断] 提取前截图: {diag_screenshot}")
             except Exception as e:
-                logger.debug(f"检查页面状态时出错: {e}")
-                await asyncio.sleep(2)
-        
-        # 额外等待确保动态内容加载
-        await asyncio.sleep(5)
-        
-        # 智能滚动页面以加载更多岗位
-        logger.info(f"📜 滚动页面以触发更多岗位加载（目标: {target_jobs} 个）...")
-        await self._smart_scroll_page(target_jobs)
-        
-        # 滚动回顶部
-        await self.page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(3)
-        
-        logger.info("📄 页面已准备完成，开始处理可能的弹窗...")
-        
-        # 检查是否需要登录或有验证码
+                logger.debug(f"诊断截图失败: {e}")
+
+        # 处理弹窗
         await self._handle_login_or_captcha()
+        # 弹窗处理后再校验一次，避免被动跳到about:blank后直接进入提取
+        await self._ensure_search_page_ready(search_url, stage="弹窗处理后")
+
+    async def _switch_to_live_context_page(self, prefer_search: bool = True) -> bool:
+        """当当前页无效时，尝试切换到同一context中仍存活的页面"""
+        if not self.context:
+            return False
+
+        try:
+            candidates = []
+            for candidate in reversed(self.context.pages):
+                if candidate.is_closed():
+                    continue
+                url = (candidate.url or "").strip()
+                if not url or "about:blank" in url or "zhipin.com" not in url:
+                    continue
+
+                score = 0
+                if "zhipin.com/web/geek/jobs" in url:
+                    score = 30 if prefer_search else 20
+                elif "zhipin.com/job_detail" in url:
+                    score = 20
+                elif "zhipin.com" in url:
+                    score = 10
+                else:
+                    score = 1
+                candidates.append((score, candidate, url))
+
+            if not candidates:
+                return False
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            _, best_page, best_url = candidates[0]
+            if self.page != best_page:
+                self.page = best_page
+                await self.page.bring_to_front()
+                logger.warning(f"⚠️ 已切换到可用标签页: {best_url}")
+            return True
+        except Exception as e:
+            logger.debug(f"切换可用标签页失败: {e}")
+            return False
+
+    async def _ensure_search_page_ready(self, fallback_url: Optional[str], stage: str = "") -> None:
+        """确保当前页不是 about:blank，必要时自动回跳搜索页"""
+        if not self.page or self.page.is_closed():
+            if not await self._switch_to_live_context_page(prefer_search=True):
+                if not self.context:
+                    raise RuntimeError(f"{stage} 浏览器上下文不可用，无法恢复页面")
+                self.page = await self.context.new_page()
+
+        current_url = self.page.url if self.page else ""
+        if current_url and 'about:blank' not in current_url and 'zhipin.com' in current_url:
+            return
+
+        if await self._switch_to_live_context_page(prefer_search=True):
+            current_url = self.page.url if self.page else ""
+            if current_url and 'about:blank' not in current_url and 'zhipin.com' in current_url:
+                return
+
+        target_url = fallback_url or self.current_search_url
+        if not target_url:
+            raise RuntimeError(f"{stage} 页面是about:blank，且没有可用回跳URL")
+
+        logger.warning(f"⚠️ {stage} 页面变为about:blank，尝试恢复到搜索页...")
+        for attempt in range(2):
+            candidate = self.page
+            if self.context:
+                try:
+                    candidate = await self.context.new_page()
+                    await candidate.bring_to_front()
+                except Exception:
+                    candidate = self.page
+            await candidate.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+            self.page = candidate
+            await asyncio.sleep(1.5)
+            current_url = self.page.url
+            if current_url and 'about:blank' not in current_url and 'zhipin.com' in current_url:
+                logger.info(f"✅ 已恢复搜索页: {current_url}")
+                return
+            if await self._switch_to_live_context_page(prefer_search=True):
+                current_url = self.page.url if self.page else ""
+                if current_url and 'about:blank' not in current_url and 'zhipin.com' in current_url:
+                    logger.info(f"✅ 已从其他标签页恢复搜索页: {current_url}")
+                    return
+            logger.warning(f"⚠️ 第 {attempt + 1} 次恢复后仍为about:blank")
+
+        raise RuntimeError(f"{stage} 页面被重定向到about:blank（URL: {self.page.url}）")
     
     async def _smart_scroll_page(self, target_jobs: int = 20) -> None:
         """智能滚动页面策略（优化版）
@@ -529,109 +619,169 @@ class RealPlaywrightBossSpider:
         except Exception as e:
             logger.debug(f"记录搜索失败信息时出错: {e}")
     
+    async def _is_logged_in_by_url(self) -> bool:
+        """通过URL判断登录状态（最可靠的方式）
+
+        已登录用户访问 zhipin.com 会被重定向到 /web/geek/ 路径
+        未登录用户会被重定向到城市首页（如 /shanghai/）
+
+        注意：登录成功后 URL 常为 /web/geek/jobs?...&_security_check=N——_security_check
+        只是 Boss 路由残留的查询参数，不代表校验未完成（Boss 不会自行清除它），
+        故只要出现 /web/geek/ 即视为已登录。
+        """
+        current_url = self.page.url or ""
+        logged_in = '/web/geek/' in current_url
+        logger.info(f"🔍 登录状态检查（URL）: {current_url} → {'已登录' if logged_in else '未登录'}")
+        return logged_in
+
+    async def _classify_page_state(self) -> str:
+        """按当前 URL 判定页面处于哪种状态（settle 轮询的基础）
+
+        Boss 反爬重定向异步进行，页面会在数秒内经历多种中间态，故按"状态"
+        而非"瞬时 URL 标记"判断更可靠。
+
+        参数：无（读取 self.page.url）
+        返回：str —
+            'login'    登录注册页（/web/user/），需引导登录
+            'security' 安全校验中间页（security.html），仍在跳转
+            'blank'    about:blank 或空 URL，仍在跳转
+            'results'  搜索结果页（/web/geek/jobs，即便残留 _security_check），可提取
+            'other'    其它（按非确定态处理）
+        """
+        url = (self.page.url or "").lower()
+        if not url or 'about:blank' in url:
+            return 'blank'
+        if 'security.html' in url:
+            return 'security'
+        if '/web/user/' in url:
+            return 'login'
+        if '/web/geek/jobs' in url:
+            return 'results'
+        return 'other'
+
+    async def _wait_until_page_settled(self, timeout: float = 15.0, interval: float = 1.0) -> str:
+        """轮询等待页面从反爬中间态稳定到确定态
+
+        把 security/blank/other 视为"仍在跳转，继续等"，直到稳定到 login 或
+        results。解决"单点瞬时检测移动靶"的竞态——以页面最终落点而非某一刻状态为准。
+
+        参数：
+            timeout  - 最长等待秒数
+            interval - 轮询间隔秒数
+        返回：
+            str - 'login'（需登录）/ 'results'（可提取）/ 'timeout'（未稳定）
+        """
+        deadline = time.time() + timeout
+        last_state = None
+        while time.time() < deadline:
+            state = await self._classify_page_state()
+            if state != last_state:
+                logger.info(f"⏳ 页面状态: {state}（URL={getattr(self.page, 'url', None)}）")
+                last_state = state
+            if state in ('login', 'results'):
+                return state
+            await asyncio.sleep(interval)
+        logger.warning(f"⚠️ {timeout}s 内页面未稳定到确定态，最后状态={last_state}")
+        return 'timeout'
+
+    async def _recover_session_if_needed(self, search_url: str) -> bool:
+        """提取为空后的自愈：等页面稳定，按落点决定登录或直接重抓
+
+        修复缺陷：会话失效时爬虫原本默默抓 0 条后失败；且 Boss 反爬重定向异步
+        耗时数秒，单点检测会漏判。现改为先 settle 轮询，再按稳定结果处理。
+
+        参数：
+            search_url - 目标搜索页 URL（登录后若不在结果页则导航到此）
+        返回：
+            bool - True 表示调用方应重新准备页面并重新抓取（登录后，或页面刚稳定
+                   到结果页、首次提取过早）；False 仅当 settle 超时、无可恢复
+        异常：
+            RuntimeError - 引导登录失败或超时
+        """
+        settled = await self._wait_until_page_settled()
+
+        if settled == 'results':
+            # 页面其实已稳定到结果页（首次提取过早），无需登录，让调用方重抓
+            logger.info("✅ 页面已稳定到搜索结果页（首次提取过早），将重新抓取")
+            return True
+
+        if settled != 'login':
+            logger.warning("⚠️ 页面未稳定到登录页或结果页，放弃本次会话恢复")
+            return False
+
+        logger.warning("🔑 会话已过期，需要重新登录后才能抓取")
+        logged_in = await self._ensure_logged_in()
+        if not logged_in:
+            raise RuntimeError("会话已过期且重新登录失败/超时，请重试")
+
+        # 登录成功后，Boss 通常已按 fromUrl 把页面跳回搜索结果页（/web/geek/jobs，
+        # URL 可能残留 _security_check 参数）。此时若再 goto 一个干净 search_url 会
+        # 再次触发反爬安全校验、把页面弹回登录页（实测非确定性）。故仅当当前不在
+        # 结果页时才重新导航。
+        if '/web/geek/jobs' in (self.page.url or ''):
+            logger.info(f"✅ 重新登录成功，已在搜索结果页，无需重新导航: {self.page.url}")
+        else:
+            logger.info("✅ 重新登录成功，重新导航到搜索页")
+            await self._navigate_to_search_page(search_url)
+        return True
+
     async def _ensure_logged_in(self) -> bool:
-        """确保已登录Boss直聘 - 支持持久化登录状态"""
+        """引导用户完成登录（直接跳登录页，不导航首页以避免反爬）"""
         try:
-            # 首先导航到Boss直聘首页
-            logger.info("🏠 导航到Boss直聘首页...")
+            logger.info("🔐 跳转到登录页，请完成登录...")
+            # 注意：不导航首页！首页会触发 Boss 直聘反爬，重定向到 about:blank
             try:
-                await self.page.goto("https://www.zhipin.com", wait_until="domcontentloaded", timeout=30000)
+                await self.page.goto(
+                    "https://www.zhipin.com/web/user/?ka=header-login",
+                    wait_until="domcontentloaded", timeout=30000
+                )
             except Exception as e:
-                logger.warning(f"首页加载超时，尝试继续: {e}")
-                # 即使超时也尝试继续，因为页面可能已经部分加载
-            await asyncio.sleep(3)
-            
-            # 如果使用持久化上下文，先检查是否已经登录
-            use_persistent = self.browser_config.get('use_persistent_context', True)
-            if use_persistent:
-                # 定义登录状态检查的选择器
-                login_indicators = [
-                    'a[href*="/web/geek/chat"]',  # 聊天入口
-                    '.nav-figure img',  # 用户头像
-                    'a[ka="header-username"]',  # 用户名链接
-                    '.header-login-name'  # 登录名
-                ]
-                
-                # 更严格的登录状态检查
-                # 先检查是否有登录按钮（如果有说明未登录）
-                login_button = await self.page.query_selector('a[ka="header-login"], .btn-sign, .sign-in')
-                if login_button:
-                    logger.info("❌ 检测到登录按钮，用户未登录")
-                else:
-                    # 检查登录状态的多种方式（更严格）
-                    for indicator in login_indicators:
-                        try:
-                            element = await self.page.query_selector(indicator)
-                            if element:
-                                logger.info(f"✅ 检测到登录标识: {indicator}")
-                                logger.info("✅ 使用持久化登录状态，无需重新登录")
-                                return True
-                        except:
-                            continue
-                
-                # 如果没有检测到登录状态，引导用户登录
-                logger.info("❌ 未检测到登录状态")
-                logger.info("🔐 请手动登录Boss直聘...")
-                logger.info("👉 登录步骤：")
-                logger.info("   1. 点击页面右上角的'登录'按钮")
-                logger.info("   2. 使用手机号验证码或扫码登录")
-                logger.info("   3. 登录成功后，在控制台按Enter继续")
-                
-                # 等待用户登录 - 使用异步等待而非阻塞输入
-                logger.info("\n⏸️  请在浏览器中完成登录...")
-                logger.info("💡 提示：登录成功后，程序会自动检测并继续")
-                
-                # 循环检测登录状态，每5秒检查一次
-                max_wait_time = 300  # 最多等待5分钟
-                check_interval = 5   # 每5秒检查一次
-                waited_time = 0
-                
-                while waited_time < max_wait_time:
-                    await asyncio.sleep(check_interval)
-                    waited_time += check_interval
-                    
-                    # 检查是否已登录
-                    for indicator in login_indicators:
-                        try:
-                            element = await self.page.query_selector(indicator)
-                            if element:
-                                logger.info(f"✅ 检测到登录成功！")
-                                await asyncio.sleep(2)  # 等待页面稳定
-                                return True
-                        except:
-                            continue
-                    
-                    # 显示等待进度
-                    remaining_time = max_wait_time - waited_time
-                    logger.info(f"⏳ 等待登录中... (剩余 {remaining_time} 秒)")
-                
-                logger.error("❌ 登录超时，请重试")
-                return False
-                
-            else:
-                # 使用传统的会话管理方式
-                # 尝试加载已保存的会话
-                if await self.session_manager.load_session(self.page.context, "zhipin.com"):
-                    logger.info("🍪 已加载保存的会话，刷新页面...")
-                    await self.page.reload()
-                    await asyncio.sleep(3)
-                    
-                    # 检查是否登录成功
-                    if await self.session_manager.check_login_status(self.page, "zhipin.com"):
-                        logger.info("✅ 使用保存的会话登录成功!")
-                        return True
-                    else:
-                        logger.warning("⚠️ 保存的会话已失效，需要重新登录")
-                
-                # 等待用户手动登录
-                if await self.session_manager.wait_for_login(self.page, timeout=300, domain="zhipin.com"):
-                    # 保存新的会话
-                    await self.session_manager.save_session(self.page.context, self.page, "zhipin.com")
+                logger.warning(f"登录页加载异常: {e}")
+            await asyncio.sleep(2)
+
+            # [诊断] 监听登录阶段每一次页面跳转/刷新，定位"登录页不停刷新"的根因
+            nav_count = {'n': 0}
+
+            def _on_login_nav(frame):
+                try:
+                    if self.page and frame == self.page.main_frame:
+                        nav_count['n'] += 1
+                        logger.info(f"[诊断] 🔄 登录阶段第 {nav_count['n']} 次页面跳转/刷新 → {frame.url}")
+                except Exception:
+                    pass
+
+            try:
+                self.page.on('framenavigated', _on_login_nav)
+            except Exception:
+                pass
+            tab_n = len(self.context.pages) if self.context else '?'
+            logger.info(f"[诊断] 登录开始：标签页数量={tab_n}，当前URL={self.page.url}")
+
+            logger.info("🔐 请在浏览器中完成登录（扫码或手机号）")
+            logger.info("💡 登录成功后，程序会自动检测并继续")
+
+            # 循环等待登录，通过URL判断（每5秒检查一次）
+            max_wait_time = 300
+            check_interval = 5
+            waited_time = 0
+
+            while waited_time < max_wait_time:
+                await asyncio.sleep(check_interval)
+                waited_time += check_interval
+
+                # 登录成功后，URL会变为 /web/geek/ 路径
+                if await self._is_logged_in_by_url():
+                    logger.info("✅ 检测到登录成功！")
+                    await asyncio.sleep(2)
                     return True
-                else:
-                    logger.error("❌ 登录失败")
-                    return False
-            
+
+                remaining_time = max_wait_time - waited_time
+                tab_n = len(self.context.pages) if self.context else '?'
+                logger.info(f"⏳ 等待登录中... (剩余 {remaining_time} 秒，标签页={tab_n}，本阶段跳转 {nav_count['n']} 次)")
+
+            logger.error("❌ 登录超时，请重试")
+            return False
+
         except Exception as e:
             logger.error(f"❌ 登录过程出错: {e}")
             return False
@@ -654,7 +804,7 @@ class RealPlaywrightBossSpider:
                     logger.warning(f"⚠️ 岗位 {i+1} 没有有效URL，跳过详情获取")
                     jobs_with_details.append(job)
                     continue
-                
+
                 # 获取详情页数据
                 details = await self._extract_job_detail_page(job_url)
                 
@@ -673,276 +823,110 @@ class RealPlaywrightBossSpider:
         
         return jobs_with_details
     
-    async def _extract_job_detail_page(self, job_url: str) -> Dict:
-        """提取岗位详情页信息"""
+    @staticmethod
+    def _job_id_from_url(job_url: str) -> str:
+        """从岗位 URL 提取岗位 id（用于定位列表卡片）
+
+        参数：job_url - 形如 .../job_detail/<id>.html[?query]（绝对或相对）
+        返回：str - 岗位 id；无法解析时返回空串
+        """
+        if not job_url or '/job_detail/' not in job_url:
+            return ""
+        return job_url.split('/job_detail/')[-1].split('.html')[0].split('?')[0]
+
+    @staticmethod
+    def _company_from_boss_attr(boss_attr: str) -> str:
+        """从面板 '公司 · 角色' 文本提取公司名
+
+        参数：boss_attr - 如 "大神网络科技 · 人事"
+        返回：str - 公司名（'·' 前段，去空白）；空输入返回空串
+        """
+        if not boss_attr:
+            return ""
+        return boss_attr.split('·')[0].strip()
+
+    async def _panel_text(self, selector: str) -> str:
+        """读取详情面板某元素的可见文本
+
+        inner_text 只取可见文本，自动排除 Boss 反爬注入的隐藏水印 span（直聘/kanzhun），
+        因此得到干净 JD。元素不存在或异常时返回空串。
+        参数：selector - CSS 选择器
+        返回：str - 去空白后的可见文本；无则空串
+        """
         try:
-            logger.debug(f"🔗 访问详情页: {job_url}")
-            
-            # 导航到详情页
-            await self.page.goto(job_url, wait_until="domcontentloaded", timeout=30000)  # 增加到30秒
-            await asyncio.sleep(2)
-            
-            # 等待页面加载完成
-            await self._wait_for_detail_page_load()
-            
-            # 提取工作职责
-            job_description = await self._extract_job_description()
-            
-            # 提取任职资格  
-            job_requirements = await self._extract_job_requirements()
-            
-            # 提取公司信息
-            company_details = await self._extract_company_details()
-            
-            # 提取福利待遇
-            benefits = await self._extract_benefits()
-            
-            # 提取完整薪资信息
-            salary_info = await self._extract_salary_info()
-            
+            loc = self.page.locator(selector)
+            if await loc.count() == 0:
+                return ""
+            return (await loc.first.inner_text(timeout=3000)).strip()
+        except Exception:
+            return ""
+
+    async def _extract_job_detail_page(self, job_url: str) -> Dict:
+        """点击列表卡片，从右侧详情面板 .job-detail-box 提取岗位详情
+
+        Boss /web/geek/jobs 是 SPA：点击 a.job-name 卡片会就地在右侧面板加载 JD，
+        不导航到 /job_detail/（直接 goto 详情页会被反爬静默弹回）。故全程停留列表页、
+        逐个点击卡片读面板。inner_text 自动排除隐藏水印，得到干净 JD。
+        """
+        job_id = self._job_id_from_url(job_url)
+        try:
+            # 点击卡片，让 SPA 在右侧面板加载该岗位详情
+            card = self.page.locator(f'a.job-name[href*="{job_id}"]').first
+            await card.click(timeout=8000)
+            # 等面板 JD 文本块出现
+            await self.page.wait_for_selector('.job-detail-box .desc', timeout=8000)
+            await asyncio.sleep(0.6)
+
+            jd = await self._panel_text('.job-detail-box .desc')
+            boss_attr = await self._panel_text('.job-detail-box .boss-info-attr')
+            company = self._company_from_boss_attr(boss_attr)
+            address = await self._panel_text('.job-detail-box .job-address-desc')
+
+            jd_found = bool(jd) and '未找到' not in jd
+            logger.info(f"📄 详情提取 job_id={job_id} jd_found={jd_found} JD长度={len(jd)} 公司={company or '?'}")
+
             result = {
-                'job_description': job_description,
-                'job_requirements': job_requirements, 
-                'company_details': company_details,
-                'benefits': benefits,
-                'detail_extraction_success': True
+                # Boss 面板的职位描述与任职要求合并在同一段，统一作为 JD 文本供 AI 评分
+                'job_description': jd or '职位描述未找到',
+                'job_requirements': jd or '任职要求未找到',
+                'detail_extraction_success': jd_found,
             }
-            
-            # 如果提取到了更完整的薪资信息，更新它
-            if salary_info and salary_info != "薪资面议":
-                result['salary'] = salary_info
-                
+            if company:
+                result['company'] = company           # 修正列表误取的公司名
+                result['company_details'] = boss_attr
+            if address:
+                result['work_location'] = address
             return result
-            
+
         except Exception as e:
-            logger.error(f"❌ 提取详情页失败: {e}")
+            logger.warning(f"❌ 详情提取失败 job_id={job_id}: {e}")
             return {
-                'job_description': '详情页加载失败，请直接访问岗位链接查看',
-                'job_requirements': '详情页加载失败，请直接访问岗位链接查看',
-                'company_details': '详情页加载失败',
-                'benefits': '详情页加载失败',
+                'job_description': '详情提取失败，请直接访问岗位链接查看',
+                'job_requirements': '详情提取失败，请直接访问岗位链接查看',
                 'detail_extraction_success': False
             }
-    
-    async def _wait_for_detail_page_load(self) -> None:
-        """等待详情页加载完成"""
-        try:
-            # 等待关键元素出现
-            key_selectors = [
-                '.job-sec-text',  # 岗位描述区域
-                '.job-detail-section',  # 详情区域
-                '.job-primary',  # 主要信息区域
-                '.job-banner'  # 横幅区域
-            ]
-            
-            # 尝试等待任意一个关键选择器出现
-            for selector in key_selectors:
-                try:
-                    await self.page.wait_for_selector(selector, timeout=3000)
-                    logger.debug(f"✅ 详情页关键元素已加载: {selector}")
-                    break
-                except:
-                    continue
-            
-            # 额外等待确保动态内容加载
-            await asyncio.sleep(2)
-            
-        except Exception as e:
-            logger.debug(f"等待详情页加载时出错: {e}")
-    
-    async def _extract_job_description(self) -> str:
-        """提取工作职责"""
-        selectors = [
-            '.job-sec-text',  # Boss直聘常用的职责描述选择器
-            '.job-detail-text .text',
-            '.job-description .text-desc',
-            '.job-detail .job-sec .text-desc',
-            '[class*="job-sec"] .text',
-            '.text-desc',
-            '.job-content .text'
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = await self.page.query_selector_all(selector)
-                if elements:
-                    # 获取所有匹配元素的文本
-                    texts = []
-                    for element in elements:
-                        text = await element.inner_text()
-                        if text and text.strip():
-                            texts.append(text.strip())
-                    
-                    if texts:
-                        # 查找包含"职责"、"工作内容"等关键词的部分
-                        for text in texts:
-                            if any(keyword in text for keyword in ['职责', '工作内容', '岗位职责', '主要工作']):
-                                logger.debug(f"✅ 找到工作职责: {selector}")
-                                return text
-                        
-                        # 如果没有找到特定关键词，返回第一个较长的文本
-                        for text in texts:
-                            if len(text) > 50:  # 职责描述通常较长
-                                logger.debug(f"✅ 找到工作描述: {selector}")
-                                return text
-                                
-            except Exception as e:
-                logger.debug(f"提取工作职责失败 {selector}: {e}")
-                continue
-        
-        return "工作职责信息未找到，请查看岗位详情页"
-    
-    async def _extract_job_requirements(self) -> str:
-        """提取任职资格"""
-        selectors = [
-            '.job-sec-text',
-            '.job-detail-text .text', 
-            '.job-requirements .text-desc',
-            '.job-detail .job-sec .text-desc',
-            '[class*="job-sec"] .text',
-            '.text-desc',
-            '.job-content .text'
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = await self.page.query_selector_all(selector)
-                if elements:
-                    texts = []
-                    for element in elements:
-                        text = await element.inner_text()
-                        if text and text.strip():
-                            texts.append(text.strip())
-                    
-                    if texts:
-                        # 查找包含"要求"、"资格"、"条件"等关键词的部分
-                        for text in texts:
-                            if any(keyword in text for keyword in ['任职', '要求', '资格', '条件', '技能', '经验']):
-                                logger.debug(f"✅ 找到任职要求: {selector}")
-                                return text
-                        
-                        # 如果有多个文本块，取第二个（第一个通常是职责）
-                        if len(texts) >= 2:
-                            logger.debug(f"✅ 找到任职要求（第二段）: {selector}")
-                            return texts[1]
-                            
-            except Exception as e:
-                logger.debug(f"提取任职要求失败 {selector}: {e}")
-                continue
-        
-        return "任职要求信息未找到，请查看岗位详情页"
-    
-    async def _extract_company_details(self) -> str:
-        """提取公司详情"""
-        selectors = [
-            '.company-info .company-text',
-            '.company-description',
-            '.company-detail-text',
-            '.company-info .text'
-        ]
-        
-        for selector in selectors:
-            try:
-                element = await self.page.query_selector(selector)
-                if element:
-                    text = await element.inner_text()
-                    if text and text.strip():
-                        logger.debug(f"✅ 找到公司详情: {selector}")
-                        return text.strip()
-            except Exception as e:
-                logger.debug(f"提取公司详情失败 {selector}: {e}")
-                continue
-        
-        return "公司详情信息未找到"
-    
-    async def _extract_salary_info(self) -> str:
-        """提取薪资信息"""
-        # Boss直聘详情页的薪资选择器
-        selectors = [
-            '.salary',
-            '.job-primary .info-primary .salary',
-            '.info-primary h1 + .salary',
-            '.job-detail .salary',
-            '[class*="salary"]',
-            '.job-primary .name + .salary',
-            'span.salary'
-        ]
-        
-        for selector in selectors:
-            try:
-                element = await self.page.query_selector(selector)
-                if element:
-                    text = await element.inner_text()
-                    if text and text.strip():
-                        salary = text.strip()
-                        # 清理薪资文本
-                        salary = salary.replace('·', '-').replace('薪', '')
-                        # 验证是否是有效的薪资格式
-                        if any(k in salary for k in ['K', '万', '千']) and len(salary) > 2:
-                            logger.debug(f"✅ 找到薪资信息: {selector} → {salary}")
-                            return salary
-            except Exception as e:
-                logger.debug(f"提取薪资失败 {selector}: {e}")
-                continue
-        
-        # 尝试从页面文本中查找薪资
-        try:
-            page_text = await self.page.content()
-            import re
-            # 匹配薪资模式: 15K-25K, 15-25K, 1.5万-2.5万等
-            salary_pattern = r'\b(\d+(?:\.\d+)?)\s*[-~]\s*(\d+(?:\.\d+)?)\s*([Kk千万])\b'
-            match = re.search(salary_pattern, page_text)
-            if match:
-                salary = match.group(0)
-                logger.debug(f"✅ 从页面文本中找到薪资: {salary}")
-                return salary
-        except:
-            pass
-        
-        return ""
-    
-    async def _extract_benefits(self) -> str:
-        """提取福利待遇"""
-        selectors = [
-            '.job-tags .tag',
-            '.welfare-list .welfare-item',
-            '.job-welfare .tag-item',
-            '.benefits .benefit-item'
-        ]
-        
-        benefits = []
-        for selector in selectors:
-            try:
-                elements = await self.page.query_selector_all(selector)
-                for element in elements:
-                    text = await element.inner_text()
-                    if text and text.strip():
-                        benefits.append(text.strip())
-            except Exception as e:
-                logger.debug(f"提取福利待遇失败 {selector}: {e}")
-                continue
-        
-        if benefits:
-            logger.debug(f"✅ 找到福利待遇: {len(benefits)} 项")
-            return " | ".join(benefits[:10])  # 限制数量避免过长
-        
-        return "福利待遇信息未找到"
-    
+
     async def _handle_login_or_captcha(self):
         """处理登录或验证码"""
         try:
+            if not self.page:
+                return
+
+            if 'about:blank' in self.page.url:
+                logger.warning("⚠️ 当前页已是about:blank，跳过弹窗处理")
+                return
+
             # 检查是否有登录弹窗
             login_modal = await self.page.query_selector('.login-dialog, .dialog-wrap')
-            if login_modal:
-                logger.info("🔐 检测到登录弹窗，等待用户处理...")
-                # 等待一段时间让用户处理
-                await asyncio.sleep(5)
+            if login_modal and await login_modal.is_visible():
+                # 不主动点击登录弹窗，避免触发反爬脚本把页面打到about:blank
+                logger.warning("⚠️ 检测到登录弹窗，保持页面不做点击操作")
+                await asyncio.sleep(0.3)
             
             # 检查验证码
             captcha = await self.page.query_selector('.captcha, .verify-wrap')
-            if captcha:
-                logger.info("🔒 检测到验证码，等待用户处理...")
-                await asyncio.sleep(5)
+            if captcha and await captcha.is_visible():
+                logger.warning("🔒 检测到验证码，继续执行但结果可能为空")
                 
         except Exception as e:
             if "Execution context was destroyed" in str(e):

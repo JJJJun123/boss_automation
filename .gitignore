@@ -65,5 +65,12 @@ session_data/
 browser_profile/
 crawler/sessions/
 
+# 爬虫调试产物（运行时自动生成，无需提交）
+debug_page_*.html
+debug_extraction_*.png
+boss_real_screenshot_*.png
+search_failure_*.json
+debug_captures/
+
 # Git worktrees
 .worktrees/

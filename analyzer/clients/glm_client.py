@@ -6,6 +6,7 @@
 """
 
 import os
+import logging
 import json
 import requests
 from typing import Optional, Dict, Any
@@ -16,6 +17,8 @@ from ..base_client import BaseAIClient
 config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
 secrets_file = os.path.join(config_dir, 'secrets.env')
 load_dotenv(secrets_file)
+
+logger = logging.getLogger(__name__)
 
 
 class GLMClient(BaseAIClient):
@@ -58,7 +61,7 @@ class GLMClient(BaseAIClient):
             self.temperature = 0.3
             self.max_tokens = 2000  # 增加默认值以避免截断
         
-        print(f"🤖 GLM客户端初始化完成，使用模型: {self.model_name}")
+        logger.debug(f"GLM客户端初始化完成，使用模型: {self.model_name}")
         
         # 验证配置
         self._validate_configuration()
@@ -66,7 +69,7 @@ class GLMClient(BaseAIClient):
     def _validate_configuration(self) -> None:
         """验证GLM配置"""
         if not self.api_key:
-            print("⚠️ 警告: 未设置GLM_API_KEY，请在config/secrets.env文件中配置")
+            logger.warning("未设置GLM_API_KEY，请在config/secrets.env文件中配置")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """

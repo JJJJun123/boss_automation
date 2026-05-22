@@ -1,5 +1,11 @@
 # Core web scraping
-playwright==1.40.0
+# patchright：Playwright 反检测分支，从驱动层避免 Runtime.enable 等 CDP 痕迹，
+# 用于绕过 Boss security.html?code=37 反爬死循环。需配套 `patchright install chrome`。
+patchright>=1.60.0
+# playwright 仍需安装：其它模块用 playwright.async_api 的 Page/ElementHandle 做类型提示。
+# 注意：须 >=1.60，旧版自带 chromium 在 macOS 26 上启动即崩溃(SIGSEGV)
+playwright>=1.60.0
+aiohttp>=3.9.0              # 异步 HTTP(部分 AI 客户端使用)
 requests==2.31.0
 beautifulsoup4==4.12.2
 
@@ -24,3 +30,6 @@ google-generativeai>=0.3.0  # Gemini模型
 
 # 注意：DeepSeek使用OpenAI兼容接口，无需额外SDK
 # 注意：GLM（智谱）需要安装 zhipuai 库（如果使用）
+
+# Testing
+pytest>=8.0.0
