@@ -74,23 +74,25 @@ class DeepSeekClient(BaseAIClient):
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """
         调用DeepSeek API - 系统提示词 + 用户提示词模式
-        
+
         Args:
             system_prompt: 系统提示词
             user_prompt: 用户提示词
-            **kwargs: 其他参数（temperature, max_tokens等）
-            
-        Returns:
-            AI响应文本
+            **kwargs: 其他参数：
+                - temperature, max_tokens, model
+                - thinking (bool, 默认 False)：V4 系列的思考模式。True 时调用更慢、token 更贵，
+                  但模型会先做链式推理（reasoning_content）再输出最终 content。适合需要打分/判断
+                  的场景；简单分类任务关掉省钱。
         """
         if not self.api_key:
             raise Exception("DeepSeek API Key未配置")
-        
+
         # 合并参数
         temperature = kwargs.get('temperature', self.temperature)
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
-        
+        thinking_enabled = bool(kwargs.get('thinking', False))
+
         payload = {
             "model": model,
             "messages": [
@@ -99,7 +101,9 @@ class DeepSeekClient(BaseAIClient):
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stream": False
+            "stream": False,
+            # DeepSeek V4 thinking mode 通过请求体顶层字段控制（非 OpenAI SDK 的 extra_body）
+            "thinking": {"type": "enabled" if thinking_enabled else "disabled"}
         }
         
         try:
@@ -124,22 +128,22 @@ class DeepSeekClient(BaseAIClient):
     def call_api_simple(self, prompt: str, **kwargs) -> str:
         """
         简单API调用 - 单一提示词模式
-        
+
         Args:
             prompt: 完整提示词
-            **kwargs: 其他参数
-            
-        Returns:
-            AI响应文本
+            **kwargs:
+                - temperature, max_tokens, model
+                - thinking (bool, 默认 False)：开启 V4 系列思考模式，详见 call_api。
         """
         if not self.api_key:
             raise Exception("DeepSeek API Key未配置")
-        
+
         # 合并参数
         temperature = kwargs.get('temperature', self.temperature)
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
-        
+        thinking_enabled = bool(kwargs.get('thinking', False))
+
         payload = {
             "model": model,
             "messages": [
@@ -147,7 +151,8 @@ class DeepSeekClient(BaseAIClient):
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stream": False
+            "stream": False,
+            "thinking": {"type": "enabled" if thinking_enabled else "disabled"}
         }
         
         try:

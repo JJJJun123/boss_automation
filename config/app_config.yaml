@@ -13,7 +13,6 @@ ai:
   supported_providers:
     - claude
     - gpt
-    - glm
     - deepseek
 
   # 默认AI服务商
@@ -39,15 +38,6 @@ ai:
         - "gpt-5.5-2026-04-23"
         - "chat-latest" # 别名，永远指向 ChatGPT 当前默认（目前 = GPT-5.5 Instant）
         - "gpt-5.4-mini" # 经济档
-    glm:
-      # 第一阶段廉价筛选。GLM-4.7-Flash 是免费 30B 模型（SOTA 同量级）
-      model_name: "glm-4.7-flash"
-      temperature: 0.3
-      max_tokens: 2000
-      available_models:
-        - "glm-5.1" # 旗舰（2026-04-07，对标 Claude Opus 4.6）
-        - "glm-4.7" # 355B 稀疏激活，开源
-        - "glm-4.7-flash" # 免费快速（默认筛选用）
     deepseek:
       # ⚠️ 2026-07-24 起 deepseek-reasoner / deepseek-chat 将弃用，已切到 V4 系列
       model_name: "deepseek-v4-pro"

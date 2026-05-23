@@ -354,10 +354,9 @@ def run_job_search_task(params, session_data):
         current_job['status'] = 'running'
         emit_progress("🚀 开始初始化爬虫...", 5)
 
-        # 1. AI 模型固定：GLM 初筛 + Claude 匹配（并显式读取当前配置模型，避免日志与调用不一致）
-        glm_screening_model = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.7-flash')
-        claude_matching_model = config_manager.get_app_config('ai.models.claude.model_name', 'claude-sonnet-4-6')
-        emit_progress(f"🤖 AI模型: GLM({glm_screening_model}) + Claude({claude_matching_model})", 8)
+        # 1. AI 模型：DeepSeek V4-Flash 跑两阶段——筛选关 thinking 省钱、匹配开 thinking 提质
+        deepseek_model = config_manager.get_app_config('ai.models.deepseek.model_name', 'deepseek-v4-flash')
+        emit_progress(f"🤖 AI模型: DeepSeek({deepseek_model}) - 筛选[thinking=off] + 匹配[thinking=on]", 8)
 
         # 2. 从前端参数获取搜索配置，如果没有则使用默认配置
         search_config = config_manager.get_search_config()
@@ -423,14 +422,14 @@ def run_job_search_task(params, session_data):
             socketio.emit('search_complete', {'status': 'requires_resume', 'message': '请先上传简历'})
             return
         
-        # 6. AI 两阶段分析（GLM 初筛 + Claude 匹配）
+        # 6. AI 两阶段分析（DeepSeek V4-Flash：筛选无 thinking + 匹配带 thinking）
         emit_progress("🤖 启动AI两阶段分析...", 60)
 
         analyzer = EnhancedJobAnalyzer(
-            extraction_provider="glm",
-            analysis_provider="claude",
-            model_name=claude_matching_model,
-            extraction_model_name=glm_screening_model,
+            extraction_provider="deepseek",
+            analysis_provider="deepseek",
+            model_name=deepseek_model,
+            extraction_model_name=deepseek_model,
         )
 
         # 获取简历文本（如有）

@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 class EnhancedJobAnalyzer:
     """增强版岗位分析器 - 两阶段混合模型分析（廉价筛选 + 主力匹配）"""
     
-    def __init__(self, extraction_provider: str = "glm", 
-                 analysis_provider: Optional[str] = None, 
+    def __init__(self, extraction_provider: str = "deepseek",
+                 analysis_provider: Optional[str] = None,
                  model_name: Optional[str] = None,
                  screening_mode: bool = True,
-                 extraction_model_name: Optional[str] = "glm-4.7-flash"):
+                 extraction_model_name: Optional[str] = "deepseek-v4-flash"):
         """
         初始化增强版分析器
         
@@ -217,9 +217,10 @@ class EnhancedJobAnalyzer:
         if self._screening_rule_fallback_active:
             return self._build_rule_screening_result(job, keyword)
 
+        # Stage 1 是简单二分类，关闭 thinking 以省 token / 降延迟（DeepSeek 客户端识别该参数；其他 client 忽略）
         if self._screening_fallback_active:
             try:
-                return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+                return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1, thinking=False)
             except Exception as e:
                 if self._is_ai_quota_error(e):
                     logger.warning(f"筛选阶段备用AI也不可用，切换规则筛选: {e}")
@@ -228,13 +229,13 @@ class EnhancedJobAnalyzer:
                 raise
 
         try:
-            return self.extraction_service.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+            return self.extraction_service.call_api_simple(prompt, max_tokens=200, temperature=0.1, thinking=False)
         except Exception as e:
             if self._is_ai_quota_error(e):
                 logger.warning(f"筛选阶段主AI不可用，尝试备用AI: {e}")
                 self._screening_fallback_active = True
                 try:
-                    return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1)
+                    return self.job_analyzer.ai_client.call_api_simple(prompt, max_tokens=200, temperature=0.1, thinking=False)
                 except Exception as fallback_e:
                     if self._is_ai_quota_error(fallback_e):
                         logger.warning(f"筛选阶段主/备AI均不可用，切换规则筛选: {fallback_e}")
@@ -256,8 +257,9 @@ class EnhancedJobAnalyzer:
             description=job.get('job_description', '')[:800],
             requirements=requirements_text[:800],
         )
+        # Stage 2 需要打分/判断，开启 thinking 让 DeepSeek 先做链式推理再输出 JSON
         try:
-            return self.job_analyzer.ai_client.call_api_simple(prompt)
+            return self.job_analyzer.ai_client.call_api_simple(prompt, thinking=True)
         except Exception as e:
             if self._is_ai_quota_error(e):
                 logger.warning(f"匹配阶段AI不可用（配额/余额），返回未分析结果: {e}")

@@ -72,9 +72,6 @@ class JobAnalyzer:
         elif provider in ["gpt", "openai"]:
             from .clients.gpt_client import GPTClient
             return GPTClient(model_name)
-        elif provider == "glm":
-            from .clients.glm_client import GLMClient
-            return GLMClient(model_name)
         else:
             raise ValueError(f"不支持的AI提供商: {provider}")
     

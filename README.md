@@ -1,6 +1,6 @@
 # Boss 直聘智能求职助手
 
-通过 Playwright 自动爬取 Boss 直聘岗位，再用多 AI 模型**两阶段评分**（GLM 类型筛选 → 主力模型简历匹配），帮你在大量搜索结果中快速判断投递优先级。
+通过 Playwright 自动爬取 Boss 直聘岗位，再用多 AI 模型**两阶段评分**（DeepSeek V4-Flash 两阶段：筛选 thinking=off + 匹配 thinking=on），帮你在大量搜索结果中快速判断投递优先级。
 
 - 平台只给岗位列表；本工具对每个岗位给出 **1–10 分匹配评分** + 匹配亮点 / 差距 / 一句话总结。
 - 跨关键词统一排序，实时进度推送（WebSocket）。
@@ -20,7 +20,6 @@ patchright install chrome
 # 3. 配置 API 密钥：创建 config/secrets.env
 #   DEEPSEEK_API_KEY=sk-xxx
 #   CLAUDE_API_KEY=sk-ant-xxx
-#   GLM_API_KEY=xxx
 #   OPENAI_API_KEY=sk-xxx
 
 # 4. 启动
@@ -33,7 +32,7 @@ python run_web.py
 
 1. 上传简历（PDF/DOCX，仅 session 内临时存储）
 2. 输入关键词、城市、数量
-3. 等待：爬取 → GLM 类型筛选 → 主力模型简历匹配评分
+3. 等待：爬取 → DeepSeek 筛选 → DeepSeek thinking 模式匹配评分
 4. 查看按分数降序排列的岗位卡片
 
 ## 测试
@@ -45,6 +44,6 @@ python tests/integration_test_crawl.py                   # 集成测试（需手
 
 ## 技术栈
 
-Python 3.12 · Flask + SocketIO · **patchright**（反检测 Playwright）· 多 AI 提供商（DeepSeek / Claude / GLM / GPT）
+Python 3.12 · Flask + SocketIO · **patchright**（反检测 Playwright）· 多 AI 提供商（DeepSeek / Claude / GPT）
 
 > 环境踩坑（macOS 26 需 playwright≥1.60、依赖清单等）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「环境注意事项」。

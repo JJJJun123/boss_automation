@@ -49,7 +49,6 @@ playwright install chromium
 # config/secrets.env 模板：
 # DEEPSEEK_API_KEY=sk-xxx
 # CLAUDE_API_KEY=sk-ant-xxx
-# GLM_API_KEY=xxx
 # OPENAI_API_KEY=sk-xxx
 
 # 4. 启动服务
@@ -86,7 +85,7 @@ python run_web.py
                           ↓
               EnhancedJobAnalyzer (analyzer/enhanced_job_analyzer.py)
                    ↓                        ↓
-         第一阶段：GLM-4.5 快速类型筛选    第二阶段：主力模型简历匹配评分
+         第一阶段：DeepSeek 快速类型筛选     第二阶段：DeepSeek + thinking 简历匹配
          (extraction_provider)             (analysis_provider, 1-10分)
 ```
 
@@ -97,7 +96,7 @@ python run_web.py
 - **`crawler/unified_crawler_interface.py`**：统一爬虫接口，`unified_search_jobs()` 是对外主函数，内部调用 `real_playwright_spider.py`。
 
 - **`analyzer/enhanced_job_analyzer.py`**：两阶段分析器：
-  1. **类型筛选**（GLM-4.5，廉价快速）：过滤明显不符岗位
+  1. **类型筛选**（DeepSeek V4-Flash，thinking=off，廉价快速）：过滤明显不符岗位
   2. **简历匹配**（主力模型）：按用户简历评分（1-10分）+ 匹配亮点 + 不足
 
 - **`analyzer/ai_client_factory.py`**：工厂模式，根据 `provider` 参数创建对应 AI 客户端。支持官方 SDK 和 HTTP 两种方式。
@@ -130,4 +129,4 @@ python tests/integration_test_crawl.py         # 集成测试（需手动登录�
 2. 在 `AIClientFactory.create_pure_client()` 添加 provider 分支
 3. 在 `config/app_config.yaml` 的 `ai.providers` 中注册
 
-支持的提供商：`deepseek`、`claude`、`glm`、`gpt`
+支持的提供商：`deepseek`、`claude`、`gpt`
