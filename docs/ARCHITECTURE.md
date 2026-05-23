@@ -10,9 +10,7 @@
 
 ```
 浏览器 ──WebSocket──> Flask + SocketIO (backend/app.py)
-                          │  /api/jobs/search 触发后台任务，emit 实时进度
-                          ▼
-                  JobSearchService (backend/services/job_service.py)  协调爬虫与分析器
+                          │  /api/jobs/search 后台任务直接编排爬取+分析，emit 实时进度
                           ▼
         UnifiedCrawlerInterface (crawler/unified_crawler_interface.py)
                           ▼
@@ -32,7 +30,7 @@
 
 | 模块        | 职责                                            | 关键文件                                                                                                                                                               |
 | ----------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `backend/`  | Flask 入口、REST + SocketIO、搜索编排、简历会话 | `app.py`（路由/`/api/jobs/search`）、`services/job_service.py`                                                                                                         |
+| `backend/`  | Flask 入口、REST + SocketIO、搜索编排、简历会话 | `app.py`（路由 + `/api/jobs/search` 后台任务内联编排爬取与两阶段分析）                                                                                                 |
 | `crawler/`  | Playwright 爬取、登录/会话、HTML 提取、重试     | `real_playwright_spider.py`（核心）、`unified_crawler_interface.py`（对外 `unified_search_jobs()`）、`enhanced_extractor.py`、`session_manager.py`、`retry_handler.py` |
 | `analyzer/` | 两阶段 AI 分析、多提供商客户端、prompt 模板     | `enhanced_job_analyzer.py`（`analyze_jobs()`）、`ai_client_factory.py`（工厂）、`clients/*`、`prompts/*`                                                               |
 | `config/`   | 三层配置统一加载                                | `config_manager.py` + `secrets.env` / `app_config.yaml` / `user_preferences.yaml`                                                                                      |
