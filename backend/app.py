@@ -47,6 +47,11 @@ config_manager = None
 current_spider = None
 current_job = None  # 存储当前分析任务状态
 
+# 简历内存存储：Flask 默认 cookie session 上限 ~4KB，装不下完整简历文本（典型 6KB+），
+# 超限时浏览器静默丢 Set-Cookie → 下次 session 为空 → 误报"未上传简历"。
+# 单用户本地工具，挪到进程内存全局，进程退出即清（符合 CLAUDE.md 的"session 内临时存储"）。
+_current_resume = None  # type: ignore[var-annotated]
+
 
 def init_config():
     """初始化配置管理器"""
@@ -211,16 +216,11 @@ def upload_resume():
             'upload_time': datetime.now().isoformat()
         }
         
-        # 存储到session
-        session['resume_data'] = resume_data
-        session['resume_summary'] = {
-            'length': len(resume_text),
-            'has_text': True,
-            'analyzed': False,  # 标记为未进行AI分析
-            'saved_to_file': False
-        }
-        
-        logger.info(f"简历上传完成: {resume_data['name']}")
+        # 存储到进程内存（见模块顶部 _current_resume 说明：cookie session 装不下完整文本）
+        global _current_resume
+        _current_resume = resume_data
+
+        logger.info(f"简历上传完成: {resume_data['name']}（{len(resume_text)} 字符）")
         
         return jsonify({
             'success': True,
@@ -238,12 +238,11 @@ def upload_resume():
 @app.route('/api/delete_resume', methods=['POST'])
 def delete_resume():
     try:
-        # 清除session中的简历数据
-        session.pop('resume_data', None)
-        session.pop('ai_analysis', None)
+        # 清除内存中的简历数据
+        global _current_resume
+        _current_resume = None
+        session.pop('ai_analysis', None)  # 保留：旧字段，若残留则一并清
 
-        # 简化版本：只清理session，无持久化文件
-        
         return jsonify({'success': True})
         
     except Exception as e:
@@ -254,9 +253,9 @@ def delete_resume():
 def get_resume_info():
     """获取当前保存的简历信息（简化版本）"""
     try:
-        # 简化版本：从session获取简历信息
-        if 'resume_data' in session:
-            resume_data = session['resume_data']
+        # 从进程内存读取（见模块顶部 _current_resume 说明）
+        if _current_resume is not None:
+            resume_data = _current_resume
             return jsonify({
                 'success': True,
                 'has_resume': True,
@@ -289,16 +288,14 @@ def update_job_intentions():
         data = request.json
         intentions = data.get('intentions', [])
         
-        # 简化版本：直接更新session中的求职意向
-        if 'resume_data' not in session:
+        # 直接更新内存中的简历对象（见模块顶部 _current_resume 说明）
+        if _current_resume is None:
             return jsonify({
                 'success': False,
                 'error': '请先上传简历'
             })
-        
-        # 更新session中的求职意向
-        session['resume_data']['job_intentions'] = intentions
-        session.modified = True  # 标记session已修改
+
+        _current_resume['job_intentions'] = intentions
         
         return jsonify({
             'success': True,
@@ -327,10 +324,11 @@ def start_job_search():
         # 启动后台任务
         current_job = {'status': 'starting', 'start_time': datetime.now()}
         
-        # 传递session数据给后台任务（避免在线程中使用session）
+        # 传递简历数据给后台任务（避免在线程中使用 Flask session）
+        # 简历存进程内存全局，见模块顶部 _current_resume 说明
         session_data = {
-            'has_resume_data': 'resume_data' in session,
-            'resume_data': session.get('resume_data', None)
+            'has_resume_data': _current_resume is not None,
+            'resume_data': _current_resume
         }
         
         # 在新线程中执行搜索任务
