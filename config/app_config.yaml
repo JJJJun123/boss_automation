@@ -12,7 +12,6 @@ ai:
   # 支持的AI服务商列表
   supported_providers:
     - claude
-    - gemini
     - gpt
     - glm
     - deepseek
@@ -20,43 +19,43 @@ ai:
   # 默认AI服务商
   default_provider: "claude"
 
-  # 各AI模型的默认配置
+  # 各 AI 模型的默认配置（截至 2026-05 的最新版本）
   models:
     claude:
-      model_name: "claude-sonnet-4-20250514"
+      # 简历×JD 匹配主力。Sonnet 4.6 性价比平衡（$3/$15 每百万 token）
+      model_name: "claude-sonnet-4-6"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "claude-sonnet-4-20250514"
-        - "claude-opus-4-1-20250805"
-    gemini:
-      model_name: "gemini-3-pro-preview"
-      temperature: 0.3
-      max_tokens: 1000
-      available_models:
-        - "gemini-3-pro-preview"
-        - "gemini-3-flash-preview"
+        - "claude-opus-4-7" # 旗舰，最强（$5/$25），复杂匹配场景
+        - "claude-sonnet-4-6" # 平衡（默认）
+        - "claude-haiku-4-5-20251001" # 最快最便宜（$1/$5）
     gpt:
-      model_name: "gpt-5.1"
+      # GPT-5.5（2026-04-23 发布）；可备用 chat-latest 别名指向最新默认模型
+      model_name: "gpt-5.5-2026-04-23"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "gpt-5.1"
-        - "gpt-5.1-chat-latest"
+        - "gpt-5.5-2026-04-23"
+        - "chat-latest" # 别名，永远指向 ChatGPT 当前默认（目前 = GPT-5.5 Instant）
+        - "gpt-5.4-mini" # 经济档
     glm:
-      model_name: "glm-4.6v"
+      # 第一阶段廉价筛选。GLM-4.7-Flash 是免费 30B 模型（SOTA 同量级）
+      model_name: "glm-4.7-flash"
       temperature: 0.3
-      max_tokens: 1000
+      max_tokens: 2000
       available_models:
-        - "glm-4.7"
-        - "glm-4.6v"
+        - "glm-5.1" # 旗舰（2026-04-07，对标 Claude Opus 4.6）
+        - "glm-4.7" # 355B 稀疏激活，开源
+        - "glm-4.7-flash" # 免费快速（默认筛选用）
     deepseek:
-      model_name: "deepseek-reasoner"
+      # ⚠️ 2026-07-24 起 deepseek-reasoner / deepseek-chat 将弃用，已切到 V4 系列
+      model_name: "deepseek-v4-pro"
       temperature: 0.3
       max_tokens: 1000
       available_models:
-        - "deepseek-reasoner"
-        - "deepseek-chat"
+        - "deepseek-v4-pro" # 旗舰
+        - "deepseek-v4-flash" # 经济档
 
 # 爬虫配置
 crawler:

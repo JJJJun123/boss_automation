@@ -49,7 +49,6 @@ playwright install chromium
 # config/secrets.env 模板：
 # DEEPSEEK_API_KEY=sk-xxx
 # CLAUDE_API_KEY=sk-ant-xxx
-# GEMINI_API_KEY=AIzaSy-xxx
 # GLM_API_KEY=xxx
 # OPENAI_API_KEY=sk-xxx
 
@@ -131,4 +130,4 @@ python tests/integration_test_crawl.py         # 集成测试（需手动登录�
 2. 在 `AIClientFactory.create_pure_client()` 添加 provider 分支
 3. 在 `config/app_config.yaml` 的 `ai.providers` 中注册
 
-支持的提供商：`deepseek`、`claude`、`gemini`、`glm`、`gpt`
+支持的提供商：`deepseek`、`claude`、`glm`、`gpt`

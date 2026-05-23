@@ -5,12 +5,10 @@ AI客户端模块
 
 from .deepseek_client import DeepSeekClient
 from .claude_client import ClaudeClient
-from .gemini_client import GeminiClient
 from .gpt_client import GPTClient
 
 __all__ = [
     'DeepSeekClient',
-    'ClaudeClient', 
-    'GeminiClient',
+    'ClaudeClient',
     'GPTClient'
 ]

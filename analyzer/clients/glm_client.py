@@ -29,7 +29,7 @@ class GLMClient(BaseAIClient):
         初始化GLM客户端
         
         Args:
-            model_name: 模型名称，默认使用glm-4.5
+            model_name: 模型名称，默认使用glm-4.7-flash
         """
         super().__init__(model_name)
         
@@ -38,9 +38,9 @@ class GLMClient(BaseAIClient):
             try:
                 from config.config_manager import ConfigManager
                 config_manager = ConfigManager()
-                self.model_name = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.5')
+                self.model_name = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.7-flash')
             except Exception:
-                self.model_name = 'glm-4.5'
+                self.model_name = 'glm-4.7-flash'
         
         # API配置
         self.api_key = os.getenv('GLM_API_KEY')

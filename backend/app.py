@@ -355,8 +355,8 @@ def run_job_search_task(params, session_data):
         emit_progress("🚀 开始初始化爬虫...", 5)
 
         # 1. AI 模型固定：GLM 初筛 + Claude 匹配（并显式读取当前配置模型，避免日志与调用不一致）
-        glm_screening_model = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.6v')
-        claude_matching_model = config_manager.get_app_config('ai.models.claude.model_name', 'claude-sonnet-4-20250514')
+        glm_screening_model = config_manager.get_app_config('ai.models.glm.model_name', 'glm-4.7-flash')
+        claude_matching_model = config_manager.get_app_config('ai.models.claude.model_name', 'claude-sonnet-4-6')
         emit_progress(f"🤖 AI模型: GLM({glm_screening_model}) + Claude({claude_matching_model})", 8)
 
         # 2. 从前端参数获取搜索配置，如果没有则使用默认配置

@@ -20,8 +20,6 @@ class JobAnalyzer:
                 self.ai_provider = 'deepseek'
             elif 'claude' in model_name.lower():
                 self.ai_provider = 'claude'
-            elif 'gemini' in model_name.lower():
-                self.ai_provider = 'gemini'
         
         # 直接创建AI客户端，跳过AIService包装层
         self.ai_client = self._create_ai_client(self.ai_provider, model_name)
@@ -71,9 +69,6 @@ class JobAnalyzer:
         elif provider == "claude":
             from .clients.claude_client import ClaudeClient
             return ClaudeClient(model_name)
-        elif provider == "gemini":
-            from .clients.gemini_client import GeminiClient
-            return GeminiClient(model_name)
         elif provider in ["gpt", "openai"]:
             from .clients.gpt_client import GPTClient
             return GPTClient(model_name)

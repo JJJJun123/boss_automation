@@ -26,7 +26,7 @@ class GPTClient(BaseAIClient):
         初始化GPT客户端
         
         Args:
-            model_name: 模型名称，默认使用gpt-4o
+            model_name: 模型名称，默认使用gpt-5.5-2026-04-23
         """
         super().__init__(model_name)
         
@@ -35,9 +35,9 @@ class GPTClient(BaseAIClient):
             try:
                 from config.config_manager import ConfigManager
                 config_manager = ConfigManager()
-                self.model_name = config_manager.get_app_config('ai.models.gpt.model_name', 'gpt-4o')
+                self.model_name = config_manager.get_app_config('ai.models.gpt.model_name', 'gpt-5.5-2026-04-23')
             except Exception:
-                self.model_name = 'gpt-4o'
+                self.model_name = 'gpt-5.5-2026-04-23'
         
         # API配置
         self.api_key = os.getenv('OPENAI_API_KEY')

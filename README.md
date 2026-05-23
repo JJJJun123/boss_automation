@@ -20,7 +20,6 @@ patchright install chrome
 # 3. 配置 API 密钥：创建 config/secrets.env
 #   DEEPSEEK_API_KEY=sk-xxx
 #   CLAUDE_API_KEY=sk-ant-xxx
-#   GEMINI_API_KEY=AIzaSy-xxx
 #   GLM_API_KEY=xxx
 #   OPENAI_API_KEY=sk-xxx
 
@@ -46,6 +45,6 @@ python tests/integration_test_crawl.py                   # 集成测试（需手
 
 ## 技术栈
 
-Python 3.12 · Flask + SocketIO · **patchright**（反检测 Playwright）· 多 AI 提供商（DeepSeek / Claude / Gemini / GLM / GPT）
+Python 3.12 · Flask + SocketIO · **patchright**（反检测 Playwright）· 多 AI 提供商（DeepSeek / Claude / GLM / GPT）
 
 > 环境踩坑（macOS 26 需 playwright≥1.60、依赖清单等）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的「环境注意事项」。

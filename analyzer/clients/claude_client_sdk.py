@@ -33,7 +33,7 @@ class ClaudeClientSDK(BaseAIClient):
         初始化Claude客户端
         
         Args:
-            model_name: 模型名称，默认使用claude-3-5-sonnet-20241022
+            model_name: 模型名称，默认使用claude-sonnet-4-6
         """
         super().__init__(model_name)
         
@@ -45,9 +45,9 @@ class ClaudeClientSDK(BaseAIClient):
             try:
                 from config.config_manager import ConfigManager
                 config_manager = ConfigManager()
-                self.model_name = config_manager.get_app_config('ai.models.claude.model_name', 'claude-3-5-sonnet-20241022')
+                self.model_name = config_manager.get_app_config('ai.models.claude.model_name', 'claude-sonnet-4-6')
             except Exception:
-                self.model_name = 'claude-3-5-sonnet-20241022'
+                self.model_name = 'claude-sonnet-4-6'
         
         # 初始化Anthropic客户端
         api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')

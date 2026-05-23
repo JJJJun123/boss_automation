@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-增强版岗位分析器
-实现三阶段分析流程：
-1. 信息提取（GLM-4.5）
-2. 市场认知分析（DeepSeek等）
-3. 个人匹配分析（DeepSeek等）
+增强版岗位分析器：两阶段同步流水线
+1. 类型筛选（GLM-4.7-Flash 等廉价模型）：过滤明显不相关的岗位
+2. 简历匹配（Claude/GPT 等主力模型）：1–10 分评分 + 亮点/差距/总结
 """
 
 import os
@@ -23,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class EnhancedJobAnalyzer:
-    """增强版岗位分析器 - 支持三阶段混合模型分析"""
+    """增强版岗位分析器 - 两阶段混合模型分析（廉价筛选 + 主力匹配）"""
     
     def __init__(self, extraction_provider: str = "glm", 
                  analysis_provider: Optional[str] = None, 
                  model_name: Optional[str] = None,
                  screening_mode: bool = True,
-                 extraction_model_name: Optional[str] = "glm-4.5"):
+                 extraction_model_name: Optional[str] = "glm-4.7-flash"):
         """
         初始化增强版分析器
         
@@ -59,7 +57,7 @@ class EnhancedJobAnalyzer:
         logger.debug(f"🧠 分析引擎: {self.job_analyzer.ai_provider.upper()}")
 
     def _is_ai_quota_error(self, error: Exception) -> bool:
-        """判断是否为各家AI配额/余额不足错误（GLM/Gemini等）"""
+        """判断是否为各家 AI 配额/余额不足错误（GLM/Claude/GPT/DeepSeek 等）"""
         message = str(error).lower()
         patterns = [
             "429",

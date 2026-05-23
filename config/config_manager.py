@@ -80,10 +80,8 @@ class ConfigManager:
             self.secrets = {
                 'DEEPSEEK_API_KEY': os.getenv('DEEPSEEK_API_KEY'),
                 'CLAUDE_API_KEY': os.getenv('CLAUDE_API_KEY'),
-                'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY'),
                 'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
                 'GLM_API_KEY': os.getenv('GLM_API_KEY'),
-                'BAIDU_API_KEY': os.getenv('BAIDU_API_KEY'),
             }
             
         except FileNotFoundError:

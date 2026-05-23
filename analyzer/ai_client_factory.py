@@ -66,16 +66,6 @@ class AIClientFactory:
             from .clients.claude_client import ClaudeClient
             return ClaudeClient(model_name)
             
-        elif provider == "gemini":
-            if use_sdk:
-                try:
-                    from .clients.gemini_client_sdk import GeminiClientSDK
-                    return GeminiClientSDK(model_name)
-                except ImportError:
-                    logger.warning("Google Generative AI SDK不可用，回退到HTTP客户端")
-            from .clients.gemini_client import GeminiClient
-            return GeminiClient(model_name)
-            
         elif provider in ["gpt", "openai"]:
             if use_sdk:
                 try:
@@ -93,33 +83,6 @@ class AIClientFactory:
         else:
             raise ValueError(f"不支持的AI提供商: {provider}")
     
-    @staticmethod
-    def get_available_models():
-        """获取所有可用的AI模型配置"""
-        return {
-            'claude': {
-                'models': ['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
-                'display_name': 'Claude',
-                'default_model': 'claude-3-5-sonnet-20241022'
-            },
-            'gpt': {
-                'models': ['gpt-4o', 'gpt-4o-mini'],
-                'display_name': 'GPT',
-                'default_model': 'gpt-4o'
-            },
-            'gemini': {
-                'models': ['gemini-pro', 'gemini-pro-vision'],
-                'display_name': 'Gemini',
-                'default_model': 'gemini-pro'
-            },
-            'glm': {
-                'models': ['glm-4.5', 'glm-4.5-air', 'glm-4'],
-                'display_name': 'GLM',
-                'default_model': 'glm-4.5'
-            }
-        }
-
-
 # 兼容性工厂方法，支持旧版本代码
 def create_ai_client(provider=None, model_name=None):
     """

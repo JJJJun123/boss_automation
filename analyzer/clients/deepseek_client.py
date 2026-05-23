@@ -29,7 +29,7 @@ class DeepSeekClient(BaseAIClient):
         初始化DeepSeek客户端
         
         Args:
-            model_name: 模型名称，默认使用deepseek-chat
+            model_name: 模型名称，默认使用deepseek-v4-pro
         """
         super().__init__(model_name)
         
@@ -38,9 +38,9 @@ class DeepSeekClient(BaseAIClient):
             try:
                 from config.config_manager import ConfigManager
                 config_manager = ConfigManager()
-                self.model_name = config_manager.get_app_config('ai.models.deepseek.model_name', 'deepseek-chat')
+                self.model_name = config_manager.get_app_config('ai.models.deepseek.model_name', 'deepseek-v4-pro')
             except Exception:
-                self.model_name = 'deepseek-chat'
+                self.model_name = 'deepseek-v4-pro'
         
         # API配置
         self.api_key = os.getenv('DEEPSEEK_API_KEY')
