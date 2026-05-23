@@ -592,11 +592,16 @@ if __name__ == '__main__':
         logger.error("配置初始化失败，退出程序")
         sys.exit(1)
     
-    # 启动应用
-    logger.info("启动Boss直聘自动化Web应用...")
-    socketio.run(app, 
-                host='127.0.0.1', 
-                port=3001, 
-                debug=True,
+    # 启动应用：从 app_config.yaml 的 web.* 读取（无值时回落到默认）
+    # 端口默认 3001，避开 macOS 26 上被 AirPlay 接收器占用的 5000
+    web_cfg = config_manager.get_app_config('web', {}) if config_manager else {}
+    host = web_cfg.get('host', '127.0.0.1')
+    port = int(web_cfg.get('port', 3001))
+    debug = bool(web_cfg.get('debug', True))
+    logger.info(f"启动Boss直聘自动化Web应用 → http://{host}:{port}")
+    socketio.run(app,
+                host=host,
+                port=port,
+                debug=debug,
                 use_reloader=False,
                 allow_unsafe_werkzeug=True)  # 避免重载时的问题
