@@ -37,6 +37,8 @@ python run_web.py
 
 ## 测试
 
+> ⚠️ `tests/` 已加入 `.gitignore`，不上传 GitHub。本地保留供 TDD 开发，新机器 clone 后没有该目录。
+
 ```bash
 pytest tests/ --ignore=tests/integration_test_crawl.py   # 单元测试
 python tests/integration_test_crawl.py                   # 集成测试（需手动扫码）

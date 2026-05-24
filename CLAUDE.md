@@ -11,15 +11,14 @@ Boss直聘智能求职助手：Python Flask 后端 + Jinja2 前端，通过 Play
 ```
 boss_automation_dev/
 ├── backend/                    # Flask 后端
-│   ├── app.py                  # 入口：Flask + SocketIO WebSocket
-│   ├── services/job_service.py # 业务逻辑：协调爬虫和分析器
+│   ├── app.py                  # 入口：Flask + SocketIO；/api/jobs/search 内联编排爬取+分析
 │   ├── templates/index.html    # Jinja2 前端主页
 │   └── static/                 # CSS / JS 静态资源
 ├── crawler/                    # 爬虫模块
 │   ├── unified_crawler_interface.py  # 对外主接口 unified_search_jobs()
-│   ├── real_playwright_spider.py     # Playwright 浏览器自动化
+│   ├── real_playwright_spider.py     # patchright 浏览器自动化（核心）
 │   ├── enhanced_extractor.py         # HTML 信息提取
-│   └── session_manager.py            # 登录会话持久化
+│   └── session_manager.py            # 登录会话辅助（持久化主要由浏览器 profile 承担）
 ├── analyzer/                   # AI 分析模块
 │   ├── enhanced_job_analyzer.py      # 核心：两阶段分析引擎
 │   ├── ai_client_factory.py          # 工厂：创建各 AI 客户端
@@ -31,7 +30,7 @@ boss_automation_dev/
 │   ├── app_config.yaml               # 应用级配置
 │   ├── user_preferences.yaml         # 用户搜索偏好
 │   └── secrets.env                   # API 密钥（不提交 Git）
-├── tests/                      # 测试套件
+├── tests/                      # 测试套件（本地保留，已 .gitignore 不上传 GitHub）
 ├── run_web.py                  # 启动脚本（含依赖检查）
 └── requirements.txt
 ```
@@ -42,8 +41,8 @@ boss_automation_dev/
 # 1. 安装 Python 依赖
 pip install -r requirements.txt
 
-# 2. 安装 Playwright 浏览器（首次必须）
-playwright install chromium
+# 2. 安装反检测 Chrome（首次必须，普通 playwright 会被 Boss 反爬拦截）
+patchright install chrome
 
 # 3. 创建 secrets.env（必须）
 # config/secrets.env 模板：
@@ -57,7 +56,7 @@ python run_web.py
 
 **访问地址**：http://localhost:3001（macOS 26 上 5000 被 AirPlay 占用，配置在 `config/app_config.yaml` 的 `web.port`）
 
-> 首次使用需在浏览器中手动扫码登录 Boss 直聘，会话保存于 `crawler/sessions/`。
+> 首次使用需在浏览器中手动扫码登录 Boss 直聘，登录态持久化到 Chrome profile：`~/Library/Application Support/boss_automation/browser_profile/boss_zhipin/`。下次启动免登。
 
 ## 配置管理
 
@@ -76,18 +75,18 @@ python run_web.py
 ```
 请求链路：
 浏览器 <--WebSocket--> Flask/SocketIO (backend/app.py)
-                          ↓
-                  JobSearchService (backend/services/job_service.py)
-                          ↓
+                          ↓ /api/jobs/search 后台任务内联编排
          UnifiedCrawlerInterface (crawler/unified_crawler_interface.py)
                           ↓
-              real_playwright_spider.py  (Playwright 爬虫)
+              real_playwright_spider.py  (patchright 爬虫)
                           ↓
               EnhancedJobAnalyzer (analyzer/enhanced_job_analyzer.py)
                    ↓                        ↓
-         第一阶段：DeepSeek 快速类型筛选     第二阶段：DeepSeek + thinking 简历匹配
-         (extraction_provider)             (analysis_provider, 1-10分)
+         第一阶段：DeepSeek V4-Flash 类型筛选   第二阶段：同模型 + thinking 简历匹配
+         (thinking=off, max_tokens=200)      (thinking=on, max_tokens=6000)
 ```
+
+> 详细技术决策见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 的 ADR 章节。
 
 ### 关键模块说明
 
@@ -105,19 +104,21 @@ python run_web.py
 
 ## 测试
 
+> ⚠️ **`tests/` 已加入 `.gitignore`，不会被 push 到 GitHub**。本地保留可跑（用于 TDD 开发），新机器 clone 后需自行重建或从其它源同步。
+
 ```bash
-pytest                                          # 运行所有测试
-pytest tests/test_prompts.py                   # 提示词模板验证
-pytest tests/test_enhanced_job_analyzer.py     # 分析器单元测试
-python tests/integration_test_crawl.py         # 集成测试（需手动登录）
+pytest tests/ --ignore=tests/integration_test_crawl.py    # 单元测试
+python tests/integration_test_crawl.py                     # 集成测试（需手动扫码）
 ```
 
-| 测试文件                        | 覆盖内容                           |
-| ------------------------------- | ---------------------------------- |
-| `test_prompts.py`               | prompt 占位符完整性、JSON 格式验证 |
-| `test_enhanced_job_analyzer.py` | 筛选、排序、匹配输出格式           |
-| `test_app_no_market.py`         | 代码静态检查（已废弃功能未残留）   |
-| `integration_test_crawl.py`     | 爬虫全流程（需扫码，手动运行）     |
+| 测试文件                        | 覆盖内容                                                         |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `test_prompts.py`               | prompt 占位符完整性、JSON 格式验证                               |
+| `test_enhanced_job_analyzer.py` | 筛选、排序、匹配输出格式、thinking 模式 max_tokens、解析失败日志 |
+| `test_session_expiry.py`        | 反爬重定向 settle 轮询、`_url_matches_search_target` URL 匹配    |
+| `test_detail_extraction.py`     | 详情面板 JD/公司/薪资提取、`_extract_panel_salary` 格式校验      |
+| `test_app_no_market.py`         | 代码静态检查（已废弃功能未残留）                                 |
+| `integration_test_crawl.py`     | 爬虫全流程（需扫码，手动运行）                                   |
 
 > 新功能必须先补充测试再实现（TDD）。
 
