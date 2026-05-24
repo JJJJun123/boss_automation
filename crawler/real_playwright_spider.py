@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 import urllib.parse
 import time
 import os
@@ -701,8 +702,16 @@ class RealPlaywrightBossSpider:
         settled = await self._wait_until_page_settled()
 
         if settled == 'results':
-            # 页面其实已稳定到结果页（首次提取过早），无需登录，让调用方重抓
-            logger.info("✅ 页面已稳定到搜索结果页（首次提取过早），将重新抓取")
+            # 页面稳定到结果页，但需校验 query 与目标 search_url 匹配；否则可能是
+            # 上次搜索的旧关键词残留（Boss 反爬常把 fromUrl 落到错关键词页），
+            # 直接重抓会拿到错的结果。
+            if self._url_matches_search_target(self.page.url or '', search_url):
+                logger.info("✅ 已稳定到目标搜索结果页（首次提取过早），将重新抓取")
+                return True
+            logger.warning(
+                f"⚠️ 稳定到结果页但 query 不匹配目标，重新导航: {self.page.url} → {search_url}"
+            )
+            await self._navigate_to_search_page(search_url)
             return True
 
         if settled != 'login':
@@ -716,13 +725,54 @@ class RealPlaywrightBossSpider:
 
         # 登录成功后，Boss 通常已按 fromUrl 把页面跳回搜索结果页（/web/geek/jobs，
         # URL 可能残留 _security_check 参数）。此时若再 goto 一个干净 search_url 会
-        # 再次触发反爬安全校验、把页面弹回登录页（实测非确定性）。故仅当当前不在
-        # 结果页时才重新导航。
-        if '/web/geek/jobs' in (self.page.url or ''):
-            logger.info(f"✅ 重新登录成功，已在搜索结果页，无需重新导航: {self.page.url}")
+        # 再次触发反爬安全校验、把页面弹回登录页（实测非确定性）。
+        # 但仅判 path 不够：实测见过 Boss 落到 /web/geek/jobs 但 query=<别的关键词>，
+        # 那不是用户想要的结果。故还需校验 query 参数匹配目标 search_url。
+        if self._url_matches_search_target(self.page.url or '', search_url):
+            logger.info(f"✅ 重新登录成功，已在目标搜索页，无需重新导航: {self.page.url}")
         else:
-            logger.info("✅ 重新登录成功，重新导航到搜索页")
+            logger.info(f"✅ 重新登录成功，落点非目标搜索页，重新导航: {self.page.url} → {search_url}")
             await self._navigate_to_search_page(search_url)
+        return True
+
+    @staticmethod
+    def _url_matches_search_target(current_url: str, search_url: str) -> bool:
+        """判断 current_url 是否已是 search_url 指向的目标搜索结果页
+
+        相等标准（按 Codex review 反馈精确化，避免 substring 误判）：
+          - host 一致（避免跨域代理/钓鱼页通过）
+          - path（去尾斜杠）严格等于 /web/geek/jobs（而非 substring，
+            否则 /web/geek/jobs-old / /foo/web/geek/jobs 会被误判）
+          - query 的 `query` 与 `city` 参数都匹配
+        其它参数（_security_check 等反爬残留）忽略。
+
+        参数：
+            current_url - 当前页面 URL（可能含 _security_check 残留）
+            search_url  - 目标搜索 URL（构造时只含 query 与 city）
+        返回：bool - 已在目标页则 True
+        """
+        if not current_url or not search_url:
+            return False
+        try:
+            cur = urllib.parse.urlparse(current_url)
+            tgt = urllib.parse.urlparse(search_url)
+        except Exception:
+            return False
+        # host 必须一致（双方为空时也视为不匹配，避免相对 URL 漏判）
+        if (cur.netloc or '').lower() != (tgt.netloc or '').lower():
+            return False
+        if not cur.netloc:
+            return False
+        # path 严格相等（去尾斜杠归一化）
+        cur_path = (cur.path or '').rstrip('/')
+        tgt_path = (tgt.path or '').rstrip('/')
+        if cur_path != '/web/geek/jobs' or tgt_path != '/web/geek/jobs':
+            return False
+        cur_qs = urllib.parse.parse_qs(cur.query)
+        tgt_qs = urllib.parse.parse_qs(tgt.query)
+        for key in ('query', 'city'):
+            if tgt_qs.get(key) and cur_qs.get(key) != tgt_qs.get(key):
+                return False
         return True
 
     async def _ensure_logged_in(self) -> bool:
@@ -845,6 +895,31 @@ class RealPlaywrightBossSpider:
             return ""
         return boss_attr.split('·')[0].strip()
 
+    # 薪资格式校验：必须含 数字 + (K|k|万|薪|元) 之一。
+    # 用于过滤面板里"薪资范围说明 / tip / wrapper"类非真实薪资文本，
+    # 否则会覆盖列表卡片真实值（Codex review 指出 [class*="salary"] 太宽）。
+    _SALARY_VALID_RE = re.compile(r'\d.*[Kk万薪元]', re.IGNORECASE)
+
+    async def _extract_panel_salary(self) -> str:
+        """从详情面板按候选选择器抓取薪资文本并做格式校验
+
+        Codex review 反馈：
+          - 原 `[class*="salary"]` 选择器太宽，可能命中 tip/wrapper/说明节点
+          - 命中后即覆盖列表卡片真实薪资，比"保留兜底"更坏
+        改进：只保留两个具体选择器，外加正则校验"含数字+(K|万|薪|元)"
+        才视为真实薪资；否则视同未命中，返回空串让调用方保留列表卡片原值。
+
+        返回：str - 通过校验的薪资文本（如 "30-50K·14薪"）；否则空串
+        """
+        for selector in (
+            '.job-detail-box .salary',
+            '.job-detail-box .job-banner .salary',
+        ):
+            text = await self._panel_text(selector)
+            if text and self._SALARY_VALID_RE.search(text):
+                return text
+        return ""
+
     async def _panel_text(self, selector: str) -> str:
         """读取详情面板某元素的可见文本
 
@@ -881,9 +956,10 @@ class RealPlaywrightBossSpider:
             boss_attr = await self._panel_text('.job-detail-box .boss-info-attr')
             company = self._company_from_boss_attr(boss_attr)
             address = await self._panel_text('.job-detail-box .job-address-desc')
+            salary = await self._extract_panel_salary()
 
             jd_found = bool(jd) and '未找到' not in jd
-            logger.info(f"📄 详情提取 job_id={job_id} jd_found={jd_found} JD长度={len(jd)} 公司={company or '?'}")
+            logger.info(f"📄 详情提取 job_id={job_id} jd_found={jd_found} JD长度={len(jd)} 公司={company or '?'} 薪资={salary or '?'}")
 
             result = {
                 # Boss 面板的职位描述与任职要求合并在同一段，统一作为 JD 文本供 AI 评分
@@ -896,6 +972,11 @@ class RealPlaywrightBossSpider:
                 result['company_details'] = boss_attr
             if address:
                 result['work_location'] = address
+            if salary:
+                # 列表卡片在反爬/未登录态常拿不到薪资被兜底为 '薪资面议'；
+                # 面板抓到真实薪资时覆盖（{**job, **details} 合并行为）。
+                # 仅当面板有非空值才写字段，否则保留列表卡片原值。
+                result['salary'] = salary
             return result
 
         except Exception as e:
