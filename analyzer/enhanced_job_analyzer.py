@@ -257,9 +257,12 @@ class EnhancedJobAnalyzer:
             description=job.get('job_description', '')[:800],
             requirements=requirements_text[:800],
         )
-        # Stage 2 需要打分/判断，开启 thinking 让 DeepSeek 先做链式推理再输出 JSON
+        # Stage 2 需要打分/判断，开启 thinking 让 DeepSeek 先做链式推理再输出 JSON。
+        # max_tokens=6000：thinking 模式 reasoning + content 共占 max_tokens；客户端默认
+        # 1000 会被 reasoning 吃光导致 JSON content 截断 → _parse_match_result 兜底失败、
+        # 全部 jobs 显示 score=0/解析失败（用户实测）。6000 给 ~4000 reasoning + 2000 输出 JSON。
         try:
-            return self.job_analyzer.ai_client.call_api_simple(prompt, thinking=True)
+            return self.job_analyzer.ai_client.call_api_simple(prompt, thinking=True, max_tokens=6000)
         except Exception as e:
             if self._is_ai_quota_error(e):
                 logger.warning(f"匹配阶段AI不可用（配额/余额），返回未分析结果: {e}")
@@ -267,7 +270,12 @@ class EnhancedJobAnalyzer:
             raise
 
     def _parse_match_result(self, response_text: str) -> Dict[str, Any]:
-        """解析主力模型返回的匹配结果 JSON。"""
+        """解析主力模型返回的匹配结果 JSON
+
+        解析路径：① ```json ...``` 代码块 → ② 裸 JSON 对象
+        两者都失败时，记录 raw response 前缀到日志便于诊断（典型场景：thinking
+        模式 token 截断、模型直接吐 reasoning 文本不给 JSON 等）。
+        """
         import re
         try:
             m = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
@@ -276,8 +284,16 @@ class EnhancedJobAnalyzer:
             m = re.search(r'\{.*\}', response_text, re.DOTALL)
             if m:
                 return json.loads(m.group())
+            # 没匹配到任何 JSON 块——通常是 thinking 截断或模型未按 prompt 输出 JSON
+            logger.warning(
+                f"匹配阶段未找到 JSON 块（可能 thinking 截断）；"
+                f"raw 长度={len(response_text)}, 前200字={response_text[:200]!r}"
+            )
         except Exception as e:
-            logger.error(f"解析匹配结果失败: {e}")
+            logger.error(
+                f"解析匹配结果失败: {e}; "
+                f"raw 长度={len(response_text)}, 前200字={response_text[:200]!r}"
+            )
         return {"score": 0, "match_highlights": [], "gaps": [], "summary": "解析失败"}
     
     def filter_and_sort_jobs(self, analyzed_jobs: List[Dict[str, Any]], min_score: int = 6) -> List[Dict[str, Any]]:
