@@ -60,7 +60,9 @@ crawler:
     channel: "chrome" # 优先使用本机Chrome，失败自动回退到Playwright Chromium
     # Chrome用户数据目录（用于保持登录状态）
     user_data_dir: "~/Library/Application Support/boss_automation/browser_profile/boss_zhipin" # 用户目录存储浏览器配置
-    use_persistent_context: false # Boss站点在persistent_context下会自动跳about:blank，默认关闭
+    use_persistent_context: true # 启用持久化 profile：cookie/localStorage 落盘 → 免重复扫码。
+    # 注：旧注释「persistent_context 下跳 about:blank」是 playwright + stealth 时代 bug；
+    # 2026-05 切到 patchright（ADR-1）后已不复现，启用以保留登录态。
 
   # 反爬虫设置
   anti_detection:
