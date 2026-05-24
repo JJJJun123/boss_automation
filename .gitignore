@@ -68,10 +68,14 @@ crawler/sessions/
 # 爬虫调试产物（运行时自动生成，无需提交）
 debug_*.html
 debug_extraction_*.png
+debug_resume_text.txt
 boss_real_screenshot_*.png
 search_diag_*.png
 search_failure_*.json
 debug_captures/
+
+# 测试文件本地保留，不上传 GitHub
+tests/
 
 # Git worktrees
 .worktrees/
