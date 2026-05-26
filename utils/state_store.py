@@ -21,13 +21,20 @@ import secrets
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
-_USER_ID_LEN = 16  # sha256[:16]
 _INVITE_CODE_LEN = 8
 _TASK_TTL_SECONDS = 24 * 3600  # 24h
+_SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 天
+_BUSY_TIMEOUT_MS = 5000  # SQLite 锁等待时长
+
+
+def _hash_token(token: str) -> str:
+    """对 session token 做 hash，仅存 hash 不存原 token（防 db 泄漏后 cookie 直接复用）"""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class StateStore:
@@ -68,34 +75,121 @@ class StateStore:
             conn.commit()
         return code
 
-    def consume_invite(self, code: str) -> Optional[str]:
-        """消费邀请码 → 创建/返回对应 user_id
+    def consume_invite(self, code: str) -> Optional[Tuple[str, str]]:
+        """消费邀请码 → 创建用户 + 签发 session token（一个事务原子完成）
+
+        三个写入（UPDATE invites / INSERT users / INSERT sessions）必须在
+        同一事务内提交或回滚，否则邀请码可能被 consume 但用户/session 未建。
+
+        通过单条原子 UPDATE WHERE status='unused' + rowcount 检查保证并发安全：
+        两个请求同时来，只有第一个 UPDATE 成功，第二个 rowcount=0 拒绝。
+
+        user_id 与 session_token 都用 secrets 独立生成，**不再从邀请码派生**——
+        即便邀请码泄露也无法反推 cookie。
 
         参数：
             code - 邀请码（8 字符）
         返回：
-            str - 派生出的 user_id（sha256[:16]）；无效或已用返回 None
+            (user_id, session_token) - 二元组；token 用于设 cookie
+            None - 邀请码无效或已被消费
         """
         now = time.time()
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT status FROM invites WHERE code = ?", (code,)
-            ).fetchone()
-            if not row or row["status"] != "unused":
-                return None
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
 
-            user_id = hashlib.sha256(code.encode()).hexdigest()[:_USER_ID_LEN]
-            conn.execute(
-                "UPDATE invites SET status = 'used', used_at = ?, user_id = ? WHERE code = ?",
+        # 单连接 + 显式事务，确保三个写入要么全成要么全回滚
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+
+            # user_id 极小概率碰撞时重试（不用 INSERT OR IGNORE 掩盖问题）
+            for attempt in range(5):
+                user_id = secrets.token_urlsafe(12)  # 16 字符
+                existing = conn.execute(
+                    "SELECT 1 FROM users WHERE user_id = ?", (user_id,)
+                ).fetchone()
+                if not existing:
+                    break
+            else:
+                conn.execute("ROLLBACK")
+                return None  # 极不可能发生（5 次 96-bit 全碰撞）
+
+            cur = conn.execute(
+                "UPDATE invites SET status = 'used', used_at = ?, user_id = ? "
+                "WHERE code = ? AND status = 'unused'",
                 (now, user_id, code),
             )
+            if cur.rowcount == 0:
+                conn.execute("ROLLBACK")
+                return None
+
             conn.execute(
-                "INSERT OR IGNORE INTO users (user_id, invite_code, created_at, last_seen_at) "
+                "INSERT INTO users (user_id, invite_code, created_at, last_seen_at) "
                 "VALUES (?, ?, ?, ?)",
                 (user_id, code, now, now),
             )
+            conn.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?)",
+                (token_hash, user_id, now, now + _SESSION_TTL_SECONDS),
+            )
+            conn.execute("COMMIT")
+            return user_id, token
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    # ─── Session Token ────────────────────────────────────
+
+    def create_session_token(self, user_id: str) -> str:
+        """为 user_id 签发新 session token；返回原文 token（只此一次能看到，库里只存 hash）"""
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) "
+                "VALUES (?, ?, ?, ?)",
+                (token_hash, user_id, now, now + _SESSION_TTL_SECONDS),
+            )
             conn.commit()
-            return user_id
+        return token
+
+    def get_user_by_session_token(self, token: str) -> Optional[str]:
+        """通过 cookie 中的 token 反查 user_id；过期或不存在返回 None"""
+        if not token:
+            return None
+        token_hash = _hash_token(token)
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_id, expires_at FROM sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] < now:
+            return None
+        return row["user_id"]
+
+    def revoke_session_token(self, token: str) -> None:
+        """删除指定 session token（登出场景）"""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_hash_token(token),))
+            conn.commit()
+
+    def cleanup_expired_sessions(self) -> int:
+        """删过期 session；返回删除条数"""
+        now = time.time()
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            conn.commit()
+            return cur.rowcount
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
@@ -166,23 +260,26 @@ class StateStore:
             conn.commit()
         return task_id
 
-    def get_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """取 task；若传 user_id，校验归属（防伪造 task_id 攻击）
+    def get_task(self, task_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """取 task，强制按 user_id 校验归属（防 IDOR）
 
         参数：
             task_id - task 主键
-            user_id - 可选；指定时只有归属正确才返回
+            user_id - 必传；只有归属正确才返回
         """
         with self._connect() as conn:
-            if user_id is not None:
-                row = conn.execute(
-                    "SELECT * FROM tasks WHERE task_id = ? AND user_id = ?",
-                    (task_id, user_id),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
-                ).fetchone()
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id = ? AND user_id = ?",
+                (task_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _get_task_unscoped(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """内部用：跳过归属校验取 task。仅给 admin/cleanup/test 用，**不要给路由直调**"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
         return dict(row) if row else None
 
     def set_task_result(self, task_id: str, status: str, result_json: str) -> None:
@@ -269,9 +366,16 @@ class StateStore:
     # ─── 内部 ─────────────────────────────────────────────
 
     def _connect(self) -> sqlite3.Connection:
-        """打开连接，设置 row_factory 让查询返回类 dict 行"""
+        """打开连接
+
+        - row_factory = sqlite3.Row 让查询返回类 dict 行
+        - busy_timeout 让并发写时短暂等待，避免立刻 "database is locked" 抛错
+        - foreign_keys 启用级联删除（SQLite 默认关）
+        - isolation_level=None 用 autocommit 模式；事务由调用方显式 commit/rollback
+        """
         conn = sqlite3.connect(self.db_path, isolation_level=None)
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
@@ -331,4 +435,14 @@ CREATE TABLE IF NOT EXISTS invites (
     created_at   REAL NOT NULL,
     used_at      REAL
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash   TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    expires_at   REAL NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 """

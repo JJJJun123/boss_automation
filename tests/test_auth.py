@@ -18,7 +18,7 @@ from flask import Flask, jsonify
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend.auth import extract_user_id, require_user_id, set_user_cookie, COOKIE_NAME
+from backend.auth import extract_user_id, require_user_id, set_session_cookie, COOKIE_NAME
 from utils.state_store import StateStore
 
 
@@ -46,16 +46,17 @@ def app_with_store(store):
     @app.route("/login")
     def login():
         from flask import request, make_response
-        # 模拟入口：?invite=xxx → 消费 + 设 cookie
+        # 模拟入口：?invite=xxx → 消费 + 设 cookie（cookie 装 session_token）
         invite = request.args.get("invite")
         store = app.config["STORE"]
         if not invite:
             return jsonify({"error": "no invite"}), 400
-        user_id = store.consume_invite(invite)
-        if not user_id:
+        result = store.consume_invite(invite)
+        if not result:
             return jsonify({"error": "invalid"}), 401
+        user_id, token = result
         resp = make_response(jsonify({"user_id": user_id}))
-        set_user_cookie(resp, user_id)
+        set_session_cookie(resp, token)
         return resp
 
     return app
@@ -71,23 +72,40 @@ def test_extract_returns_none_without_cookie(app_with_store):
 
 
 def test_extract_reads_cookie(app_with_store, store):
-    """cookie 里有合法 user_id → 提取并校验存在"""
+    """cookie 里有合法 session token → 反查到 user_id"""
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, token = store.consume_invite(code)
     with app_with_store.test_request_context("/protected", headers={
-        "Cookie": f"{COOKIE_NAME}={user_id}"
+        "Cookie": f"{COOKIE_NAME}={token}"
     }):
         from flask import request
         assert extract_user_id(request, app_with_store.config["STORE"]) == user_id
 
 
-def test_extract_rejects_unknown_cookie_user(app_with_store, store):
-    """cookie 里 user_id 库里查不到 → 拒绝"""
+def test_extract_rejects_unknown_cookie_token(app_with_store, store):
+    """cookie 里 token 库里查不到 → 拒绝（防伪造）"""
     with app_with_store.test_request_context("/protected", headers={
-        "Cookie": f"{COOKIE_NAME}=fakeUserId00000"
+        "Cookie": f"{COOKIE_NAME}=fake-session-token-not-issued"
     }):
         from flask import request
         assert extract_user_id(request, app_with_store.config["STORE"]) is None
+
+
+def test_extract_rejects_user_id_in_cookie(app_with_store, store):
+    """关键防御：把 user_id 直接放 cookie 不应认证
+
+    防御场景：攻击者猜出 user_id 格式（虽然现在是随机的，但旧实现是 sha256 派生）。
+    cookie 必须是 session_token，不是 user_id。
+    """
+    code = store.create_invite()
+    user_id, _ = store.consume_invite(code)
+    # 把 user_id（不是 token）放进 cookie
+    with app_with_store.test_request_context("/protected", headers={
+        "Cookie": f"{COOKIE_NAME}={user_id}"
+    }):
+        from flask import request
+        assert extract_user_id(request, app_with_store.config["STORE"]) is None, \
+            "user_id 直接当 token 用必须拒绝"
 
 
 # ─── require_user_id 装饰器 ────────────────────────────────
@@ -100,9 +118,9 @@ def test_protected_route_401_without_credentials(app_with_store):
 
 def test_protected_route_200_with_valid_cookie(app_with_store, store):
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, token = store.consume_invite(code)
     client = app_with_store.test_client()
-    client.set_cookie(COOKIE_NAME, user_id, domain="localhost")
+    client.set_cookie(COOKIE_NAME, token, domain="localhost")
     resp = client.get("/protected")
     assert resp.status_code == 200
     assert resp.get_json()["user_id"] == user_id

@@ -12,6 +12,7 @@ SQLite 状态层测试
 
 import os
 import sys
+import threading
 import time
 import sqlite3
 import tempfile
@@ -43,8 +44,8 @@ def test_init_creates_db_file(tmp_path):
 
 
 def test_init_creates_all_tables(store):
-    """6 张表 + 索引都创建"""
-    expected = {"users", "profiles", "tasks", "rate_limits", "quotas", "invites"}
+    """7 张表 + 索引都创建（含 sessions）"""
+    expected = {"users", "profiles", "tasks", "rate_limits", "quotas", "invites", "sessions"}
     with sqlite3.connect(store.db_path) as conn:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -71,13 +72,15 @@ def test_wal_mode_enabled(store):
 # ─── 邀请码 + 用户 ─────────────────────────────────────────
 
 def test_create_invite_and_consume(store):
-    """创建邀请码 → 消费 → 派生 user_id"""
+    """创建邀请码 → 消费 → 返回 (user_id, session_token)"""
     code = store.create_invite()
     assert len(code) == 8
 
-    user_id = store.consume_invite(code)
-    assert user_id is not None
-    assert len(user_id) == 16  # sha256[:16]
+    result = store.consume_invite(code)
+    assert result is not None
+    user_id, token = result
+    assert user_id and len(user_id) >= 12
+    assert token and len(token) >= 32, "session token 必须长（>= 32 字符）以避免暴力枚举"
 
 
 def test_consume_invalid_invite_returns_none(store):
@@ -93,17 +96,50 @@ def test_consume_used_invite_returns_none(store):
 
 def test_get_user_after_consume(store):
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     user = store.get_user(user_id)
     assert user is not None
     assert user["user_id"] == user_id
+
+
+def test_user_id_is_independent_of_invite_code(store):
+    """user_id 不应该从邀请码确定性派生（防邀请码泄露=伪造登录）
+
+    Codex P1-1：原实现 user_id = sha256(code)[:16]，任何人拿到 code 就能算出 cookie 值。
+    """
+    import hashlib
+    code = store.create_invite()
+    user_id, _ = store.consume_invite(code)
+    forbidden = hashlib.sha256(code.encode()).hexdigest()[:16]
+    assert user_id != forbidden, "user_id 必须用 secrets 独立生成，不能从邀请码派生"
+
+
+def test_concurrent_invite_consume_only_one_wins(store):
+    """并发两个请求消费同一邀请码 → 只有一个成功（Codex P1-2 防竞态）"""
+    code = store.create_invite()
+    results = []
+    lock = threading.Lock()
+
+    def consume():
+        r = store.consume_invite(code)
+        with lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=consume) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    successes = [r for r in results if r is not None]
+    assert len(successes) == 1, f"10 并发消费同码必须只有 1 个成功，实际 {len(successes)}"
 
 
 # ─── Profile 映射 ──────────────────────────────────────────
 
 def test_create_and_get_profile(store):
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     uuid = store.create_profile(user_id)
     assert uuid is not None
     assert len(uuid) > 0
@@ -115,7 +151,7 @@ def test_create_and_get_profile(store):
 def test_same_user_returns_same_profile(store):
     """同一用户多次取 profile 返回同一个 UUID（不重复创建）"""
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     uuid1 = store.get_or_create_profile(user_id)
     uuid2 = store.get_or_create_profile(user_id)
     assert uuid1 == uuid2
@@ -125,8 +161,8 @@ def test_different_users_have_different_profiles(store):
     """两个用户必须拿不同 UUID（隔离）"""
     code_a = store.create_invite()
     code_b = store.create_invite()
-    user_a = store.consume_invite(code_a)
-    user_b = store.consume_invite(code_b)
+    user_a, _ = store.consume_invite(code_a)
+    user_b, _ = store.consume_invite(code_b)
     uuid_a = store.get_or_create_profile(user_a)
     uuid_b = store.get_or_create_profile(user_b)
     assert uuid_a != uuid_b
@@ -135,7 +171,7 @@ def test_different_users_have_different_profiles(store):
 def test_touch_profile_updates_last_access(store):
     """每次访问 profile 应该更新 last_access 时间戳，用于 30 天过期判定"""
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     store.get_or_create_profile(user_id)
     before = store.get_profile_by_user(user_id)["last_access_at"]
     time.sleep(0.01)
@@ -148,22 +184,22 @@ def test_touch_profile_updates_last_access(store):
 
 def test_create_task_and_set_result(store):
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     task_id = store.create_task(user_id, keyword="AI算法工程师", city="shanghai")
     assert task_id is not None
 
     store.set_task_result(task_id, status="success", result_json='{"jobs": []}')
-    task = store.get_task(task_id)
+    task = store.get_task(task_id, user_id=user_id)
     assert task["status"] == "success"
     assert task["result_json"] == '{"jobs": []}'
 
 
 def test_task_belongs_to_correct_user(store):
-    """伪造 task_id 跨用户访问应该返回 None"""
+    """伪造 task_id 跨用户访问应该返回 None（IDOR 防护）"""
     code_a = store.create_invite()
     code_b = store.create_invite()
-    user_a = store.consume_invite(code_a)
-    user_b = store.consume_invite(code_b)
+    user_a, _ = store.consume_invite(code_a)
+    user_b, _ = store.consume_invite(code_b)
     task_id = store.create_task(user_a, keyword="x", city="shanghai")
 
     # 用 user_b 取 user_a 的 task → 应该拒绝
@@ -171,11 +207,22 @@ def test_task_belongs_to_correct_user(store):
     assert store.get_task(task_id, user_id=user_a) is not None
 
 
+def test_get_task_requires_user_id_arg(store):
+    """get_task 必须强制传 user_id（Codex P2 防 IDOR 误用）"""
+    code = store.create_invite()
+    user_id, _ = store.consume_invite(code)
+    task_id = store.create_task(user_id, keyword="x", city="shanghai")
+
+    # 不传 user_id 应抛 TypeError
+    with pytest.raises(TypeError):
+        store.get_task(task_id)
+
+
 # ─── 限流 rate_limits ─────────────────────────────────────
 
 def test_rate_limit_increments(store):
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     month = "2026-05"
 
     assert store.get_search_count(user_id, month) == 0
@@ -188,8 +235,8 @@ def test_rate_limit_increments(store):
 def test_rate_limit_isolated_per_user(store):
     code_a = store.create_invite()
     code_b = store.create_invite()
-    user_a = store.consume_invite(code_a)
-    user_b = store.consume_invite(code_b)
+    user_a, _ = store.consume_invite(code_a)
+    user_b, _ = store.consume_invite(code_b)
     month = "2026-05"
 
     store.increment_search_count(user_a, month)
@@ -218,7 +265,7 @@ def test_quota_accumulates(store):
 def test_cleanup_expired_tasks(store):
     """24h 过期 task 应该被清"""
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     task_id = store.create_task(user_id, keyword="x", city="shanghai")
 
     # 手动改 expires_at 到过去
@@ -228,13 +275,80 @@ def test_cleanup_expired_tasks(store):
 
     deleted = store.cleanup_expired_tasks()
     assert deleted == 1
-    assert store.get_task(task_id) is None
+    # 用 _get_task_unscoped 验证真删（不带 user_id 检查归属）
+    assert store._get_task_unscoped(task_id) is None
+
+
+# ─── Session Token ────────────────────────────────────────
+
+def test_session_token_lookup(store):
+    """consume_invite 签发的 token 能反查到对应 user_id"""
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+    assert store.get_user_by_session_token(token) == user_id
+
+
+def test_session_token_independent_of_invite(store):
+    """token 不能从邀请码或 user_id 反推（必须随机）"""
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+    import hashlib
+    assert hashlib.sha256(code.encode()).hexdigest() not in token
+    assert user_id not in token
+
+
+def test_unknown_token_returns_none(store):
+    assert store.get_user_by_session_token("fake-token-not-issued") is None
+
+
+def test_empty_token_returns_none(store):
+    assert store.get_user_by_session_token("") is None
+    assert store.get_user_by_session_token(None) is None
+
+
+def test_revoked_token_returns_none(store):
+    """revoke 后 token 立即失效（登出）"""
+    code = store.create_invite()
+    _, token = store.consume_invite(code)
+    store.revoke_session_token(token)
+    assert store.get_user_by_session_token(token) is None
+
+
+def test_expired_token_returns_none(store):
+    """过期 session 不应认证"""
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+    # 手动改 expires_at 到过去
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE sessions SET expires_at = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
+    assert store.get_user_by_session_token(token) is None
+
+
+def test_only_hash_in_db_not_token(store):
+    """数据库只存 token hash，不存原文"""
+    code = store.create_invite()
+    _, token = store.consume_invite(code)
+    with sqlite3.connect(store.db_path) as conn:
+        rows = conn.execute("SELECT * FROM sessions").fetchall()
+    db_content = str(rows)
+    assert token not in db_content, "明文 token 绝不能进数据库"
+
+
+def test_cleanup_expired_sessions(store):
+    """cleanup_expired_sessions 清掉过期 session"""
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE sessions SET expires_at = 0 WHERE user_id = ?", (user_id,))
+        conn.commit()
+    assert store.cleanup_expired_sessions() == 1
 
 
 def test_cleanup_old_rate_limits(store):
     """非当前月的 rate_limits 应该被清"""
     code = store.create_invite()
-    user_id = store.consume_invite(code)
+    user_id, _ = store.consume_invite(code)
     store.increment_search_count(user_id, "2025-01")  # 历史月
     store.increment_search_count(user_id, "2026-05")  # 当前月
 

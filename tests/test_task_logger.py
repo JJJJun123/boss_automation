@@ -115,6 +115,84 @@ def test_mask_preserves_non_sensitive_fields():
     assert masked["score"] == 8
 
 
+# ─── 递归脱敏（Codex P1-4） ────────────────────────────────
+
+def test_mask_recursive_nested_dict():
+    """嵌套 dict 里的敏感字段也要脱敏"""
+    raw = {
+        "task_id": "t1",
+        "headers": {"Authorization": "Bearer secret-token-12345"},
+        "data": {"user_cookie": "__zp_stoken__=cookieval"},
+    }
+    masked = mask_sensitive(raw)
+    assert "Bearer secret-token-12345" not in str(masked)
+    assert "cookieval" not in str(masked)
+    # 顶层非敏感保留
+    assert masked["task_id"] == "t1"
+
+
+def test_mask_recursive_list_of_dicts():
+    """list 里每个 dict 的敏感字段都要脱敏"""
+    raw = {
+        "task_id": "t1",
+        "ai_calls": [
+            {"api_key": "sk-call-1-secret"},
+            {"api_key": "sk-call-2-secret"},
+        ],
+    }
+    masked = mask_sensitive(raw)
+    assert "sk-call-1-secret" not in str(masked)
+    assert "sk-call-2-secret" not in str(masked)
+
+
+def test_mask_list_of_tuples_headers():
+    """list-of-tuples 格式的 headers（requests / urllib 常见）也要脱敏"""
+    raw = {
+        "task_id": "t1",
+        "headers": [("Authorization", "Bearer secret-token"), ("Accept", "json")],
+    }
+    masked = mask_sensitive(raw)
+    assert "Bearer secret-token" not in str(masked)
+    # 非敏感的 Accept 头保留
+    assert any("Accept" in str(item) for item in masked["headers"])
+
+
+def test_mask_namedtuple():
+    """namedtuple 有 _asdict → 当 dict 处理脱敏"""
+    from collections import namedtuple
+    Creds = namedtuple("Creds", ["api_key", "user"])
+    raw = {"creds": Creds(api_key="sk-secret", user="alice")}
+    masked = mask_sensitive(raw)
+    assert "sk-secret" not in str(masked)
+    # user 字段非敏感保留
+    assert "alice" in str(masked)
+
+
+def test_mask_cycle_no_recursion_error():
+    """循环引用必须不抛 RecursionError"""
+    a = {"name": "a"}
+    b = {"name": "b", "ref": a}
+    a["ref"] = b
+    # 不该崩
+    result = mask_sensitive(a)
+    # 嵌套到一定深度后应该写 <cycle> 占位
+    assert "<cycle>" in str(result)
+
+
+def test_mask_session_token_field():
+    raw = {"session_token": "secret-session-12345"}
+    masked = mask_sensitive(raw)
+    assert "secret-session-12345" not in str(masked)
+
+
+def test_mask_non_string_sensitive_value():
+    """敏感字段值是 bytes 或对象时也要脱敏"""
+    raw = {"resume_data": b"\x01\x02 binary resume"}
+    masked = mask_sensitive(raw)
+    assert b"binary resume" not in str(masked).encode()
+    assert "binary resume" not in str(masked)
+
+
 def test_log_auto_masks_sensitive_fields(logger):
     """logger.log 自动调用 mask_sensitive"""
     logger.log({"task_id": "t1", "resume_text": "真实简历正文"})

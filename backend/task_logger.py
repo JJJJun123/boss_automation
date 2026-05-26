@@ -39,30 +39,91 @@ _SENSITIVE_KEYS = {
     "secret",
     "token",
     "password",
+    "authorization",
+    "auth_token",
+    "session_token",
 }
 
 
-def mask_sensitive(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """把敏感字段替换为 {hash, length}
+def _mask_value(value: Any) -> Dict[str, Any]:
+    """把任意敏感值替换为 {hash, length, _masked}"""
+    if isinstance(value, (bytes, bytearray)):
+        text = bytes(value).decode("utf-8", errors="ignore")
+    else:
+        text = str(value)
+    return {
+        "hash": hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16],
+        "length": len(text),
+        "_masked": True,
+    }
 
-    输入字段名是否敏感按 _SENSITIVE_KEYS 集合 + 子串包含匹配。
-    例如 'resume_text' / 'user_cookie' / 'deepseek_api_key' 都会被识别。
 
-    返回新 dict（不修改原 dict）。
+def _is_sensitive_key(key: Any) -> bool:
+    """字段名是否敏感（子串匹配 case insensitive）"""
+    return any(s in str(key).lower() for s in _SENSITIVE_KEYS)
+
+
+def _looks_like_kv_pair(item: Any) -> bool:
+    """判断是否是 (key, value) 二元组（用于处理 headers=[("Authorization", "...")]）"""
+    return isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
+
+
+def mask_sensitive(payload: Any, _seen: Optional[set] = None) -> Any:
+    """递归把敏感字段替换为 {hash, length, _masked}
+
+    按 Codex 反馈支持：
+    - dict / list / tuple 递归
+    - namedtuple（有 _asdict）→ 转 dict 处理
+    - list-of-tuples 当 headers 处理：`[("Authorization", "Bearer ..."), ...]`
+    - 循环引用检测（避免 RecursionError）
+
+    敏感字段名按 _SENSITIVE_KEYS 子串包含匹配（case insensitive）。
+    例：'resume_text' / 'user_cookie' / 'deepseek_api_key' / 'Authorization' / 'X-Auth-Token'。
+
+    返回新结构，不修改原对象。
     """
-    result = {}
-    for key, value in payload.items():
-        key_lower = key.lower()
-        is_sensitive = any(s in key_lower for s in _SENSITIVE_KEYS)
-        if is_sensitive and isinstance(value, str):
-            result[key] = {
-                "hash": hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:16],
-                "length": len(value),
-                "_masked": True,
-            }
-        else:
-            result[key] = value
-    return result
+    if _seen is None:
+        _seen = set()
+
+    # 循环引用检测（仅对 mutable container 加防护）
+    payload_id = id(payload)
+    if isinstance(payload, (dict, list)) and payload_id in _seen:
+        return "<cycle>"
+
+    # namedtuple：有 _asdict 方法，按 dict 处理
+    if isinstance(payload, tuple) and hasattr(payload, "_asdict"):
+        try:
+            return mask_sensitive(payload._asdict(), _seen)
+        except Exception:
+            pass  # 解析失败则按普通 tuple 处理
+
+    if isinstance(payload, dict):
+        _seen.add(payload_id)
+        result = {}
+        for key, value in payload.items():
+            if _is_sensitive_key(key) and value is not None:
+                result[key] = _mask_value(value)
+            else:
+                result[key] = mask_sensitive(value, _seen)
+        _seen.discard(payload_id)
+        return result
+
+    if isinstance(payload, list):
+        _seen.add(payload_id)
+        result_list = []
+        for item in payload:
+            # 处理 list-of-tuples headers 模式
+            if _looks_like_kv_pair(item) and _is_sensitive_key(item[0]):
+                result_list.append((item[0], _mask_value(item[1])))
+            else:
+                result_list.append(mask_sensitive(item, _seen))
+        _seen.discard(payload_id)
+        return result_list
+
+    if isinstance(payload, tuple):
+        return tuple(mask_sensitive(item, _seen) for item in payload)
+
+    return payload
 
 
 class TaskLogger:
