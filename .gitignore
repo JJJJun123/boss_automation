@@ -74,8 +74,12 @@ search_diag_*.png
 search_failure_*.json
 debug_captures/
 
-# 测试文件本地保留，不上传 GitHub
-tests/
+# 测试代码进库（TDD 回归保障），仅忽略测试运行产物 + 真实简历 + 真实 fixtures
+tests/__pycache__/
+tests/.pytest_cache/
+tests/fixtures/real_resumes/
+tests/fixtures/real_screenshots/
+tests/*.log
 
 # Git worktrees
 .worktrees/

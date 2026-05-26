@@ -27,6 +27,7 @@ Boss 直聘的算法推荐受付费排名污染，大量推送无关岗位；求
 **云端多用户 Web 应用**：`https://boss.jjjj789.win`
 
 - 单个 VPS（Vultr Tokyo 4GB / 2 vCPU）+ Cloudflare CDN
+- 状态持久化：SQLite（用户表、profile 映射、限流计数、任务结果、成本计数）
 - 每个用户独立 Chrome profile，服务端按 `user_id` → UUID 映射隔离登录态
 - 并发上限：全局 2-3 个 Chrome 进程同时跑（4GB RAM 限制）；同用户同时只允许 1 个任务
 - 不公开传播，定向邀请使用（邀请码或一次性链接 token）
@@ -37,9 +38,10 @@ Boss 直聘的算法推荐受付费排名污染，大量推送无关岗位；求
 
 ### F1：简历上传
 
-- 支持 PDF / DOCX 格式，单文件 ≤ 5MB
+- 支持 PDF / DOCX 格式（拒绝 TXT 等其它格式；前后端 MIME + 扩展名双校验），单文件 ≤ 5MB
 - 解析简历全文（直接传文本给 AI，不做额外结构化）
 - 服务端按 `user_id` 隔离存储解析后的文本，TTL 24 小时；不保存原文件
+- **简历正文绝不落盘、绝不进日志**（只记 hash + 长度）
 - 提供"删除简历"接口，立即清
 
 ### F2：用户求职意向
@@ -177,6 +179,23 @@ Hard filters 在 AI 评分前过滤，节省 API 成本。Soft preferences 进 A
 - patchright（反检测 Playwright 分支）
 - 持久化 profile 保留登录 token（`__zp_stoken__`），减少触发反爬频率
 - 落点 query 校验，避免落到错关键词页
+
+### 安全基线（公网部署必须）
+
+- Flask `SECRET_KEY` 从环境变量读，不硬编码
+- SocketIO `cors_allowed_origins` 限定 `https://boss.jjjj789.win`，禁 `*`
+- Cookie 标志：`Secure` + `HttpOnly` + `SameSite=Lax`
+- 邀请码使用 8 字符随机 + 防枚举（连续 5 次失败 IP 黑名单 10 分钟）
+- 错误信息脱敏：用户态文案统一，详细堆栈只进后端日志
+- 简历正文/Boss cookie/API key 等敏感数据不进任何日志
+- HTTPS 强制（nginx 已 301 跳转）+ Cloudflare Full (strict) SSL 模式
+
+### 任务生命周期与资源回收
+
+- 单任务 deadline 5 分钟；超时取消，**finally 释放** profile 互斥锁与全局并发槽
+- 任务可被用户主动取消（前端按钮）
+- 任务终态后状态保留 5 分钟便于前端最终读取
+- 任务结果按 `task_id` 持久化 24 小时（SQLite），支持刷新页面恢复展示
 
 ### 日志记录
 

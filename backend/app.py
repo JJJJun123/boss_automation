@@ -188,21 +188,10 @@ def upload_resume():
                 'error': f'文件解析失败: {str(e)}'
             })
         
+        # 安全约束：简历正文不落盘、不进日志。仅记长度。
+        # 历史调试代码（debug_resume_text.txt 全量落盘）已移除，避免敏感数据泄漏。
         logger.info(f"简历解析成功，文本长度: {len(resume_text)} 字符")
-        
-        # 调试：保存简历文本用于调试
-        try:
-            with open("debug_resume_text.txt", "w", encoding='utf-8') as f:
-                f.write("=== 上传的简历文本 ===\n")
-                f.write(f"文件名: {file.filename}\n")
-                f.write(f"长度: {len(resume_text)}\n")
-                f.write(f"前100字符: {repr(resume_text[:100])}\n")
-                f.write("\n=== 完整文本 ===\n")
-                f.write(resume_text)
-            logger.debug("简历文本已保存到 debug_resume_text.txt")
-        except Exception as debug_e:
-            logger.warning(f"保存简历文本失败: {debug_e}")
-        
+
         # 简化处理 - 只提取关键信息，不进行AI分析
         logger.info("使用简化模式处理简历，不进行AI分析")
         
