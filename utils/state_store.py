@@ -183,6 +183,71 @@ class StateStore:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_hash_token(token),))
             conn.commit()
 
+    # ─── 简历存储（按 user_id 隔离 + TTL 24h） ────────────
+
+    def set_resume(self, user_id: str, resume_text: str, filename: str = "",
+                   intentions: Optional[list] = None) -> None:
+        """保存/更新用户简历文本 + 元数据。TTL 24h。
+
+        简历正文绝不落日志（design.md F1）；这里只在 sqlite 里。
+        每个 user_id 同时只能有一份简历，新上传覆盖旧的。
+        """
+        import json as _json
+        now = time.time()
+        intentions_json = _json.dumps(intentions or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO resumes (user_id, resume_text, filename, intentions, "
+                "created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "resume_text = excluded.resume_text, filename = excluded.filename, "
+                "intentions = excluded.intentions, created_at = excluded.created_at, "
+                "expires_at = excluded.expires_at",
+                (user_id, resume_text, filename, intentions_json,
+                 now, now + _TASK_TTL_SECONDS),
+            )
+            conn.commit()
+
+    def get_resume(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """取该用户的简历；过期或不存在返回 None"""
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM resumes WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        if not row or row["expires_at"] < now:
+            return None
+        import json as _json
+        return {
+            "resume_text": row["resume_text"],
+            "filename": row["filename"],
+            "intentions": _json.loads(row["intentions"] or "[]"),
+            "created_at": row["created_at"],
+        }
+
+    def delete_resume(self, user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM resumes WHERE user_id = ?", (user_id,))
+            conn.commit()
+
+    def update_resume_intentions(self, user_id: str, intentions: list) -> bool:
+        """更新求职意向；user_id 简历不存在返回 False"""
+        import json as _json
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE resumes SET intentions = ? WHERE user_id = ?",
+                (_json.dumps(intentions, ensure_ascii=False), user_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def cleanup_expired_resumes(self) -> int:
+        now = time.time()
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM resumes WHERE expires_at < ?", (now,))
+            conn.commit()
+            return cur.rowcount
+
     def cleanup_expired_sessions(self) -> int:
         """删过期 session；返回删除条数"""
         now = time.time()
@@ -443,6 +508,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at   REAL NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS resumes (
+    user_id      TEXT PRIMARY KEY,
+    resume_text  TEXT NOT NULL,
+    filename     TEXT,
+    intentions   TEXT,
+    created_at   REAL NOT NULL,
+    expires_at   REAL NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_resumes_expires ON resumes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 """

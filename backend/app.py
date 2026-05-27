@@ -2,418 +2,494 @@
 """
 Boss直聘自动化Web应用后端
 Flask + SocketIO 实现
+
+阶段 0 集成（F3）：phase 0 安全模块全部接入：
+- SECRET_KEY 从环境变量 fail-fast
+- CORS 白名单（不含 *）
+- /login?invite= 流程 + 防枚举拉黑
+- @require_user_id 装饰所有数据 API
+- 上传走 validate_resume_file
+- 简历存 StateStore（不再全局变量），按 user_id 隔离 TTL 24h
+- 异常走 safe_error_response 脱敏
+- 任务日志走 task_logger（JSONL + journald）
 """
 
+import asyncio
+import ipaddress
+import logging
 import os
 import sys
-import logging
 import threading
-from flask import Flask, request, jsonify, session, render_template
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
 from datetime import datetime
 
-# 添加项目根目录到路径（放在最前，避免主目录与worktree混用时导入到错误模块）
+from flask import Flask, request, jsonify, render_template, make_response
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit
+from werkzeug.exceptions import HTTPException
+
+# 添加项目根目录到路径
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from config.config_manager import ConfigManager
-from crawler.unified_crawler_interface import unified_search_jobs, get_crawler_capabilities
+from crawler.unified_crawler_interface import unified_search_jobs
 from analyzer.enhanced_job_analyzer import EnhancedJobAnalyzer
 
+from backend.auth import require_user_id, set_session_cookie, extract_user_id, COOKIE_NAME
+from backend.security import load_secret_key, get_cors_origins, safe_error_response
+from backend.upload_validator import validate_resume_file, UploadValidationError
+from backend.rate_limiter import invite_limiter
+from backend.task_logger import task_logger
+from utils.state_store import StateStore
 
-# 创建Flask应用
-app = Flask(__name__)
-app.secret_key = 'boss-zhipin-automation-secret-key-2024'  # 添加secret key用于session
 
-# 配置CORS
-CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"])
-
-# 配置SocketIO
-socketio = SocketIO(app, 
-                   cors_allowed_origins="*",
-                   async_mode='threading',
-                   ping_timeout=60,
-                   ping_interval=25)
-
-# 配置日志
-LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "WARNING").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.WARNING))
 logger = logging.getLogger(__name__)
 
-# 全局变量
-config_manager = None
-current_spider = None
-current_job = None  # 存储当前分析任务状态
 
-# 简历内存存储：Flask 默认 cookie session 上限 ~4KB，装不下完整简历文本（典型 6KB+），
-# 超限时浏览器静默丢 Set-Cookie → 下次 session 为空 → 误报"未上传简历"。
-# 单用户本地工具，挪到进程内存全局，进程退出即清（符合 CLAUDE.md 的"session 内临时存储"）。
-_current_resume = None  # type: ignore[var-annotated]
+# ─── 全局任务态（多用户改造前的临时方案，阶段 1 会按 task_id 入 SQLite） ──
+_current_job = None
+_current_spider = None
+_config_manager = None
 
 
-def init_config():
-    """初始化配置管理器"""
-    global config_manager
+# 可信反代白名单（按 Codex round 2 P1-1：默认只信 loopback，
+# 不把整个内网段当 proxy。生产 nginx 同机部署 → remote_addr=127.0.0.1）
+_TRUSTED_PROXY_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+)
+
+
+def _ip_in_trusted_proxy(ip_str: str) -> bool:
+    """判断 ip 是否落入可信反代网段（用 ipaddress 严格解析，避免前缀字符串误判）"""
     try:
-        config_manager = ConfigManager()
-        logger.info("配置管理器初始化成功")
-        return True
-    except Exception as e:
-        logger.error(f"配置管理器初始化失败: {e}")
+        ip_obj = ipaddress.ip_address(ip_str)
+    except (ValueError, TypeError):
         return False
+    return any(ip_obj in net for net in _TRUSTED_PROXY_NETWORKS)
 
 
-def emit_progress(message, progress=None, data=None):
-    """发送进度更新到前端"""
-    payload = {
-        'message': message,
-        'timestamp': datetime.now().strftime('%H:%M:%S')
-    }
-    if progress is not None:
-        payload['progress'] = progress
-    if data is not None:
-        payload['data'] = data
-    
-    socketio.emit('progress_update', payload)
-    logger.debug(f"Progress: {message}")
+def _is_same_origin(req) -> bool:
+    """校验请求来自同源（白名单 origin）—— 默认拒绝（Codex round 2 P1-2 修订）
+
+    严格策略：必须提供 Origin 或 Referer 之一，且值在白名单内。
+    无 Origin/Referer 一律拒绝——避免 `referrerpolicy=no-referrer` 顶层跳转
+    绕过 CSRF 防护。
+
+    例外：FLASK_ENV=development 时放行无头请求，便于本地 curl/调试。
+    """
+    allowed = set(get_cors_origins())
+    origin = req.headers.get("Origin", "").strip()
+    referer = req.headers.get("Referer", "").strip()
+
+    if origin:
+        return origin in allowed
+    if referer:
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        ref_origin = f"{parsed.scheme}://{parsed.netloc}"
+        return ref_origin in allowed
+
+    # 无 Origin 无 Referer：默认拒绝。仅 dev mode 放行（curl/调试）
+    return os.environ.get("FLASK_ENV", "production").lower() == "development"
 
 
-@app.route('/')
-def serve_frontend():
-    """提供前端页面"""
-    return render_template('index.html')
+def _get_client_ip(req) -> str:
+    """从请求拿真实客户端 IP，防伪造
+
+    Codex P1-1 / round 2 P1-1 修订：
+    - 默认 remote_addr（socket peer，无法伪造）
+    - 只在 remote_addr ∈ 127.0.0.0/8 或 ::1（loopback only！）时信 X-Real-IP
+    - 内网段（10/8、192.168/16、172.16-31）不再算 proxy → LAN 内攻击者
+      不能靠发 X-Real-IP 绕过限流
+    - 不信 X-Forwarded-For（首段可被任意伪造）
+    - X-Real-IP 必须是单个合法 IP，多值或非法格式不信
+    """
+    direct = req.remote_addr or "unknown"
+    if _ip_in_trusted_proxy(direct):
+        real_ip_header = req.headers.get("X-Real-IP", "").strip()
+        if real_ip_header and "," not in real_ip_header:
+            try:
+                ipaddress.ip_address(real_ip_header)
+                return real_ip_header
+            except ValueError:
+                pass  # 非法格式不信，降级 remote_addr
+    return direct
 
 
-@app.route('/api/health')
-def health_check():
-    """健康检查接口"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
-    })
+def create_app(store=None) -> Flask:
+    """Flask 应用工厂
 
+    参数：
+        store - 可选 StateStore 注入（测试用临时 db）；不传则创建生产 data/state.db
+    """
+    global _config_manager
 
-@app.route('/api/config', methods=['GET'])
-def get_config():
-    """获取当前配置"""
-    try:
-        if not config_manager:
-            return jsonify({'error': '配置管理器未初始化'}), 500
-        
-        search_config = config_manager.get_search_config()
-        ai_config = config_manager.get_ai_config()
-        
-        # 移除敏感信息
-        ai_config.pop('api_key', None)
-        
-        return jsonify({
-            'search': search_config,
-            'ai': ai_config,
-            'app': config_manager.get_app_config()
-        })
-    except Exception as e:
-        logger.error(f"获取配置失败: {e}")
-        return jsonify({'error': str(e)}), 500
+    app = Flask(__name__)
 
+    # ─── SECRET_KEY 强制环境变量（fail-fast） ─────────────
+    app.secret_key = load_secret_key()
 
-@app.route('/api/config', methods=['POST'])
-def update_config():
-    """更新用户配置"""
-    try:
-        if not config_manager:
-            return jsonify({'error': '配置管理器未初始化'}), 500
-        
-        data = request.get_json()
-        
-        # 更新搜索配置
-        if 'search' in data:
-            for key, value in data['search'].items():
-                config_manager.set_user_preference(f'search.{key}', value)
-        
-        # 更新AI配置
-        if 'ai_analysis' in data:
-            for key, value in data['ai_analysis'].items():
-                config_manager.set_user_preference(f'ai_analysis.{key}', value)
-        
-        # 保存配置
-        config_manager.save_user_preferences()
-        
-        return jsonify({'message': '配置更新成功'})
-    except Exception as e:
-        logger.error(f"更新配置失败: {e}")
-        return jsonify({'error': str(e)}), 500
+    # ─── State store 初始化 ────────────────────────────────
+    if store is None:
+        store = StateStore(db_path=os.path.join(PROJECT_ROOT, "data/state.db"))
+        store.init_schema()
+    app.config["STORE"] = store
 
+    # ─── CORS 白名单 ────────────────────────────────────────
+    cors_origins = get_cors_origins()
+    CORS(app, origins=cors_origins, supports_credentials=True)
 
-@app.route('/api/upload_resume', methods=['POST'])
-def upload_resume():
-    """处理简历上传和分析"""
-    try:
-        if 'resume' not in request.files:
-            return jsonify({'success': False, 'error': '没有上传文件'})
-        
-        file = request.files['resume']
-        if file.filename == '':
-            return jsonify({'success': False, 'error': '未选择文件'})
-        
-        logger.info(f"接收到文件: {file.filename}, 类型: {file.content_type}")
-        
-        # 简化处理 - 直接解析文件内容
+    # ─── SocketIO（也走白名单，不再 *） ────────────────────
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins=cors_origins,
+        async_mode="threading",
+        ping_timeout=60,
+        ping_interval=25,
+    )
+    app.extensions["socketio"] = socketio
+
+    # ─── 配置 ───────────────────────────────────────────────
+    if _config_manager is None:
         try:
-            # 根据文件类型进行解析
-            if file.filename.lower().endswith('.pdf'):
+            _config_manager = ConfigManager()
+            logger.info("配置管理器初始化成功")
+        except Exception as e:
+            logger.error(f"配置管理器初始化失败: {e}")
+
+    # ─── 全局错误处理 ──────────────────────────────────────
+    @app.errorhandler(Exception)
+    def _on_error(e):
+        # Codex P2：HTTPException 应保留语义（404 / 405 / 415），不强转 500
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.description, "code": e.code}), e.code
+        body, status = safe_error_response(e)
+        return jsonify(body), status
+
+    # ─── 路由 ───────────────────────────────────────────────
+
+    @app.route("/")
+    def serve_frontend():
+        """前端页面。如果带 ?invite= 直接走登录"""
+        invite = request.args.get("invite")
+        if invite:
+            return _do_login(invite)
+        return render_template("index.html")
+
+    @app.route("/login")
+    def login_route():
+        invite = request.args.get("invite", "").strip()
+        if not invite:
+            return jsonify({"error": "邀请码必填"}), 400
+        return _do_login(invite)
+
+    def _do_login(invite: str):
+        """共用登录流程
+
+        Codex P2-1：GET 消费邀请码有 CSRF 风险。最小防御：校验 Origin / Referer
+        必须来自同源（白名单 origin），跨站发起拒绝。SameSite=Lax cookie 配合此
+        校验阻止"诱导点击 magic link 覆盖登录态"攻击。
+        """
+        # 跨站请求拒绝（无 Origin/Referer 或来自非白名单）
+        if not _is_same_origin(request):
+            return jsonify({"error": "请从应用页面登录"}), 403
+
+        ip = _get_client_ip(request)
+        if invite_limiter.is_blacklisted(ip):
+            return jsonify({"error": "尝试次数过多，请稍后再试"}), 429
+
+        result = store.consume_invite(invite)
+        if not result:
+            invite_limiter.record_failure(ip)
+            return jsonify({"error": "邀请码无效或已使用"}), 401
+
+        user_id, token = result
+        invite_limiter.record_success(ip)
+
+        resp = make_response(jsonify({"success": True, "user_id": user_id}))
+        set_session_cookie(resp, token)
+        return resp
+
+    @app.route("/api/health")
+    def health_check():
+        return jsonify({
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0",
+        })
+
+    @app.route("/api/auth/me")
+    @require_user_id
+    def whoami():
+        """前端确认当前登录身份"""
+        return jsonify({"user_id": request.user_id})
+
+    @app.route("/api/config", methods=["GET"])
+    @require_user_id
+    def get_config():
+        if not _config_manager:
+            return jsonify({"error": "配置管理器未初始化"}), 500
+        search_config = _config_manager.get_search_config()
+        ai_config = _config_manager.get_ai_config()
+        ai_config.pop("api_key", None)
+        return jsonify({
+            "search": search_config,
+            "ai": ai_config,
+            "app": _config_manager.get_app_config(),
+        })
+
+    @app.route("/api/upload_resume", methods=["POST"])
+    @require_user_id
+    def upload_resume():
+        if "resume" not in request.files:
+            return jsonify({"success": False, "error": "没有上传文件"}), 400
+        file = request.files["resume"]
+        if not file.filename:
+            return jsonify({"success": False, "error": "未选择文件"}), 400
+
+        # 阶段 0.7 校验：扩展名 + magic + ZIP 深度 + zip bomb 防护
+        try:
+            validate_resume_file(file)
+        except UploadValidationError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+
+        # 解析
+        try:
+            filename_lower = file.filename.lower()
+            if filename_lower.endswith(".pdf"):
                 import PyPDF2
                 from io import BytesIO
                 pdf_reader = PyPDF2.PdfReader(BytesIO(file.read()))
-                resume_text = ""
-                for page in pdf_reader.pages:
-                    resume_text += page.extract_text()
-            elif file.filename.lower().endswith(('.docx', '.doc')):
+                resume_text = "".join(p.extract_text() or "" for p in pdf_reader.pages)
+            elif filename_lower.endswith((".docx", ".doc")):
                 import docx
                 from io import BytesIO
                 doc = docx.Document(BytesIO(file.read()))
-                resume_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-            else:  # 默认作为文本文件
-                resume_text = file.read().decode('utf-8')
-                
+                resume_text = "\n".join(p.text for p in doc.paragraphs)
+            else:
+                return jsonify({"success": False, "error": "不支持的格式"}), 400
+
             if not resume_text.strip():
-                raise Exception("文件内容为空")
-                
+                return jsonify({"success": False, "error": "文件内容为空"}), 400
         except Exception as e:
-            logger.error(f"文件解析错误: {str(e)}")
-            return jsonify({
-                'success': False, 
-                'error': f'文件解析失败: {str(e)}'
-            })
-        
-        # 安全约束：简历正文不落盘、不进日志。仅记长度。
-        # 历史调试代码（debug_resume_text.txt 全量落盘）已移除，避免敏感数据泄漏。
-        logger.info(f"简历解析成功，文本长度: {len(resume_text)} 字符")
+            # 简历正文绝不落日志，仅记类型
+            logger.error(f"简历解析失败 type={type(e).__name__}")
+            return jsonify({"success": False, "error": "简历解析失败，请检查文件格式"}), 400
 
-        # 简化处理 - 只提取关键信息，不进行AI分析
-        logger.info("使用简化模式处理简历，不进行AI分析")
-        
-        # 不进行任何关键词提取或分析
-        
-        # 构建简化的简历数据
-        resume_data = {
-            'name': file.filename.split('.')[0] if file.filename else '用户',  # 使用文件名作为标识
-            'resume_text': resume_text,  # 保存原文用于匹配
-            'filename': file.filename,
-            'upload_time': datetime.now().isoformat()
-        }
-        
-        # 存储到进程内存（见模块顶部 _current_resume 说明：cookie session 装不下完整文本）
-        global _current_resume
-        _current_resume = resume_data
+        # 仅长度入日志（不进正文）
+        logger.info(f"简历解析成功，长度: {len(resume_text)} 字符")
 
-        logger.info(f"简历上传完成: {resume_data['name']}（{len(resume_text)} 字符）")
-        
+        # 服务端 TTL 24h 隔离存储
+        store.set_resume(
+            user_id=request.user_id,
+            resume_text=resume_text,
+            filename=file.filename,
+        )
+
         return jsonify({
-            'success': True,
-            'resume_data': resume_data,
-            'message': '简历上传成功，已提取关键信息'
-        })
-        
-    except Exception as e:
-        logger.error(f"简历上传处理失败: {e}", exc_info=True)
-        return jsonify({
-            'success': False, 
-            'error': f"处理失败: {str(e)}"
+            "success": True,
+            "resume_data": {
+                "name": file.filename.rsplit(".", 1)[0],
+                "filename": file.filename,
+                "length": len(resume_text),
+                "upload_time": datetime.now().isoformat(),
+            },
+            "message": "简历上传成功",
         })
 
-@app.route('/api/delete_resume', methods=['POST'])
-def delete_resume():
-    try:
-        # 清除内存中的简历数据
-        global _current_resume
-        _current_resume = None
-        session.pop('ai_analysis', None)  # 保留：旧字段，若残留则一并清
+    @app.route("/api/delete_resume", methods=["POST"])
+    @require_user_id
+    def delete_resume():
+        store.delete_resume(request.user_id)
+        return jsonify({"success": True})
 
-        return jsonify({'success': True})
-        
-    except Exception as e:
-        logger.warning(f"删除简历失败: {e}")
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/api/resume/info', methods=['GET'])
-def get_resume_info():
-    """获取当前保存的简历信息（简化版本）"""
-    try:
-        # 从进程内存读取（见模块顶部 _current_resume 说明）
-        if _current_resume is not None:
-            resume_data = _current_resume
-            return jsonify({
-                'success': True,
-                'has_resume': True,
-                'resume_info': {
-                    'name': resume_data.get('name', '未知'),
-                    'skills': resume_data.get('skills', []),
-                    'experience_years': resume_data.get('experience_years', '0年'),
-                    'filename': resume_data.get('filename', ''),
-                    'current_position': resume_data.get('current_position', '待识别')
-                }
-            })
-        else:
-            return jsonify({
-                'success': True,
-                'has_resume': False,
-                'message': '请先上传简历'
-            })
-            
-    except Exception as e:
-        logger.error(f"获取简历信息失败: {e}")
+    @app.route("/api/resume/info", methods=["GET"])
+    @require_user_id
+    def get_resume_info():
+        resume = store.get_resume(request.user_id)
+        if not resume:
+            return jsonify({"success": True, "has_resume": False, "message": "请先上传简历"})
         return jsonify({
-            'success': False,
-            'error': str(e)
+            "success": True,
+            "has_resume": True,
+            "resume_info": {
+                "name": (resume.get("filename") or "用户").rsplit(".", 1)[0],
+                "filename": resume.get("filename", ""),
+                "intentions": resume.get("intentions", []),
+            },
         })
 
-@app.route('/api/resume/update_intentions', methods=['POST'])
-def update_job_intentions():
-    """更新求职意向（简化版本）"""
-    try:
-        data = request.json
-        intentions = data.get('intentions', [])
-        
-        # 直接更新内存中的简历对象（见模块顶部 _current_resume 说明）
-        if _current_resume is None:
-            return jsonify({
-                'success': False,
-                'error': '请先上传简历'
-            })
-
-        _current_resume['job_intentions'] = intentions
-        
-        return jsonify({
-            'success': True,
-            'message': '求职意向已更新'
-        })
-            
-    except Exception as e:
-        logger.error(f"更新求职意向失败: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
-
-@app.route('/api/jobs/search', methods=['POST'])
-def start_job_search():
-    """开始岗位搜索和分析"""
-    global current_job, current_spider
-    
-    try:
-        if current_job and current_job.get('status') == 'running':
-            return jsonify({'error': '已有任务正在运行中'}), 400
-        
-        # 获取请求参数
+    @app.route("/api/resume/update_intentions", methods=["POST"])
+    @require_user_id
+    def update_job_intentions():
         data = request.get_json() or {}
-        
-        # 启动后台任务
-        current_job = {'status': 'starting', 'start_time': datetime.now()}
-        
-        # 传递简历数据给后台任务（避免在线程中使用 Flask session）
-        # 简历存进程内存全局，见模块顶部 _current_resume 说明
+        intentions = data.get("intentions", [])
+        if not store.update_resume_intentions(request.user_id, intentions):
+            return jsonify({"success": False, "error": "请先上传简历"}), 400
+        return jsonify({"success": True, "message": "求职意向已更新"})
+
+    @app.route("/api/jobs/search", methods=["POST"])
+    @require_user_id
+    def start_job_search():
+        global _current_job
+        if _current_job and _current_job.get("status") == "running":
+            return jsonify({"error": "已有任务正在运行中"}), 400
+
+        data = request.get_json() or {}
+        resume = store.get_resume(request.user_id)
         session_data = {
-            'has_resume_data': _current_resume is not None,
-            'resume_data': _current_resume
+            "has_resume_data": resume is not None,
+            "resume_data": resume,
+            "user_id": request.user_id,
         }
-        
-        # 在新线程中执行搜索任务
-        thread = threading.Thread(target=run_job_search_task, args=(data, session_data))
+
+        _current_job = {
+            "status": "starting",
+            "start_time": datetime.now(),
+            "user_id": request.user_id,
+        }
+
+        thread = threading.Thread(
+            target=_run_job_search_task,
+            args=(data, session_data, socketio),
+        )
         thread.daemon = True
         thread.start()
-        
+        return jsonify({"message": "任务已启动", "task_id": "default"})
+
+    @app.route("/api/jobs/all")
+    @require_user_id
+    def get_all_jobs():
+        global _current_job
+        if _current_job and "analyzed_jobs" in _current_job:
+            # 阶段 1 会按 user_id 隔离；本期仍单用户视图
+            if _current_job.get("user_id") != request.user_id:
+                return jsonify({"error": "没有可用的搜索结果"}), 404
+            jobs = _current_job.get("analyzed_jobs", [])
+            return jsonify({"jobs": jobs, "total": len(jobs)})
+        return jsonify({"error": "没有可用的搜索结果，请先进行搜索"}), 404
+
+    @app.route("/api/jobs/results")
+    @require_user_id
+    def get_job_results():
+        if not _current_job:
+            return jsonify({"error": "没有可用的搜索结果"}), 404
+        if _current_job.get("user_id") != request.user_id:
+            return jsonify({"error": "没有可用的搜索结果"}), 404
         return jsonify({
-            'message': '任务已启动',
-            'task_id': current_job.get('task_id', 'default')
+            "status": _current_job.get("status"),
+            "results": _current_job.get("results", []),
+            "stats": {
+                "total_jobs": _current_job.get("total_jobs", 0),
+                "analyzed_jobs": _current_job.get("analyzed_jobs_count", 0),
+                "qualified_jobs": _current_job.get("qualified_jobs", 0),
+            },
+            "start_time": _current_job.get("start_time"),
+            "end_time": _current_job.get("end_time"),
         })
-        
-    except Exception as e:
-        logger.error(f"启动搜索任务失败: {e}")
-        return jsonify({'error': str(e)}), 500
+
+    @app.route("/api/jobs/status")
+    @require_user_id
+    def get_job_status():
+        if not _current_job:
+            return jsonify({"status": "idle"})
+        if _current_job.get("user_id") != request.user_id:
+            return jsonify({"status": "idle"})
+        return jsonify({
+            "status": _current_job.get("status", "idle"),
+            "start_time": _current_job.get("start_time"),
+            "error": _current_job.get("error"),
+        })
+
+    # ─── SocketIO ───────────────────────────────────────────
+
+    @socketio.on("connect")
+    def handle_connect():
+        logger.info("客户端已连接")
+        emit("connected", {"message": "连接成功"})
+
+    @socketio.on("disconnect")
+    def handle_disconnect():
+        logger.info("客户端已断开连接")
+
+    return app
 
 
-def run_job_search_task(params, session_data):
+def _emit_progress(socketio, message, progress=None, data=None):
+    """发送进度更新到前端"""
+    payload = {
+        "message": message,
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+    }
+    if progress is not None:
+        payload["progress"] = progress
+    if data is not None:
+        payload["data"] = data
+    socketio.emit("progress_update", payload)
+
+
+def _run_job_search_task(params, session_data, socketio):
     """在后台运行岗位搜索任务"""
-    global current_job, current_spider
-    
+    global _current_job, _current_spider
     try:
-        current_job['status'] = 'running'
-        emit_progress("🚀 开始初始化爬虫...", 5)
+        _current_job["status"] = "running"
+        _emit_progress(socketio, "🚀 开始初始化爬虫...", 5)
 
-        # 1. AI 模型：DeepSeek V4-Flash 跑两阶段——筛选关 thinking 省钱、匹配开 thinking 提质
-        deepseek_model = config_manager.get_app_config('ai.models.deepseek.model_name', 'deepseek-v4-flash')
-        emit_progress(f"🤖 AI模型: DeepSeek({deepseek_model}) - 筛选[thinking=off] + 匹配[thinking=on]", 8)
+        deepseek_model = "deepseek-v4-flash"
+        if _config_manager:
+            deepseek_model = _config_manager.get_app_config(
+                "ai.models.deepseek.model_name", "deepseek-v4-flash"
+            )
 
-        # 2. 从前端参数获取搜索配置，如果没有则使用默认配置
-        search_config = config_manager.get_search_config()
-        ai_config = config_manager.get_ai_config()
+        _emit_progress(socketio,
+            f"🤖 AI模型: DeepSeek({deepseek_model}) - 筛选 + 匹配", 8)
 
-        # 使用前端传来的参数覆盖配置文件中的值
-        keyword = params.get('keyword', search_config['keyword'])
-        max_jobs = params.get('max_jobs', search_config['max_jobs'])
-        selected_city = params.get('city', 'shanghai')  # 默认上海
-        
-        # 获取城市代码
-        city_codes = search_config['city_codes']
-        city_code = city_codes.get(selected_city, {}).get('code', '101210100')
-        city_name = city_codes.get(selected_city, {}).get('name', '上海')
-        
-        emit_progress(f"🔍 搜索设置: {keyword} | {city_name} | {max_jobs}个岗位", 10)
-        
-        # 2. 使用统一爬虫引擎搜索岗位
-        emit_progress("🕷️ 启动统一爬虫引擎...", 20)
-        
-        # 城市代码映射到城市名称
-        city_map = {
-            "101280600": "shenzhen",    # 深圳
-            "101020100": "shanghai",    # 上海
-            "101010100": "beijing",     # 北京
-            "101210100": "hangzhou"     # 杭州
-        }
-        city_name = city_map.get(city_code, "shanghai")
-        
-        # 使用统一爬虫接口进行搜索
-        import asyncio
-        jobs = asyncio.run(unified_search_jobs(keyword, city_name, max_jobs))
-        
-        emit_progress(f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
-        
+        keyword = params.get("keyword", "AI算法工程师")
+        max_jobs = params.get("max_jobs", 30)
+        selected_city = params.get("city", "shanghai")
+
+        task_logger.log_task_event(
+            task_id=f"task-{_current_job['start_time'].timestamp()}",
+            kind="task_start",
+            user_id=session_data.get("user_id"),
+            keyword=keyword,
+            city=selected_city,
+            max_jobs=max_jobs,
+        )
+
+        _emit_progress(socketio,
+            f"🔍 搜索设置: {keyword} | {selected_city} | {max_jobs}个岗位", 10)
+        _emit_progress(socketio, "🕷️ 启动统一爬虫引擎...", 20)
+
+        jobs = asyncio.run(unified_search_jobs(keyword, selected_city, max_jobs))
+        _emit_progress(socketio, f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
+
         if not jobs:
             raise Exception("未找到任何岗位")
-        
-        emit_progress(f"📊 找到 {len(jobs)} 个岗位，开始AI分析...", 50)
-        
-        # 5. 检查是否有简历数据进行匹配优化
-        has_session_resume = session_data.get('has_resume_data', False)
-        if not has_session_resume:
-            current_job.update({
-                'status': 'requires_resume',
-                'end_time': datetime.now(),
-                'results': [],
-                'analyzed_jobs': [],
-                'total_jobs': len(jobs),
-                'analyzed_jobs_count': 0,
-                'qualified_jobs': 0
-            })
-            emit_progress("❌ 请先上传简历后再进行AI匹配", 100, {
-                'requires_resume': True,
-                'results': [],
-                'all_jobs': [],
-                'stats': {
-                    'total': len(jobs),
-                    'analyzed': 0,
-                    'qualified': 0
-                }
-            })
-            socketio.emit('search_complete', {'status': 'requires_resume', 'message': '请先上传简历'})
-            return
-        
-        # 6. AI 两阶段分析（DeepSeek V4-Flash：筛选无 thinking + 匹配带 thinking）
-        emit_progress("🤖 启动AI两阶段分析...", 60)
 
+        if not session_data.get("has_resume_data"):
+            _current_job.update({
+                "status": "requires_resume",
+                "end_time": datetime.now(),
+                "results": [],
+                "analyzed_jobs": [],
+                "total_jobs": len(jobs),
+                "analyzed_jobs_count": 0,
+                "qualified_jobs": 0,
+            })
+            _emit_progress(socketio, "❌ 请先上传简历后再进行AI匹配", 100, {
+                "requires_resume": True,
+                "results": [],
+                "all_jobs": [],
+                "stats": {"total": len(jobs), "analyzed": 0, "qualified": 0},
+            })
+            socketio.emit("search_complete",
+                {"status": "requires_resume", "message": "请先上传简历"})
+            return
+
+        _emit_progress(socketio, "🤖 启动AI两阶段分析...", 60)
         analyzer = EnhancedJobAnalyzer(
             extraction_provider="deepseek",
             analysis_provider="deepseek",
@@ -421,173 +497,92 @@ def run_job_search_task(params, session_data):
             extraction_model_name=deepseek_model,
         )
 
-        # 获取简历文本（如有）
-        resume_text = ""
-        if session_data.get('has_resume_data'):
-            resume_text = session_data.get('resume_data', {}).get('resume_text', '')
-
+        resume_text = session_data.get("resume_data", {}).get("resume_text", "")
         analyzed_jobs = analyzer.analyze_jobs(jobs, resume_text=resume_text, keyword=keyword)
-        emit_progress(f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
+        _emit_progress(socketio,
+            f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
 
-        # 7. 结果已按 score 降序排列，按 min_score 过滤
-        min_score = ai_config.get('min_score', 0)
-        qualified_jobs = [j for j in analyzed_jobs if j.get('score', 0) >= min_score]
-        
-        # 8. 保存结果
-        emit_progress("💾 保存结果...", 95)
-        from utils.data_saver import save_all_job_results
-        save_all_job_results(analyzed_jobs, qualified_jobs)
-        
-        # 10. 完成
-        current_job.update({
-            'status': 'completed',
-            'end_time': datetime.now(),
-            'results': qualified_jobs,
-            'analyzed_jobs': analyzed_jobs,
-            'total_jobs': len(analyzed_jobs),
-            'analyzed_jobs_count': len(analyzed_jobs),
-            'qualified_jobs': len(qualified_jobs)
+        min_score = 0
+        if _config_manager:
+            min_score = _config_manager.get_ai_config().get("min_score", 0)
+        qualified_jobs = [j for j in analyzed_jobs if j.get("score", 0) >= min_score]
+
+        _current_job.update({
+            "status": "completed",
+            "end_time": datetime.now(),
+            "results": qualified_jobs,
+            "analyzed_jobs": analyzed_jobs,
+            "total_jobs": len(analyzed_jobs),
+            "analyzed_jobs_count": len(analyzed_jobs),
+            "qualified_jobs": len(qualified_jobs),
         })
-        
-        emit_progress(f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
-            'results': qualified_jobs,
-            'all_jobs': analyzed_jobs,
-            'stats': {
-                'total': len(analyzed_jobs),
-                'analyzed': len(analyzed_jobs),
-                'qualified': len(qualified_jobs)
-            }
-        })
-        
-        # 发送搜索完成事件，重置前端按钮状态
-        socketio.emit('search_complete', {'status': 'success', 'message': '搜索完成'})
-        return
-        
+
+        _emit_progress(socketio,
+            f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
+                "results": qualified_jobs,
+                "all_jobs": analyzed_jobs,
+                "stats": {
+                    "total": len(analyzed_jobs),
+                    "analyzed": len(analyzed_jobs),
+                    "qualified": len(qualified_jobs),
+                },
+            })
+        socketio.emit("search_complete", {"status": "success", "message": "搜索完成"})
+
+        task_logger.log_task_event(
+            task_id=f"task-{_current_job['start_time'].timestamp()}",
+            kind="task_end",
+            status="success",
+            total=len(analyzed_jobs),
+            qualified=len(qualified_jobs),
+        )
+
     except Exception as e:
-        logger.error(f"搜索任务失败: {e}")
-        # 打印详细错误信息用于调试
-        import traceback
-        logger.error(f"详细错误信息: {traceback.format_exc()}")
-        
-        current_job.update({
-            'status': 'failed',
-            'error': str(e),
-            'end_time': datetime.now()
+        logger.error(f"搜索任务失败 type={type(e).__name__}")
+        task_logger.log_task_event(
+            task_id=f"task-{_current_job['start_time'].timestamp()}",
+            kind="task_failed",
+            error_type=type(e).__name__,
+        )
+        _current_job.update({
+            "status": "failed",
+            "error": "任务执行出错",  # 不向前端暴露具体错误
+            "end_time": datetime.now(),
         })
-        emit_progress(f"❌ 任务失败: {str(e)}", None)
-        
-        # 发送搜索完成事件，重置前端按钮状态
-        socketio.emit('search_complete', {'status': 'failed', 'message': f'搜索失败: {str(e)}'})
-        
+        _emit_progress(socketio, "❌ 任务执行出错，详情见后台日志", None)
+        socketio.emit("search_complete",
+            {"status": "failed", "message": "任务执行出错，详情见后台日志"})
     finally:
-        # 清理资源
-        if current_spider:
+        if _current_spider:
             try:
-                current_spider.close()
-            except:
+                _current_spider.close()
+            except Exception:
                 pass
-            current_spider = None
+            _current_spider = None
 
 
-@app.route('/api/jobs/all')
-def get_all_jobs():
-    """获取所有搜索到的岗位（未过滤）"""
-    try:
-        from utils.data_saver import load_all_job_results
-        
-        # 尝试从保存的文件中读取所有岗位
-        job_data = load_all_job_results()
-        if job_data and 'all_jobs' in job_data:
-            all_jobs = job_data['all_jobs']
-            logger.info(f"✅ 从文件加载了 {len(all_jobs)} 个岗位")
-            return jsonify({
-                'jobs': all_jobs,
-                'total': len(all_jobs),
-                'metadata': job_data.get('metadata', {})
-            })
-        
-        # 如果文件中没有数据，fallback到current_job
-        if current_job and 'analyzed_jobs' in current_job:
-            jobs = current_job.get('analyzed_jobs', [])
-            logger.info(f"⚠️ 从内存加载了 {len(jobs)} 个岗位")
-            return jsonify({
-                'jobs': jobs,
-                'total': len(jobs)
-            })
-        
-        return jsonify({'error': '没有可用的搜索结果，请先进行搜索'}), 404
-        
-    except Exception as e:
-        logger.error(f"获取所有岗位失败: {e}")
-        return jsonify({'error': str(e)}), 500
+# ─── 主入口 ────────────────────────────────────────────────
 
+if __name__ == "__main__":
+    # 配置日志
+    LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 
-@app.route('/api/jobs/results')
-def get_job_results():
-    """获取最新的岗位搜索结果"""
-    try:
-        if not current_job:
-            return jsonify({'error': '没有可用的搜索结果'}), 404
-        
-        return jsonify({
-            'status': current_job.get('status'),
-            'results': current_job.get('results', []),
-            'stats': {
-                'total_jobs': current_job.get('total_jobs', 0),
-                'analyzed_jobs': current_job.get('analyzed_jobs', 0),
-                'qualified_jobs': current_job.get('qualified_jobs', 0)
-            },
-            'start_time': current_job.get('start_time'),
-            'end_time': current_job.get('end_time')
-        })
-        
-    except Exception as e:
-        logger.error(f"获取结果失败: {e}")
-        return jsonify({'error': str(e)}), 500
+    # 创建 app（会触发 SECRET_KEY fail-fast 校验）
+    app = create_app()
 
+    web_cfg = _config_manager.get_app_config("web", {}) if _config_manager else {}
+    host = web_cfg.get("host", "127.0.0.1")
+    port = int(web_cfg.get("port", 3001))
+    debug = bool(web_cfg.get("debug", False))
 
-@app.route('/api/jobs/status')
-def get_job_status():
-    """获取当前任务状态"""
-    if not current_job:
-        return jsonify({'status': 'idle'})
-    
-    return jsonify({
-        'status': current_job.get('status', 'idle'),
-        'start_time': current_job.get('start_time'),
-        'error': current_job.get('error')
-    })
-
-
-@socketio.on('connect')
-def handle_connect():
-    """WebSocket连接处理"""
-    logger.info('客户端已连接')
-    emit('connected', {'message': '连接成功'})
-
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """WebSocket断开连接处理"""
-    logger.info('客户端已断开连接')
-
-
-if __name__ == '__main__':
-    # 初始化配置
-    if not init_config():
-        logger.error("配置初始化失败，退出程序")
-        sys.exit(1)
-    
-    # 启动应用：从 app_config.yaml 的 web.* 读取（无值时回落到默认）
-    # 端口默认 3001，避开 macOS 26 上被 AirPlay 接收器占用的 5000
-    web_cfg = config_manager.get_app_config('web', {}) if config_manager else {}
-    host = web_cfg.get('host', '127.0.0.1')
-    port = int(web_cfg.get('port', 3001))
-    debug = bool(web_cfg.get('debug', True))
-    logger.info(f"启动Boss直聘自动化Web应用 → http://{host}:{port}")
-    socketio.run(app,
-                host=host,
-                port=port,
-                debug=debug,
-                use_reloader=False,
-                allow_unsafe_werkzeug=True)  # 避免重载时的问题
+    socketio = app.extensions["socketio"]
+    logger.info(f"启动 Boss直聘 → http://{host}:{port}")
+    socketio.run(
+        app,
+        host=host,
+        port=port,
+        debug=debug,
+        use_reloader=False,
+        allow_unsafe_werkzeug=True,
+    )
