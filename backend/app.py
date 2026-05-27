@@ -24,7 +24,7 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, render_template, make_response
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room
 from werkzeug.exceptions import HTTPException
 
 # 添加项目根目录到路径
@@ -47,9 +47,10 @@ from utils.state_store import StateStore
 logger = logging.getLogger(__name__)
 
 
-# ─── 全局任务态（多用户改造前的临时方案，阶段 1 会按 task_id 入 SQLite） ──
-_current_job = None
-_current_spider = None
+# 任务超时（秒）—— design.md 要求 5 分钟
+_TASK_DEADLINE_SECONDS = 300
+
+# 全局配置管理器（无状态，只读）
 _config_manager = None
 
 
@@ -333,81 +334,185 @@ def create_app(store=None) -> Flask:
     @app.route("/api/jobs/search", methods=["POST"])
     @require_user_id
     def start_job_search():
-        global _current_job
-        if _current_job and _current_job.get("status") == "running":
-            return jsonify({"error": "已有任务正在运行中"}), 400
+        """启动搜索任务
 
+        Codex P1-2：用 partial unique index 强制每用户最多 1 个 active task。
+        create_task 抛 IntegrityError → 409。不再依赖应用层 check-then-insert
+        （并发竞态会让两个 task 同时插）。
+        """
         data = request.get_json() or {}
+        keyword = data.get("keyword", "AI算法工程师")
+        city = data.get("city", "shanghai")
+        max_jobs = data.get("max_jobs", 30)
+
+        import sqlite3 as _sqlite3
+        try:
+            task_id = store.create_task(request.user_id, keyword=keyword, city=city)
+        except _sqlite3.IntegrityError as e:
+            # Codex round 2 P2-1：仅当 tasks.user_id 上 unique 冲突时当作 active 任务
+            # 其它完整性错误（FK 违约等）重抛，不被静默吞
+            err_msg = str(e).lower()
+            if "unique" in err_msg and "tasks.user_id" in err_msg:
+                existing = store.get_user_active_task(request.user_id)
+                return jsonify({
+                    "error": "已有任务正在运行中",
+                    "task_id": existing["task_id"] if existing else None,
+                }), 409
+            raise
+
         resume = store.get_resume(request.user_id)
         session_data = {
             "has_resume_data": resume is not None,
             "resume_data": resume,
             "user_id": request.user_id,
-        }
-
-        _current_job = {
-            "status": "starting",
-            "start_time": datetime.now(),
-            "user_id": request.user_id,
+            "task_id": task_id,
+            "keyword": keyword,
+            "city": city,
+            "max_jobs": max_jobs,
         }
 
         thread = threading.Thread(
             target=_run_job_search_task,
-            args=(data, session_data, socketio),
+            args=(session_data, socketio, store),
         )
         thread.daemon = True
         thread.start()
-        return jsonify({"message": "任务已启动", "task_id": "default"})
+        return jsonify({"message": "任务已启动", "task_id": task_id}), 202
+
+    @app.route("/api/jobs/cancel", methods=["POST"])
+    @require_user_id
+    def cancel_job():
+        """用户主动取消任务
+
+        Codex P1-2 / 阶段 1.4：用户必须能 cancel；后台线程通过查 SQLite
+        status='cancelled' 检测取消信号并清理。
+        """
+        data = request.get_json() or {}
+        task_id = data.get("task_id")
+        if not task_id:
+            return jsonify({"error": "task_id 必填"}), 400
+        if store.cancel_task(task_id, request.user_id):
+            return jsonify({"success": True})
+        return jsonify({"error": "任务不存在或已结束"}), 404
 
     @app.route("/api/jobs/all")
     @require_user_id
     def get_all_jobs():
-        global _current_job
-        if _current_job and "analyzed_jobs" in _current_job:
-            # 阶段 1 会按 user_id 隔离；本期仍单用户视图
-            if _current_job.get("user_id") != request.user_id:
+        """取指定 task 的所有岗位（含被筛掉的）
+
+        必须传 task_id；不传则取最新**完成且有结果**的任务
+        （Codex P2-2：不能 fallback 到 cancelled/failed）。
+        """
+        task_id = request.args.get("task_id")
+        if not task_id:
+            recent = store.get_latest_completed_task(request.user_id)
+            if not recent:
                 return jsonify({"error": "没有可用的搜索结果"}), 404
-            jobs = _current_job.get("analyzed_jobs", [])
-            return jsonify({"jobs": jobs, "total": len(jobs)})
-        return jsonify({"error": "没有可用的搜索结果，请先进行搜索"}), 404
+            task_id = recent["task_id"]
+
+        task = store.get_task(task_id, user_id=request.user_id)
+        if not task or not task.get("result_json"):
+            return jsonify({"error": "没有可用的搜索结果"}), 404
+
+        import json as _json
+        try:
+            payload = _json.loads(task["result_json"])
+        except (ValueError, TypeError):
+            return jsonify({"error": "结果解析失败"}), 500
+        jobs = payload.get("analyzed_jobs", payload.get("jobs", []))
+        return jsonify({"jobs": jobs, "total": len(jobs)})
 
     @app.route("/api/jobs/results")
     @require_user_id
     def get_job_results():
-        if not _current_job:
+        task_id = request.args.get("task_id")
+        if not task_id:
+            recent = store.get_latest_completed_task(request.user_id)
+            if not recent:
+                return jsonify({"error": "没有可用的搜索结果"}), 404
+            task_id = recent["task_id"]
+
+        task = store.get_task(task_id, user_id=request.user_id)
+        if not task:
             return jsonify({"error": "没有可用的搜索结果"}), 404
-        if _current_job.get("user_id") != request.user_id:
-            return jsonify({"error": "没有可用的搜索结果"}), 404
+
+        import json as _json
+        result = {}
+        if task.get("result_json"):
+            try:
+                result = _json.loads(task["result_json"])
+            except (ValueError, TypeError):
+                result = {}
         return jsonify({
-            "status": _current_job.get("status"),
-            "results": _current_job.get("results", []),
+            "task_id": task_id,
+            "status": task.get("status"),
+            "results": result.get("qualified_jobs", []),
             "stats": {
-                "total_jobs": _current_job.get("total_jobs", 0),
-                "analyzed_jobs": _current_job.get("analyzed_jobs_count", 0),
-                "qualified_jobs": _current_job.get("qualified_jobs", 0),
+                "total_jobs": result.get("total", 0),
+                "analyzed_jobs": result.get("analyzed_count", 0),
+                "qualified_jobs": result.get("qualified_count", 0),
             },
-            "start_time": _current_job.get("start_time"),
-            "end_time": _current_job.get("end_time"),
+            "start_time": task.get("created_at"),
+            "end_time": task.get("finished_at"),
         })
 
     @app.route("/api/jobs/status")
     @require_user_id
     def get_job_status():
-        if not _current_job:
-            return jsonify({"status": "idle"})
-        if _current_job.get("user_id") != request.user_id:
-            return jsonify({"status": "idle"})
+        task_id = request.args.get("task_id")
+        if task_id:
+            task = store.get_task(task_id, user_id=request.user_id)
+            if not task:
+                return jsonify({"status": "idle"})
+            return jsonify({
+                "task_id": task_id,
+                "status": task.get("status", "idle"),
+                "progress": task.get("progress", 0),
+                "start_time": task.get("created_at"),
+            })
+        # 无 task_id 查最新
+        active = store.get_user_active_task(request.user_id)
+        if active:
+            return jsonify({
+                "task_id": active["task_id"],
+                "status": active["status"],
+                "progress": active.get("progress", 0),
+                "start_time": active.get("created_at"),
+            })
+        return jsonify({"status": "idle"})
+
+    @app.route("/api/jobs/list")
+    @require_user_id
+    def list_jobs():
+        """该用户最近的任务列表（用于历史/刷新页面恢复）"""
+        tasks = store.list_user_tasks(request.user_id, limit=10)
         return jsonify({
-            "status": _current_job.get("status", "idle"),
-            "start_time": _current_job.get("start_time"),
-            "error": _current_job.get("error"),
+            "tasks": [{
+                "task_id": t["task_id"],
+                "keyword": t.get("keyword"),
+                "city": t.get("city"),
+                "status": t.get("status"),
+                "created_at": t.get("created_at"),
+            } for t in tasks]
         })
 
     # ─── SocketIO ───────────────────────────────────────────
 
     @socketio.on("connect")
     def handle_connect():
-        logger.info("客户端已连接")
+        """连接时按 user_id 加入私有 room
+
+        Codex round 2 P0：原全局 broadcast 会把 A 的结果推给 B。
+        改成每个连接根据 cookie 解出的 user_id 加入对应 room，
+        emit 时 to=user_id 仅推给该用户的活跃连接。
+        未登录连接（无 cookie）不加任何 room，仅能接收 connected ack。
+        """
+        user_id = extract_user_id(request, store)
+        if user_id:
+            join_room(user_id)
+            logger.info(f"客户端已连接 + 加入 room user_id={user_id}")
+        else:
+            logger.info("客户端已连接（未登录，不加入用户 room）")
         emit("connected", {"message": "连接成功"})
 
     @socketio.on("disconnect")
@@ -417,9 +522,10 @@ def create_app(store=None) -> Flask:
     return app
 
 
-def _emit_progress(socketio, message, progress=None, data=None):
-    """发送进度更新到前端"""
+def _emit_progress(socketio, user_id, task_id, message, progress=None, data=None):
+    """发送进度更新 — 仅推给该 user_id room（Codex round 2 P0：防跨用户泄露）"""
     payload = {
+        "task_id": task_id,
         "message": message,
         "timestamp": datetime.now().strftime("%H:%M:%S"),
     }
@@ -427,15 +533,79 @@ def _emit_progress(socketio, message, progress=None, data=None):
         payload["progress"] = progress
     if data is not None:
         payload["data"] = data
-    socketio.emit("progress_update", payload)
+    socketio.emit("progress_update", payload, to=user_id)
 
 
-def _run_job_search_task(params, session_data, socketio):
-    """在后台运行岗位搜索任务"""
-    global _current_job, _current_spider
+def _check_cancelled(store, task_id: str, user_id: str) -> bool:
+    """检查任务是否被用户取消（用户调 /api/jobs/cancel 后 status=cancelled）"""
+    task = store.get_task(task_id, user_id=user_id)
+    return bool(task) and task.get("status") == "cancelled"
+
+
+def _check_deadline(started_at: datetime) -> bool:
+    """检查任务整体是否已超过 deadline（5 分钟）
+
+    Codex P1-4：原 wait_for 只包爬虫，不包 AI 分析。改成全任务 checkpoint
+    检查 elapsed time。
+    """
+    return (datetime.now() - started_at).total_seconds() > _TASK_DEADLINE_SECONDS
+
+
+def _bail_if_cancelled_or_timeout(store, socketio, task_id: str, user_id: str,
+                                   started: datetime) -> bool:
+    """统一的 abort checkpoint。返回 True 表示已 abort，调用方应直接 return
+
+    Codex round 2 P1-2：原 _check_deadline 命中后只 return，task 留 running
+    挡用户新任务。这里超时时主动 set_task_result('failed') + emit。
+    cancel 时不动 DB（status 已是 cancelled），仅 emit 终态便于前端关闭等待。
+    """
+    if _check_cancelled(store, task_id, user_id):
+        # cancel 已写 DB，emit 让前端 UI 收到关闭信号
+        try:
+            socketio.emit("search_complete",
+                {"task_id": task_id, "status": "cancelled", "message": "已取消"},
+                to=user_id)
+        except Exception:
+            pass
+        return True
+    if _check_deadline(started):
+        # 超时主动写 failed 终态（被 status guard 保护，cancel 已发生时不覆盖）
+        import json as _json
+        store.set_task_result(task_id, "failed",
+            _json.dumps({"error": "timeout",
+                        "deadline_sec": _TASK_DEADLINE_SECONDS}, ensure_ascii=False))
+        try:
+            socketio.emit("search_complete",
+                {"task_id": task_id, "status": "failed", "message": "任务超时"},
+                to=user_id)
+        except Exception:
+            pass
+        return True
+    return False
+
+
+def _run_job_search_task(session_data, socketio, store):
+    """后台运行岗位搜索任务
+
+    SQLite tasks 表持久化（阶段 1.4 + 1.6）：
+    - 状态流转 pending → running → success/failed/cancelled
+    - 5 分钟 deadline（design.md 要求）
+    - 用户可调 /api/jobs/cancel 中途停
+    - 结果 JSON 落 result_json 字段，TTL 24h（支持刷新页面恢复）
+    """
+    task_id = session_data["task_id"]
+    user_id = session_data["user_id"]
+    keyword = session_data["keyword"]
+    city = session_data["city"]
+    max_jobs = session_data["max_jobs"]
+
+    import json as _json
+    started = datetime.now()
     try:
-        _current_job["status"] = "running"
-        _emit_progress(socketio, "🚀 开始初始化爬虫...", 5)
+        # set_task_status 现返回 bool；False 表示已被 cancel（不能改回 running）
+        if not store.set_task_status(task_id, "running", progress=5):
+            return  # 用户已 cancel
+        _emit_progress(socketio, user_id, task_id, "🚀 开始初始化爬虫...", 5)
 
         deepseek_model = "deepseek-v4-flash"
         if _config_manager:
@@ -443,81 +613,101 @@ def _run_job_search_task(params, session_data, socketio):
                 "ai.models.deepseek.model_name", "deepseek-v4-flash"
             )
 
-        _emit_progress(socketio,
-            f"🤖 AI模型: DeepSeek({deepseek_model}) - 筛选 + 匹配", 8)
-
-        keyword = params.get("keyword", "AI算法工程师")
-        max_jobs = params.get("max_jobs", 30)
-        selected_city = params.get("city", "shanghai")
-
         task_logger.log_task_event(
-            task_id=f"task-{_current_job['start_time'].timestamp()}",
-            kind="task_start",
-            user_id=session_data.get("user_id"),
-            keyword=keyword,
-            city=selected_city,
-            max_jobs=max_jobs,
+            task_id=task_id, kind="task_start",
+            user_id=user_id, keyword=keyword, city=city, max_jobs=max_jobs,
         )
 
-        _emit_progress(socketio,
-            f"🔍 搜索设置: {keyword} | {selected_city} | {max_jobs}个岗位", 10)
-        _emit_progress(socketio, "🕷️ 启动统一爬虫引擎...", 20)
+        _emit_progress(socketio, user_id, task_id,
+            f"🤖 AI模型: DeepSeek({deepseek_model})", 8)
+        _emit_progress(socketio, user_id, task_id,
+            f"🔍 搜索设置: {keyword} | {city} | {max_jobs}个岗位", 10)
 
-        jobs = asyncio.run(unified_search_jobs(keyword, selected_city, max_jobs))
-        _emit_progress(socketio, f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
+        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+            return
+
+        if not store.set_task_status(task_id, "running", progress=20):
+            return
+        _emit_progress(socketio, user_id, task_id, "🕷️ 启动统一爬虫引擎...", 20)
+
+        # 爬虫层超时 = 剩余预算（不是固定 5 分钟）
+        remaining = _TASK_DEADLINE_SECONDS - (datetime.now() - started).total_seconds()
+        async def _crawl_with_timeout():
+            return await asyncio.wait_for(
+                unified_search_jobs(keyword, city, max_jobs),
+                timeout=max(remaining, 1),
+            )
+        jobs = asyncio.run(_crawl_with_timeout())
+        _emit_progress(socketio, user_id, task_id, f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
+
+        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+            return
 
         if not jobs:
-            raise Exception("未找到任何岗位")
+            raise RuntimeError("未找到任何岗位")
 
         if not session_data.get("has_resume_data"):
-            _current_job.update({
-                "status": "requires_resume",
-                "end_time": datetime.now(),
-                "results": [],
+            result_payload = {
+                "qualified_jobs": [],
                 "analyzed_jobs": [],
-                "total_jobs": len(jobs),
-                "analyzed_jobs_count": 0,
-                "qualified_jobs": 0,
-            })
-            _emit_progress(socketio, "❌ 请先上传简历后再进行AI匹配", 100, {
+                "total": len(jobs),
+                "analyzed_count": 0,
+                "qualified_count": 0,
+                "requires_resume": True,
+            }
+            # Codex round 2 P1-4：尊重 set_task_result 返回值；False=用户已 cancel
+            if not store.set_task_result(task_id, "requires_resume",
+                                         _json.dumps(result_payload, ensure_ascii=False)):
+                return  # cancel 优先生效，不发 requires_resume 终态
+            _emit_progress(socketio, user_id, task_id, "❌ 请先上传简历后再进行AI匹配", 100, {
                 "requires_resume": True,
                 "results": [],
                 "all_jobs": [],
                 "stats": {"total": len(jobs), "analyzed": 0, "qualified": 0},
             })
             socketio.emit("search_complete",
-                {"status": "requires_resume", "message": "请先上传简历"})
+                {"task_id": task_id, "status": "requires_resume",
+                 "message": "请先上传简历"}, to=user_id)
             return
 
-        _emit_progress(socketio, "🤖 启动AI两阶段分析...", 60)
+        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+            return
+        if not store.set_task_status(task_id, "running", progress=60):
+            return
+        _emit_progress(socketio, user_id, task_id, "🤖 启动AI两阶段分析...", 60)
+
         analyzer = EnhancedJobAnalyzer(
             extraction_provider="deepseek",
             analysis_provider="deepseek",
             model_name=deepseek_model,
             extraction_model_name=deepseek_model,
         )
-
         resume_text = session_data.get("resume_data", {}).get("resume_text", "")
         analyzed_jobs = analyzer.analyze_jobs(jobs, resume_text=resume_text, keyword=keyword)
-        _emit_progress(socketio,
+        _emit_progress(socketio, user_id, task_id,
             f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
+
+        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+            return
 
         min_score = 0
         if _config_manager:
             min_score = _config_manager.get_ai_config().get("min_score", 0)
         qualified_jobs = [j for j in analyzed_jobs if j.get("score", 0) >= min_score]
 
-        _current_job.update({
-            "status": "completed",
-            "end_time": datetime.now(),
-            "results": qualified_jobs,
+        result_payload = {
+            "qualified_jobs": qualified_jobs,
             "analyzed_jobs": analyzed_jobs,
-            "total_jobs": len(analyzed_jobs),
-            "analyzed_jobs_count": len(analyzed_jobs),
-            "qualified_jobs": len(qualified_jobs),
-        })
+            "total": len(analyzed_jobs),
+            "analyzed_count": len(analyzed_jobs),
+            "qualified_count": len(qualified_jobs),
+        }
+        # set_task_result 现返回 bool；False = 用户已 cancel 不能写终态
+        if not store.set_task_result(task_id, "success",
+                                     _json.dumps(result_payload, ensure_ascii=False)):
+            return  # 用户 cancel 优先生效
 
-        _emit_progress(socketio,
+        _emit_progress(socketio, user_id, task_id,
             f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
                 "results": qualified_jobs,
                 "all_jobs": analyzed_jobs,
@@ -527,38 +717,36 @@ def _run_job_search_task(params, session_data, socketio):
                     "qualified": len(qualified_jobs),
                 },
             })
-        socketio.emit("search_complete", {"status": "success", "message": "搜索完成"})
+        socketio.emit("search_complete",
+            {"task_id": task_id, "status": "success", "message": "搜索完成"}, to=user_id)
 
         task_logger.log_task_event(
-            task_id=f"task-{_current_job['start_time'].timestamp()}",
-            kind="task_end",
-            status="success",
-            total=len(analyzed_jobs),
-            qualified=len(qualified_jobs),
+            task_id=task_id, kind="task_end", status="success",
+            total=len(analyzed_jobs), qualified=len(qualified_jobs),
+            duration_sec=(datetime.now() - started).total_seconds(),
         )
 
+    except asyncio.TimeoutError:
+        logger.warning(f"task {task_id} timed out after {_TASK_DEADLINE_SECONDS}s")
+        # Codex P1-4：尊重返回值；cancel 已发生时不覆盖
+        if store.set_task_result(task_id, "failed",
+                _json.dumps({"error": "timeout",
+                            "deadline_sec": _TASK_DEADLINE_SECONDS}, ensure_ascii=False)):
+            task_logger.log_task_event(task_id=task_id, kind="task_failed",
+                                       error_type="TimeoutError")
+            _emit_progress(socketio, user_id, task_id,
+                f"⏰ 任务超时（{_TASK_DEADLINE_SECONDS // 60} 分钟），已中断", None)
+            socketio.emit("search_complete",
+                {"task_id": task_id, "status": "failed", "message": "任务超时"}, to=user_id)
     except Exception as e:
         logger.error(f"搜索任务失败 type={type(e).__name__}")
-        task_logger.log_task_event(
-            task_id=f"task-{_current_job['start_time'].timestamp()}",
-            kind="task_failed",
-            error_type=type(e).__name__,
-        )
-        _current_job.update({
-            "status": "failed",
-            "error": "任务执行出错",  # 不向前端暴露具体错误
-            "end_time": datetime.now(),
-        })
-        _emit_progress(socketio, "❌ 任务执行出错，详情见后台日志", None)
-        socketio.emit("search_complete",
-            {"status": "failed", "message": "任务执行出错，详情见后台日志"})
-    finally:
-        if _current_spider:
-            try:
-                _current_spider.close()
-            except Exception:
-                pass
-            _current_spider = None
+        if store.set_task_result(task_id, "failed",
+                _json.dumps({"error": "internal", "type": type(e).__name__})):
+            task_logger.log_task_event(task_id=task_id, kind="task_failed",
+                                       error_type=type(e).__name__)
+            _emit_progress(socketio, user_id, task_id, "❌ 任务执行出错，详情见后台日志", None)
+            socketio.emit("search_complete",
+                {"task_id": task_id, "status": "failed", "message": "任务执行出错"}, to=user_id)
 
 
 # ─── 主入口 ────────────────────────────────────────────────

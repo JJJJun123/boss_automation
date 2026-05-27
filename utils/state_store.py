@@ -51,12 +51,67 @@ class StateStore:
     # ─── 初始化 ─────────────────────────────────────────────
 
     def init_schema(self) -> None:
-        """创建所有表 + 索引。多次调用幂等。"""
+        """创建所有表 + 索引 + migration。多次调用幂等。"""
         with self._connect() as conn:
-            # WAL 模式：让读不阻塞写，提升 Flask + 后台 worker 并发性能
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_SCHEMA_SQL)
+
+            # Step 1: 主 schema（partial unique index 在最后）
+            # 拆出 partial unique index 创建到 migration 之后，避免重复 active 阻塞
+            schema_without_unique_index = _SCHEMA_SQL.replace(
+                _PARTIAL_UNIQUE_INDEX_SQL, ""
+            )
+            conn.executescript(schema_without_unique_index)
+
+            # Step 2: 旧 db 加 progress 列（如缺）
+            self._migrate_tasks_table(conn)
+
+            # Step 3: Codex round 2 P1-1：旧 db 若有重复 active task，先终结再建唯一索引
+            # 同一用户多个 pending/running 状态 → 只保留最新一个，其余标 failed
+            self._cleanup_duplicate_active_tasks(conn)
+
+            # Step 4: 创建 partial unique index（此时无重复 → 不会失败）
+            conn.executescript(_PARTIAL_UNIQUE_INDEX_SQL)
             conn.commit()
+
+    def _migrate_tasks_table(self, conn) -> None:
+        """老 db 不含 progress 列时补上；不抛错（已有列 ALTER 失败由 try 吞掉）"""
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "progress" not in existing_cols:
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # 并发 init 时其它进程已 ALTER 过
+
+    def _cleanup_duplicate_active_tasks(self, conn) -> int:
+        """Codex round 2 P1-1：旧 db 同一用户多个 pending/running 时先清理
+
+        每用户保留最新的 active task，其余强制标记 failed（带迁移标记），
+        让后续 partial unique index 创建不失败。返回清理条数。
+        """
+        rows = conn.execute(
+            "SELECT user_id, task_id, created_at FROM tasks "
+            "WHERE status IN ('pending', 'running') "
+            "ORDER BY user_id, created_at DESC"
+        ).fetchall()
+
+        seen_users = set()
+        stale_task_ids = []
+        for row in rows:
+            user_id = row["user_id"]
+            if user_id in seen_users:
+                stale_task_ids.append(row["task_id"])
+            else:
+                seen_users.add(user_id)
+
+        if stale_task_ids:
+            placeholders = ",".join("?" * len(stale_task_ids))
+            conn.execute(
+                f"UPDATE tasks SET status = 'failed', "
+                f"result_json = '{{\"error\": \"abandoned_by_migration\"}}', "
+                f"finished_at = ? WHERE task_id IN ({placeholders})",
+                (time.time(), *stale_task_ids),
+            )
+        return len(stale_task_ids)
 
     # ─── 邀请码 ─────────────────────────────────────────────
 
@@ -312,7 +367,12 @@ class StateStore:
     def create_task(self, user_id: str, keyword: str, city: str) -> str:
         """创建一个 task 记录
 
+        受 partial unique index `idx_tasks_one_active_per_user` 保护：
+        每用户同时只能有一个 pending/running 任务，并发 INSERT 第二个
+        会抛 IntegrityError。调用方应捕获并返 409。
+
         返回：str - task_id
+        异常：sqlite3.IntegrityError - 用户已有 active 任务
         """
         task_id = str(uuid.uuid4())
         now = time.time()
@@ -347,15 +407,99 @@ class StateStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def set_task_result(self, task_id: str, status: str, result_json: str) -> None:
+    def set_task_status(self, task_id: str, status: str,
+                        progress: Optional[int] = None) -> bool:
+        """更新任务状态（不带结果 JSON）
+
+        Codex P1-3：仅当当前状态是 pending/running 才能改，防止
+        用户已 cancel 后被 worker 改回 running 或 success（状态覆盖竞态）。
+        返回：bool - True=更新成功，False=已是终态被拒绝
+        """
+        with self._connect() as conn:
+            if progress is not None:
+                cur = conn.execute(
+                    "UPDATE tasks SET status = ?, progress = ? "
+                    "WHERE task_id = ? AND status IN ('pending', 'running')",
+                    (status, progress, task_id),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE tasks SET status = ? "
+                    "WHERE task_id = ? AND status IN ('pending', 'running')",
+                    (status, task_id),
+                )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_user_active_task(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """取该用户当前 pending/running 任务（最多 1 个，用于并发互斥）"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE user_id = ? "
+                "AND status IN ('pending', 'running') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_user_tasks(self, user_id: str, limit: int = 10) -> list:
+        """取该用户最近 N 个任务（按 created_at 倒序）"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_latest_completed_task(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """取该用户最近一个有结果的任务（success / requires_resume）
+
+        Codex P2-2：fallback "取最新任务" 会被 cancelled / failed 遮住更早成功。
+        前端不传 task_id 时该方法只返回真正有 result_json 的。
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE user_id = ? "
+                "AND status IN ('success', 'requires_resume') "
+                "AND result_json IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def cancel_task(self, task_id: str, user_id: str) -> bool:
+        """用户主动取消任务；只 pending/running 状态可取消
+
+        返回：bool - True=已取消，False=任务不存在或终态
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE tasks SET status = 'cancelled', finished_at = ? "
+                "WHERE task_id = ? AND user_id = ? "
+                "AND status IN ('pending', 'running')",
+                (time.time(), task_id, user_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def set_task_result(self, task_id: str, status: str, result_json: str) -> bool:
+        """写入终态 + 结果
+
+        Codex P1-3：仅当 pending/running 状态才能写入终态，防止覆盖
+        cancelled。Codex P2-1：写终态时 progress=100 统一。
+
+        返回：bool - True=写入成功，False=已是终态被拒绝
+        """
         now = time.time()
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE tasks SET status = ?, result_json = ?, finished_at = ? "
-                "WHERE task_id = ?",
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, result_json = ?, finished_at = ?, progress = 100 "
+                "WHERE task_id = ? AND status IN ('pending', 'running')",
                 (status, result_json, now, task_id),
             )
             conn.commit()
+            return cur.rowcount > 0
 
     # ─── 限流 rate_limits ─────────────────────────────────
 
@@ -468,6 +612,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     task_id      TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL,
     status       TEXT NOT NULL,
+    progress     INTEGER DEFAULT 0,
     keyword      TEXT,
     city         TEXT,
     result_json  TEXT,
@@ -508,6 +653,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at   REAL NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS resumes (
     user_id      TEXT PRIMARY KEY,
@@ -519,6 +666,11 @@ CREATE TABLE IF NOT EXISTS resumes (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_expires ON resumes(expires_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+"""
+
+# Codex P1-2：partial unique index 保证每用户最多 1 个 active task
+# 拆出来在 _cleanup_duplicate_active_tasks 之后才创建，避免旧 db 重复 active 阻塞迁移
+_PARTIAL_UNIQUE_INDEX_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_one_active_per_user
+    ON tasks(user_id) WHERE status IN ('pending', 'running');
 """

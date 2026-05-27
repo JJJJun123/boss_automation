@@ -350,6 +350,174 @@ def test_malicious_referer_rejected(client, store):
     assert resp.status_code == 403
 
 
+# ─── 阶段 1.4 + 1.6：SQLite 任务持久化 + cancel + IDOR 防御 ──
+
+def test_search_returns_task_id_and_creates_db_record(authed_client, store):
+    """搜索请求应返回真实 task_id 并在 SQLite 留记录
+
+    用 mock 不真跑爬虫——这里只校验路由层的 task 创建逻辑。
+    """
+    import unittest.mock as _mock
+    with _mock.patch("backend.app._run_job_search_task"):
+        resp = authed_client.post("/api/jobs/search",
+                                  json={"keyword": "AI", "city": "shanghai"})
+    assert resp.status_code == 202
+    body = resp.get_json()
+    assert "task_id" in body
+    task_id = body["task_id"]
+    assert len(task_id) > 0
+
+    # SQLite 应有记录
+    task = store._get_task_unscoped(task_id)
+    assert task is not None
+    assert task["keyword"] == "AI"
+
+
+def test_concurrent_search_for_same_user_rejected(authed_client, store):
+    """同用户有 running 任务时再开 → 409"""
+    import unittest.mock as _mock
+    with _mock.patch("backend.app._run_job_search_task"):
+        # 第一次成功
+        r1 = authed_client.post("/api/jobs/search", json={"keyword": "x"})
+        assert r1.status_code == 202
+        # 第二次应被拒
+        r2 = authed_client.post("/api/jobs/search", json={"keyword": "y"})
+        assert r2.status_code == 409
+
+
+def test_cancel_task(authed_client, store):
+    """用户能取消自己的任务"""
+    import unittest.mock as _mock
+    with _mock.patch("backend.app._run_job_search_task"):
+        r = authed_client.post("/api/jobs/search", json={"keyword": "x"})
+    task_id = r.get_json()["task_id"]
+    resp = authed_client.post("/api/jobs/cancel", json={"task_id": task_id})
+    assert resp.status_code == 200
+    # 状态变 cancelled
+    task = store._get_task_unscoped(task_id)
+    assert task["status"] == "cancelled"
+
+
+def test_cancel_other_users_task_rejected(app, store):
+    """B 用户不能取消 A 用户的任务（IDOR 防御）"""
+    import unittest.mock as _mock
+    code_a = store.create_invite()
+    code_b = store.create_invite()
+    client_a = app.test_client()
+    client_a.get(f"/login?invite={code_a}",
+                 headers={"Origin": "http://localhost:3001"})
+    with _mock.patch("backend.app._run_job_search_task"):
+        r = client_a.post("/api/jobs/search", json={"keyword": "x"})
+    task_id = r.get_json()["task_id"]
+
+    client_b = app.test_client()
+    client_b.get(f"/login?invite={code_b}",
+                 headers={"Origin": "http://localhost:3001"})
+    resp = client_b.post("/api/jobs/cancel", json={"task_id": task_id})
+    assert resp.status_code == 404, "B 不应能 cancel A 的任务"
+
+
+def test_get_task_result_isolated_per_user(app, store):
+    """B 用户不能读 A 用户任务结果（IDOR）"""
+    code_a = store.create_invite()
+    code_b = store.create_invite()
+    user_a, _ = store.consume_invite(code_a)
+    user_b, _ = store.consume_invite(code_b)
+    task_id = store.create_task(user_a, keyword="x", city="shanghai")
+    store.set_task_result(task_id, "success",
+                          '{"qualified_jobs": [], "total": 5}')
+
+    client_b = app.test_client()
+    code_b2 = store.create_invite()
+    client_b.get(f"/login?invite={code_b2}",
+                 headers={"Origin": "http://localhost:3001"})
+    resp = client_b.get(f"/api/jobs/results?task_id={task_id}")
+    assert resp.status_code == 404
+
+
+def test_list_user_tasks_returns_only_own_tasks(app, store):
+    """/api/jobs/list 严格按 user 隔离"""
+    code_a = store.create_invite()
+    code_b = store.create_invite()
+    user_a, _ = store.consume_invite(code_a)
+    user_b, _ = store.consume_invite(code_b)
+    store.create_task(user_a, keyword="alpha", city="shanghai")
+    store.create_task(user_b, keyword="bravo", city="shanghai")
+
+    code_c = store.create_invite()
+    user_c, token_c = store.consume_invite(code_c)
+    store.create_task(user_c, keyword="charlie", city="shanghai")
+
+    client = app.test_client()
+    client.set_cookie("boss_session", token_c, domain="localhost")
+    resp = client.get("/api/jobs/list",
+                      headers={"Origin": "http://localhost:3001"})
+    assert resp.status_code == 200
+    tasks = resp.get_json()["tasks"]
+    keywords = {t["keyword"] for t in tasks}
+    assert keywords == {"charlie"}, "C 不应看到 A/B 的任务"
+
+
+# ─── Codex round 2 修复回归 ──────────────────────────────────
+
+def test_search_complete_emits_to_user_room_only(app, store):
+    """Codex round 2 P0：search_complete 不应广播给全用户，只 emit 到对应 room
+
+    用 Flask test_client SocketIO 难直接验 emit room；改成静态检查：
+    grep _emit_progress / search_complete 调用都带 to=user_id 参数。
+    """
+    src = open("backend/app.py").read()
+    import re
+    # 所有 socketio.emit("search_complete", ...) 必须带 to=
+    matches = re.findall(r'socketio\.emit\("search_complete"[^)]*\)', src)
+    assert matches, "search_complete emit 应存在"
+    for m in matches:
+        assert "to=user_id" in m, f"search_complete 必须 to=user_id 限定，但 {m!r} 没带"
+
+    # _emit_progress 必须用 user_id 参数
+    progress_matches = re.findall(r'_emit_progress\(socketio,\s*(\w+),', src)
+    user_id_count = sum(1 for m in progress_matches if m == "user_id")
+    assert user_id_count > 0
+    assert all(m == "user_id" for m in progress_matches), \
+        f"_emit_progress 第二个参数必须是 user_id，实际 {set(progress_matches)}"
+
+
+def test_concurrent_search_only_one_succeeds(app, store):
+    """Codex round 2 P2-2：用 threading.Barrier 真测并发互斥"""
+    import threading
+    import unittest.mock as _mock
+
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+
+    barrier = threading.Barrier(5)
+    results = []
+    results_lock = threading.Lock()
+
+    def attempt():
+        with app.test_client() as c:
+            c.set_cookie("boss_session", token, domain="localhost")
+            barrier.wait()  # 同时冲
+            r = c.post("/api/jobs/search",
+                       json={"keyword": "x"},
+                       headers={"Origin": "http://localhost:3001"})
+            with results_lock:
+                results.append(r.status_code)
+
+    with _mock.patch("backend.app._run_job_search_task"):
+        threads = [threading.Thread(target=attempt) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    # 必须恰好 1 个 202 成功，其余 409
+    successes = sum(1 for s in results if s == 202)
+    conflicts = sum(1 for s in results if s == 409)
+    assert successes == 1, f"并发 5 个，只能 1 个成功，实际 {successes}（{results}）"
+    assert conflicts == 4, f"其余 4 个应 409，实际 {conflicts}"
+
+
 def test_error_response_does_not_leak_stack(client, monkeypatch):
     """触发异常路径 → response 不含 ValueError/堆栈/敏感字符串"""
     # 故意触发：访问需要 STORE 但 STORE 抛错的路径
