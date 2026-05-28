@@ -518,6 +518,64 @@ def test_concurrent_search_only_one_succeeds(app, store):
     assert conflicts == 4, f"其余 4 个应 409，实际 {conflicts}"
 
 
+def test_profile_dir_passed_to_crawler(app, store, monkeypatch):
+    """Codex round 2 P2-3：profile_dir 必须从 acquire_for_task 一路传到 unified_search_jobs
+
+    集成测试验证完整透传链路：app 路由 → _run_job_search_task →
+    profile_mgr.acquire_for_task → unified_search_jobs(profile_dir=...) 调用
+    """
+    import unittest.mock as _mock
+    captured = {}
+
+    async def _fake_search(keyword, city, max_jobs, **kwargs):
+        captured["profile_dir"] = kwargs.get("profile_dir")
+        captured["keyword"] = keyword
+        return []  # 空 jobs → 后续 RuntimeError 退出（不影响断言）
+
+    monkeypatch.setattr("backend.app.unified_search_jobs", _fake_search)
+
+    code = store.create_invite()
+    user_id, token = store.consume_invite(code)
+
+    client = app.test_client()
+    client.set_cookie("boss_session", token, domain="localhost")
+    r = client.post("/api/jobs/search",
+                    json={"keyword": "AI"},
+                    headers={"Origin": "http://localhost:3001"})
+    assert r.status_code == 202
+
+    # 等后台线程执行（轻量 polling）
+    import time as _t
+    for _ in range(50):
+        if "profile_dir" in captured:
+            break
+        _t.sleep(0.05)
+
+    assert "profile_dir" in captured, "unified_search_jobs 未被调用，链路断了"
+    profile_dir = captured["profile_dir"]
+    assert profile_dir, "profile_dir 不能为空"
+    assert user_id not in profile_dir, "profile_dir 应是 UUID 不是 user_id"
+    # UUID 形式
+    import re as _re
+    base = os.path.basename(profile_dir)
+    assert _re.match(r"^[0-9a-fA-F-]{32,}$", base), \
+        f"profile_dir 末端应是 UUID，实际 {base!r}"
+
+
+def test_delete_profile_endpoint(authed_client, store):
+    """阶段 1.2：/api/profile/delete 清空用户 Boss 登录态（懒创建场景下也应 200）"""
+    resp = authed_client.post("/api/profile/delete",
+                              headers={"Origin": "http://localhost:3001"})
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is True
+
+
+def test_delete_profile_requires_auth(client):
+    resp = client.post("/api/profile/delete",
+                       headers={"Origin": "http://localhost:3001"})
+    assert resp.status_code == 401
+
+
 def test_error_response_does_not_leak_stack(client, monkeypatch):
     """触发异常路径 → response 不含 ValueError/堆栈/敏感字符串"""
     # 故意触发：访问需要 STORE 但 STORE 抛错的路径

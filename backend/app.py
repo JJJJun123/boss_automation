@@ -41,6 +41,9 @@ from backend.security import load_secret_key, get_cors_origins, safe_error_respo
 from backend.upload_validator import validate_resume_file, UploadValidationError
 from backend.rate_limiter import invite_limiter
 from backend.task_logger import task_logger
+from backend.profile_manager import (
+    ProfileManager, ProfileLockTimeout, ChromeSlotTimeout, ProfileBusyError
+)
 from utils.state_store import StateStore
 
 
@@ -137,6 +140,21 @@ def create_app(store=None) -> Flask:
         store = StateStore(db_path=os.path.join(PROJECT_ROOT, "data/state.db"))
         store.init_schema()
     app.config["STORE"] = store
+
+    # ─── Profile 管理（阶段 1.2/1.3：UUID profile + 互斥锁 + 全局并发槽） ──
+    profile_root = os.environ.get(
+        "BOSS_PROFILE_ROOT",
+        os.path.expanduser(
+            "~/Library/Application Support/boss_automation/browser_profile"
+        ),
+    )
+    max_chromes = int(os.environ.get("BOSS_MAX_CONCURRENT_CHROMES", "2"))
+    profile_mgr = ProfileManager(
+        profile_root=profile_root,
+        store=store,
+        max_concurrent_chromes=max_chromes,
+    )
+    app.config["PROFILE_MANAGER"] = profile_mgr
 
     # ─── CORS 白名单 ────────────────────────────────────────
     cors_origins = get_cors_origins()
@@ -306,6 +324,19 @@ def create_app(store=None) -> Flask:
         store.delete_resume(request.user_id)
         return jsonify({"success": True})
 
+    @app.route("/api/profile/delete", methods=["POST"])
+    @require_user_id
+    def delete_profile():
+        """删除用户的 Boss 登录态（design.md F3「删除我的 Boss 登录态」按钮）
+
+        Codex P1-1：用户有 active 任务时返 409，避免运行中的 Chrome profile 被删坏。
+        """
+        try:
+            profile_mgr.delete_profile(request.user_id)
+        except ProfileBusyError as e:
+            return jsonify({"error": str(e)}), 409
+        return jsonify({"success": True, "message": "Boss 登录态已清除"})
+
     @app.route("/api/resume/info", methods=["GET"])
     @require_user_id
     def get_resume_info():
@@ -373,7 +404,7 @@ def create_app(store=None) -> Flask:
 
         thread = threading.Thread(
             target=_run_job_search_task,
-            args=(session_data, socketio, store),
+            args=(session_data, socketio, store, profile_mgr),
         )
         thread.daemon = True
         thread.start()
@@ -584,7 +615,7 @@ def _bail_if_cancelled_or_timeout(store, socketio, task_id: str, user_id: str,
     return False
 
 
-def _run_job_search_task(session_data, socketio, store):
+def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
     """后台运行岗位搜索任务
 
     SQLite tasks 表持久化（阶段 1.4 + 1.6）：
@@ -601,7 +632,27 @@ def _run_job_search_task(session_data, socketio, store):
 
     import json as _json
     started = datetime.now()
+
+    # 阶段 1.2/1.3：先拿 chrome slot + profile 锁；拿不到立即标 failed 而非空转
+    profile_acquired = None
+    profile_dir = None  # P0 修复：实际传给爬虫的 per-user 目录
     try:
+        if profile_mgr is not None:
+            try:
+                profile_acquired = profile_mgr.acquire_for_task(user_id, timeout=30)
+                profile_dir = profile_acquired.__enter__()  # yield 出 profile_dir
+            except (ChromeSlotTimeout, ProfileLockTimeout) as e:
+                logger.warning(
+                    f"task {task_id} 资源拿不到 type={type(e).__name__}"
+                )
+                store.set_task_result(task_id, "failed",
+                    _json.dumps({"error": "resource_busy",
+                                "type": type(e).__name__}, ensure_ascii=False))
+                socketio.emit("search_complete",
+                    {"task_id": task_id, "status": "failed",
+                     "message": "服务繁忙，请稍后重试"}, to=user_id)
+                return
+
         # set_task_status 现返回 bool；False 表示已被 cancel（不能改回 running）
         if not store.set_task_status(task_id, "running", progress=5):
             return  # 用户已 cancel
@@ -631,10 +682,11 @@ def _run_job_search_task(session_data, socketio, store):
         _emit_progress(socketio, user_id, task_id, "🕷️ 启动统一爬虫引擎...", 20)
 
         # 爬虫层超时 = 剩余预算（不是固定 5 分钟）
+        # 关键：把 profile_dir 透传给爬虫，实现真正的 per-user 隔离（Codex P0）
         remaining = _TASK_DEADLINE_SECONDS - (datetime.now() - started).total_seconds()
         async def _crawl_with_timeout():
             return await asyncio.wait_for(
-                unified_search_jobs(keyword, city, max_jobs),
+                unified_search_jobs(keyword, city, max_jobs, profile_dir=profile_dir),
                 timeout=max(remaining, 1),
             )
         jobs = asyncio.run(_crawl_with_timeout())
@@ -747,6 +799,13 @@ def _run_job_search_task(session_data, socketio, store):
             _emit_progress(socketio, user_id, task_id, "❌ 任务执行出错，详情见后台日志", None)
             socketio.emit("search_complete",
                 {"task_id": task_id, "status": "failed", "message": "任务执行出错"}, to=user_id)
+    finally:
+        # 释放 profile 锁 + chrome slot（即使中途抛任何异常）
+        if profile_acquired is not None:
+            try:
+                profile_acquired.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 # ─── 主入口 ────────────────────────────────────────────────

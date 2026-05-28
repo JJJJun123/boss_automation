@@ -26,8 +26,15 @@ logger = logging.getLogger(__name__)
 class RealPlaywrightBossSpider:
     """真正的Playwright Boss直聘爬虫"""
     
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, profile_dir: Optional[str] = None):
+        """
+        参数：
+            headless - 是否无头模式
+            profile_dir - 覆盖 config 的 user_data_dir（per-user UUID profile 用）；
+                          不传则用 config 的全局默认（向后兼容单用户场景）
+        """
         self.headless = headless
+        self.profile_dir_override = profile_dir  # 由 profile_manager 注入
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
@@ -36,7 +43,7 @@ class RealPlaywrightBossSpider:
         self.session_manager = SessionManager()  # 集成会话管理器
         self.retry_handler = RetryHandler()  # 集成重试处理器
         self.current_search_url: Optional[str] = None
-        
+
         # 加载配置
         try:
             from config.config_manager import ConfigManager
@@ -66,9 +73,12 @@ class RealPlaywrightBossSpider:
         
         # 检查是否使用持久化上下文
         use_persistent = self.browser_config.get('use_persistent_context', True)
-        # 使用用户目录存储浏览器配置文件，避免混在代码目录中
-        user_data_dir = self.browser_config.get('user_data_dir', 
-            os.path.expanduser('~/Library/Application Support/boss_automation/browser_profile/boss_zhipin'))
+        # 优先用 __init__ 注入的 per-user profile_dir（profile_manager 提供），
+        # 否则回落到 config 全局默认（向后兼容单用户场景）
+        user_data_dir = self.profile_dir_override or self.browser_config.get(
+            'user_data_dir',
+            os.path.expanduser('~/Library/Application Support/boss_automation/browser_profile/boss_zhipin'),
+        )
         
         if use_persistent:
             # 创建用户数据目录

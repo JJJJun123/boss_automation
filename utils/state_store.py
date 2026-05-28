@@ -353,6 +353,12 @@ class StateStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def delete_profile_mapping(self, user_id: str) -> None:
+        """删除 user_id 的 profile 映射记录（不删盘上文件）"""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
+            conn.commit()
+
     def touch_profile(self, user_id: str) -> None:
         """更新 last_access_at，用于 30 天 inactive 自动清理判定"""
         now = time.time()

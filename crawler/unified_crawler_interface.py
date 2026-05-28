@@ -21,6 +21,7 @@ class SearchParams:
     max_jobs: int = 20
     priority: int = 1
     use_cache: bool = True
+    profile_dir: Optional[str] = None  # per-user Chrome profile（profile_manager 提供）
 
 
 @dataclass 
@@ -89,7 +90,8 @@ class UnifiedCrawlerInterface:
                 city=self.normalize_city(params.get("city", "shanghai")),
                 max_jobs=params.get("max_jobs", 20),
                 priority=params.get("priority", 1),
-                use_cache=params.get("use_cache", True)
+                use_cache=params.get("use_cache", True),
+                profile_dir=params.get("profile_dir"),
             )
         else:
             search_params = params
@@ -132,8 +134,10 @@ class UnifiedCrawlerInterface:
         try:
             from .real_playwright_spider import RealPlaywrightBossSpider
             
-            # 创建爬虫实例
-            spider = RealPlaywrightBossSpider(headless=False)  # 使用有头模式
+            # 创建爬虫实例（per-user profile 由 profile_manager 通过 params 提供）
+            spider = RealPlaywrightBossSpider(
+                headless=False, profile_dir=params.profile_dir
+            )
             
             try:
                 # 启动爬虫
