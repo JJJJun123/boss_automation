@@ -59,22 +59,14 @@ document.addEventListener("DOMContentLoaded", function () {
   // ========== WebSocket连接处理 ==========
   socket.on("connect", () => {
     debugLog("✅ WebSocket已连接, ID:", socket.id);
-    if (statusDot) {
-      statusDot.className = "w-2 h-2 rounded-full bg-green-500 mr-2";
-    }
-    if (statusText) {
-      statusText.textContent = "已连接";
-    }
+    if (statusDot) statusDot.className = "status-pill__dot live";
+    if (statusText) statusText.textContent = "Live";
   });
 
   socket.on("disconnect", () => {
     debugLog("❌ WebSocket断开连接");
-    if (statusDot) {
-      statusDot.className = "w-2 h-2 rounded-full bg-red-500 mr-2";
-    }
-    if (statusText) {
-      statusText.textContent = "未连接";
-    }
+    if (statusDot) statusDot.className = "status-pill__dot";
+    if (statusText) statusText.textContent = "断开";
   });
 
   socket.on("connect_error", (error) => {
@@ -89,8 +81,9 @@ document.addEventListener("DOMContentLoaded", function () {
     debugLog("🎉 搜索完成");
     isSearching = false;
     if (startBtn) {
-      startBtn.textContent = "开始搜索";
+      startBtn.textContent = "Begin search";
       startBtn.disabled = false;
+      startBtn.classList.remove("searching");
     }
   });
 
@@ -139,42 +132,29 @@ document.addEventListener("DOMContentLoaded", function () {
     // 移除分析结果相关元素的处理
   }
 
-  // 更新简历状态（简化版本）
+  // 更新简历状态（editorial design）
   function updateResumeStatus(resumeData) {
-    const resumeStatusEl = document.getElementById("resume-status");
-
-    if (resumeStatusEl && resumeData) {
-      resumeStatusEl.innerHTML = `
-                <div class="flex items-center justify-between py-2">
-                    <div class="flex items-center space-x-2">
-                        <div class="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
-                            <span class="text-green-600 text-xs font-bold">✓</span>
-                        </div>
-                        <div>
-                            <div class="text-sm font-medium text-gray-900">${resumeData.name || "简历已上传"}</div>
-                            <div class="text-xs text-gray-500">${resumeData.current_position || "已加载个人信息"}</div>
-                        </div>
-                    </div>
-                    <button onclick="window.deleteResume()" class="text-red-600 hover:text-red-700 text-xs font-medium">
-                        删除
-                    </button>
-                </div>
-            `;
+    const slot = document.getElementById("upload-area");
+    const title = document.getElementById("resume-title");
+    const hint = document.getElementById("resume-hint");
+    if (!slot) return;
+    if (resumeData) {
+      slot.classList.add("uploaded");
+      if (title)
+        title.textContent =
+          resumeData.name || resumeData.filename || "简历已加载";
+      if (hint) hint.textContent = `${resumeData.length || ""} 字符 · TTL 24h`;
     }
   }
 
-  // 重置简历状态（简化版本）
+  // 重置简历状态
   function resetResumeStatus() {
-    const resumeStatusEl = document.getElementById("resume-status");
-
-    if (resumeStatusEl) {
-      resumeStatusEl.innerHTML = `
-                <div class="text-center py-2">
-                    <p class="text-sm text-gray-600">未上传简历</p>
-                    <p class="text-xs text-gray-500">上传后获得更精准匹配</p>
-                </div>
-            `;
-    }
+    const slot = document.getElementById("upload-area");
+    const title = document.getElementById("resume-title");
+    const hint = document.getElementById("resume-hint");
+    if (slot) slot.classList.remove("uploaded");
+    if (title) title.textContent = "拖拽或点击上传";
+    if (hint) hint.textContent = "PDF / DOCX · ≤ 5MB";
   }
 
   // ========== 全局函数导出 ==========
@@ -198,13 +178,13 @@ document.addEventListener("DOMContentLoaded", function () {
           title.textContent = "AI分析输出";
           content.textContent = output || "暂无AI输出记录";
       }
-      modal.classList.remove("hidden");
+      modal.classList.add("open");
     }
   };
 
   window.hideAIDetails = function () {
     const modal = document.getElementById("ai-details-modal");
-    if (modal) modal.classList.add("hidden");
+    if (modal) modal.classList.remove("open");
   };
 
   // 清理和格式化文本
@@ -430,8 +410,9 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       isSearching = true;
-      startBtn.textContent = "搜索中...";
+      startBtn.textContent = "搜索中…";
       startBtn.disabled = true;
+      startBtn.classList.add("searching");
 
       debugLog("🔍 开始搜索:", { keyword, city });
 
@@ -449,7 +430,7 @@ document.addEventListener("DOMContentLoaded", function () {
           "启动搜索失败: " + (error.response?.data?.error || error.message),
         );
         isSearching = false;
-        startBtn.textContent = "开始搜索";
+        startBtn.textContent = "Begin search";
         startBtn.disabled = false;
       }
     });
@@ -472,7 +453,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const stageIndicators = document.getElementById("stage-indicators");
 
       if (progressBar && progressFill) {
-        progressBar.style.display = "block";
+        progressBar.classList.add("active");
         progressFill.style.width = data.progress + "%";
 
         if (progressPercentage) {
@@ -491,7 +472,7 @@ document.addEventListener("DOMContentLoaded", function () {
           isSearching = false;
           const startBtn = document.getElementById("start-search-btn");
           if (startBtn) {
-            startBtn.textContent = "开始搜索";
+            startBtn.textContent = "Begin search";
             startBtn.disabled = false;
           }
         }
@@ -702,40 +683,20 @@ document.addEventListener("DOMContentLoaded", function () {
     const jobsList = document.getElementById("jobs-list");
     if (jobsList) {
       jobsList.innerHTML = `
-                <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-                    <div class="w-16 h-16 bg-yellow-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span class="text-3xl">📄</span>
-                    </div>
-                    <h3 class="text-lg font-semibold text-yellow-800 mb-2">需要上传简历</h3>
-                    <p class="text-yellow-700 mb-4">
-                        已搜索到 <strong>${data.stats?.total || 0}</strong> 个岗位，但需要先上传简历才能进行AI智能分析和匹配
-                    </p>
-                    <p class="text-sm text-yellow-600 mb-4">
-                        上传简历后，系统将为每个岗位提供：
-                    </p>
-                    <ul class="text-sm text-yellow-600 text-left max-w-md mx-auto mb-4">
-                        <li class="flex items-center mb-1">
-                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
-                            1-10分的匹配度评分
-                        </li>
-                        <li class="flex items-center mb-1">
-                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
-                            详细的匹配原因分析
-                        </li>
-                        <li class="flex items-center mb-1">
-                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
-                            个性化的推荐建议
-                        </li>
-                        <li class="flex items-center">
-                            <span class="w-1.5 h-1.5 bg-yellow-500 rounded-full mr-2"></span>
-                            市场趋势分析报告
-                        </li>
-                    </ul>
-                    <button onclick="document.getElementById('resume-file-input').click()" class="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-                        前往上传简历
-                    </button>
-                </div>
-            `;
+        <section class="empty-state">
+            <div class="empty-state__icon">¶</div>
+            <h3 class="empty-state__title">需要先上传简历</h3>
+            <p class="empty-state__hint">
+                已抓到 <strong>${data.stats?.total || 0}</strong> 个岗位。
+                上传简历后才能跑 AI 评分。
+            </p>
+            <div style="margin-top: 18px;">
+                <button class="btn-secondary" onclick="document.getElementById('resume-file-input').click()" type="button">
+                    上传简历 ↑
+                </button>
+            </div>
+        </section>
+      `;
     }
 
     if (emptyState) emptyState.style.display = "none";
@@ -746,10 +707,10 @@ document.addEventListener("DOMContentLoaded", function () {
     debugLog("📊 显示结果:", { results: results?.length, stats });
 
     if (stats) {
-      const totalEl = document.getElementById("total-jobs");
-      const qualifiedEl = document.getElementById("qualified-jobs");
-      if (totalEl) totalEl.textContent = stats.total;
-      if (qualifiedEl) qualifiedEl.textContent = stats.qualified;
+      const totalEl = document.getElementById("stat-total");
+      const qualifiedEl = document.getElementById("stat-qualified");
+      if (totalEl) totalEl.textContent = stats.total || 0;
+      if (qualifiedEl) qualifiedEl.textContent = stats.qualified || 0;
       if (statsCard) statsCard.style.display = "block";
     }
 
@@ -762,16 +723,14 @@ document.addEventListener("DOMContentLoaded", function () {
       const jobsList = document.getElementById("jobs-list");
       if (jobsList) {
         jobsList.innerHTML = `
-                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
-                        <div class="w-16 h-16 bg-gray-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                            <span class="text-3xl">🔍</span>
-                        </div>
-                        <h3 class="text-lg font-semibold text-gray-800 mb-2">暂无合格岗位</h3>
-                        <p class="text-gray-600">
-                            搜索到了 <strong>${stats?.total || 0}</strong> 个岗位，但没有找到评分达标的岗位。
-                        </p>
-                    </div>
-                `;
+          <section class="empty-state">
+              <div class="empty-state__icon">⌗</div>
+              <h3 class="empty-state__title">暂无合格岗位</h3>
+              <p class="empty-state__hint">
+                  搜索到 <strong>${stats?.total || 0}</strong> 个岗位，没有评分达标的。
+              </p>
+          </section>
+        `;
       }
       if (emptyState) emptyState.style.display = "none";
     }
@@ -791,61 +750,76 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // 创建岗位卡片
+  // 创建岗位卡片（editorial design）
   function createJobCard(job, index) {
     const div = document.createElement("div");
-    div.className = "card relative";
+    div.className = "job-card";
 
-    const score = job.score || 0;
-    const getScoreColor = (s) => {
-      if (s >= 9) return "text-green-600 bg-green-100";
-      if (s >= 7) return "text-blue-600 bg-blue-100";
-      if (s >= 5) return "text-yellow-600 bg-yellow-100";
-      return "text-gray-500 bg-gray-100";
-    };
+    const score = Number(job.score) || 0;
+    const tier = score >= 8 ? "high" : score >= 5 ? "mid" : "low";
+    div.setAttribute("data-score-tier", tier);
+
+    const highlights = (job.match_highlights || []).filter(Boolean);
+    const gaps = (job.gaps || []).filter(Boolean);
+    const escape = (s) =>
+      (s || "")
+        .toString()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
 
     div.innerHTML = `
-            <div class="absolute top-4 right-4">
-                <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getScoreColor(score)}">
-                    ⭐ ${score}/10
+        <div class="job-card__score">
+            ${score}
+            <span class="job-card__score-out">/ 10</span>
+        </div>
+        <div class="job-card__body">
+            <h3 class="job-card__title">${escape(cleanMarkdown(job.title)) || "未知岗位"}</h3>
+            <div class="job-card__meta">
+                <span>${escape(cleanMarkdown(job.company)) || "未知公司"}</span>
+                <span class="job-card__meta-divider">·</span>
+                <span>${escape(cleanMarkdown(job.salary)) || "薪资面议"}</span>
+                <span class="job-card__meta-divider">·</span>
+                <span>${escape(job.work_location) || "未知地点"}</span>
+                ${job.url ? `<span class="job-card__meta-divider">·</span><a href="${escape(job.url)}" target="_blank" rel="noopener">原文链接 ↗</a>` : ""}
+            </div>
+            ${job.summary ? `<div class="job-card__summary">"${escape(job.summary)}"</div>` : ""}
+            ${
+              highlights.length
+                ? `
+                <div class="job-card__highlights">
+                    <span class="point-label point-label--match">Highlights · 亮点</span>
+                    <ul class="job-card__pointlist job-card__pointlist--match">
+                        ${highlights.map((h) => `<li>${escape(h)}</li>`).join("")}
+                    </ul>
                 </div>
-            </div>
-            <div class="pr-20 mb-4">
-                <h3 class="text-lg font-semibold text-gray-900 mb-2">${cleanMarkdown(job.title) || "未知岗位"}</h3>
-                <div class="text-gray-600 mb-2">🏢 ${cleanMarkdown(job.company) || "未知公司"} • 💰 ${cleanMarkdown(job.salary) || "薪资面议"}</div>
-                <div class="text-gray-600 mb-2">📍 ${job.work_location || "未知地点"}</div>
-                ${
-                  job.url
-                    ? `
-                    <div class="text-gray-600 mb-2">
-                        🔗 <a href="${job.url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline text-sm">
-                            职位链接
-                        </a>
-                    </div>
-                `
-                    : ""
-                }
-                ${job.summary ? `<div class="mt-2 text-sm text-gray-700 italic">${job.summary}</div>` : ""}
-            </div>
-
-            <!-- 展开按钮 -->
-            <div class="mt-4 flex gap-2">
-                <button
-                    onclick="toggleJobDetails(${index})"
-                    class="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-                    id="toggle-details-${index}"
-                >
-                    📋 查看岗位详情 ↓
+            `
+                : ""
+            }
+            ${
+              gaps.length
+                ? `
+                <div class="job-card__gaps">
+                    <span class="point-label point-label--gap">Gaps · 差距</span>
+                    <ul class="job-card__pointlist job-card__pointlist--gap">
+                        ${gaps.map((g) => `<li>${escape(g)}</li>`).join("")}
+                    </ul>
+                </div>
+            `
+                : ""
+            }
+            <div class="job-card__actions">
+                <button class="btn-secondary" onclick="toggleJobDetails(${index})" id="toggle-details-${index}" type="button">
+                    岗位 JD 全文
                 </button>
-                <button
-                    onclick="toggleJobAnalysis(${index})"
-                    class="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-                    id="toggle-analysis-${index}"
-                >
-                    📊 查看匹配分析 ↓
+                <button class="btn-secondary" onclick="toggleJobAnalysis(${index})" id="toggle-analysis-${index}" type="button">
+                    AI 完整分析
                 </button>
             </div>
-        `;
+        </div>
+    `;
 
     // 准备岗位详情内容（隐藏状态，等待展开）
     const hasJobDetails =

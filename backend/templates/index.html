@@ -1,208 +1,423 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Boss直聘智能岗位匹配系统</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="bg-gray-50 min-h-screen">
-<!-- 头部 -->
-<header class="glass border-b border-gray-200 sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-4">
-        <div class="flex items-center justify-between">
-            <div class="flex items-center">
-                <div class="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl mr-4 flex items-center justify-center">
-                    <span class="text-white font-bold text-lg">🤖</span>
-                </div>
-                <div>
-                    <h1 class="text-2xl font-bold text-gray-900">Boss直聘智能助手</h1>
-                    <p class="text-sm text-gray-600">AI驱动的岗位搜索与匹配系统</p>
-                </div>
-            </div>
-            <div class="flex items-center">
-                <div id="status-dot" class="w-2 h-2 rounded-full bg-red-500 mr-2"></div>
-                <span id="status-text" class="text-xs text-gray-500">未连接</span>
-            </div>
-        </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Boss · Matcher — Job intelligence, quietly."
+    />
+    <title>Boss · Matcher</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  </head>
+  <body>
+    <!-- ============================================================
+     INVITE GATE — covers full page until cookie is valid
+     ============================================================ -->
+    <div class="gate" id="invite-gate">
+      <div class="gate__card">
+        <div class="gate__eyebrow">Members only · 邀请制</div>
+        <h1 class="gate__title">
+          Boss ·
+          <em style="color: var(--ochre); font-style: italic">Matcher</em>
+        </h1>
+        <p class="gate__lead">
+          输入你收到的邀请码进入。<br />每张邀请码仅限一次使用。
+        </p>
+        <form id="invite-form" autocomplete="off">
+          <input
+            id="invite-input"
+            class="gate__input"
+            type="text"
+            placeholder="× × × × × × × ×"
+            maxlength="16"
+            spellcheck="false"
+            autofocus
+          />
+          <div class="gate__error" id="invite-error">&nbsp;</div>
+          <button type="submit" class="btn-run">Enter</button>
+        </form>
+      </div>
     </div>
-</header>
 
-<!-- 主内容 -->
-<main class="max-w-7xl mx-auto px-4 py-8">
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- 左侧：简历上传和搜索配置 -->
-        <div class="lg:col-span-1 space-y-6">
-            <!-- 简历上传卡片 -->
-            <div class="card">
-                <h3 class="text-lg font-semibold text-gray-900 mb-4">📄 简历信息</h3>
-                
-                <!-- 简历上传区域 -->
-                <div id="upload-section">
-                    <div id="upload-area" class="upload-area p-4 rounded-xl text-center border-2 border-dashed border-gray-200">
-                        <div class="mb-2">
-                            <div class="w-12 h-12 bg-blue-100 rounded-full mx-auto mb-2 flex items-center justify-center">
-                                <span class="text-xl">📤</span>
-                            </div>
-                            <p class="text-sm text-gray-600 mb-2">上传简历优化匹配</p>
-                        </div>
-                        
-                        <div class="space-y-2">
-                            <input type="file" id="resume-file-input" accept=".pdf,.docx,.txt" class="hidden">
-                            <button onclick="document.getElementById('resume-file-input').click()" class="btn btn-primary btn-sm">
-                                选择文件
-                            </button>
-                            <p class="text-xs text-gray-500">支持 PDF、DOCX、TXT</p>
-                        </div>
-                    </div>
-                    
-                    <!-- 上传进度 -->
-                    <div id="upload-progress" class="mt-3" style="display: none;">
-                        <div class="flex items-center justify-between mb-1">
-                            <span class="text-sm font-medium text-gray-700">处理中...</span>
-                            <span id="upload-percentage" class="text-sm text-gray-500">0%</span>
-                        </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2">
-                            <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 简历状态显示 -->
-                <div id="resume-status" class="mt-4 pt-4 border-t border-gray-100">
-                    <div class="text-center py-2">
-                        <p class="text-sm text-gray-600">未上传简历</p>
-                        <p class="text-xs text-gray-500">上传后获得更精准匹配</p>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 搜索配置 -->
-            <div class="card">
-                <h2 class="text-xl font-semibold text-gray-900 mb-6">🔍 搜索配置</h2>
-                    
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">搜索关键词</label>
-                            <input type="text" id="keyword" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="如：市场风险管理、数据分析、AI工程师" value="">
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">🌍 目标城市</label>
-                            <select id="city" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">请选择城市</option>
-                                <option value="shanghai">上海</option>
-                                <option value="beijing">北京</option>
-                                <option value="shenzhen">深圳</option>
-                                <option value="hangzhou">杭州</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">搜索数量</label>
-                            <input type="number" id="max_jobs" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="80" min="1" max="100">
-                            <p class="text-xs text-gray-500 mt-1">系统将自动分析所有搜索到的岗位</p>
-                        </div>
-
-                        <button id="start-search-btn" class="btn btn-primary w-full">
-                            开始搜索
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 进度卡片 -->
-                <div class="card">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">⏱️ 任务进度</h3>
-                    <div id="progress-container">
-                        <!-- 主进度条 -->
-                        <div id="progress-bar" class="w-full h-3 bg-gray-200 rounded-full mb-4" style="display: none;">
-                            <div id="progress-fill" class="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-500 relative" style="width: 0%">
-                                <div class="absolute inset-0 bg-white/20 rounded-full animate-pulse"></div>
-                            </div>
-                        </div>
-                        
-                        <!-- 进度百分比 -->
-                        <div id="progress-percentage" class="text-right text-xs text-gray-500 mb-2" style="display: none;">0%</div>
-                        
-                        <!-- 当前状态 -->
-                        <div id="progress-message" class="text-sm font-medium text-gray-800 mb-3 p-2 bg-gray-50 rounded-lg">
-                            等待开始搜索...
-                        </div>
-                        
-                        <!-- 阶段指示器 -->
-                        <div id="stage-indicators" class="grid grid-cols-4 gap-2 mb-4" style="display: none;">
-                            <div class="stage-item" data-stage="search">
-                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">1</div>
-                                <div class="text-xs text-center text-gray-500">搜索岗位</div>
-                            </div>
-                            <div class="stage-item" data-stage="extract">
-                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">2</div>
-                                <div class="text-xs text-center text-gray-500">AI分析</div>
-                            </div>
-                            <div class="stage-item" data-stage="analysis">
-                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">3</div>
-                                <div class="text-xs text-center text-gray-500">整理结果</div>
-                            </div>
-                            <div class="stage-item" data-stage="complete">
-                                <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mx-auto mb-1">4</div>
-                                <div class="text-xs text-center text-gray-500">完成</div>
-                            </div>
-                        </div>
-                        
-                        <!-- 详细日志 -->
-                        <div class="border-t pt-3">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-xs font-medium text-gray-700">详细日志</span>
-                                <button id="toggle-logs" class="text-xs text-blue-600 hover:text-blue-800" onclick="toggleProgressLogs()">展开</button>
-                            </div>
-                            <div id="progress-logs" class="max-h-32 overflow-y-auto space-y-1 text-xs" style="display: none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-        <!-- 右侧：结果展示 -->
-        <div class="lg:col-span-2">
-            <div id="results-container" class="space-y-6">
-                <!-- 统计信息 -->
-                <div id="stats-card" class="card" style="display: none;">
-                    <h3 class="text-lg font-semibold text-gray-900 mb-4">搜索结果统计</h3>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showAllJobs()">
-                            <div id="total-jobs" class="text-2xl font-bold text-blue-600">0</div>
-                            <div class="text-sm text-gray-600">总搜索数</div>
-                            <div class="text-xs text-gray-400 mt-1">点击查看所有</div>
-                        </div>
-                        <div class="text-center cursor-pointer hover:bg-gray-50 rounded-lg p-3 transition-colors" onclick="showQualifiedJobs()">
-                            <div id="qualified-jobs" class="text-2xl font-bold text-purple-600">0</div>
-                            <div class="text-sm text-gray-600">推荐岗位</div>
-                            <div class="text-xs text-gray-400 mt-1">点击查看推荐</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 岗位列表 -->
-                <div id="jobs-list"></div>
-                
-                <!-- 空状态 -->
-                <div id="empty-state" class="card text-center py-12">
-                    <div class="w-16 h-16 bg-gray-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span class="text-2xl">🔍</span>
-                    </div>
-                    <h3 class="text-lg font-medium text-gray-900 mb-2">开始搜索岗位</h3>
-                    <p class="text-gray-600 mb-6">配置搜索参数并点击"开始搜索"来查找合适的岗位</p>
-                    <p class="text-sm text-gray-500">上传简历后可获得更精准的匹配分析</p>
-                </div>
-            </div>
+    <!-- ============================================================
+     MAIN SHELL — visible after auth
+     ============================================================ -->
+    <div class="shell">
+      <header class="masthead">
+        <div class="masthead__left">Issue 001 · 求职情报</div>
+        <div class="masthead__title">Boss · <em>Matcher</em></div>
+        <div class="masthead__right">
+          <span class="status-pill" title="WebSocket 实时状态">
+            <span class="status-pill__dot" id="status-dot"></span>
+            <span id="status-text">连接中…</span>
+          </span>
         </div>
-    </div>
-</main>
+      </header>
 
-<!-- JavaScript -->
-<script src="{{ url_for('static', filename='js/main.js') }}"></script>
-</body>
+      <section class="hero">
+        <h1 class="hero__title">
+          Quiet <em>intelligence</em>,<br />
+          for the long hunt.
+        </h1>
+        <aside class="hero__lead">
+          <strong>AI 解读简历与 JD</strong>，把数十个岗位按真实匹配度排序——
+          不是平台的推荐，不是付费排名，是你这份履历的视角。
+        </aside>
+      </section>
+
+      <div class="workspace">
+        <!-- ============ COLUMN I — setup ============ -->
+        <aside class="setup">
+          <div class="setup__group">
+            <div class="section-label">
+              <span class="section-label__num">I.</span>
+              Résumé
+            </div>
+            <div class="resume-slot" id="upload-area">
+              <div class="resume-slot__icon">¶</div>
+              <div class="resume-slot__title" id="resume-title">
+                拖拽或点击上传
+              </div>
+              <div class="resume-slot__hint" id="resume-hint">
+                PDF / DOCX · ≤ 5MB
+              </div>
+              <div class="resume-slot__status" id="resume-status">已加载</div>
+              <div
+                class="resume-slot__progress"
+                id="upload-bar"
+                style="width: 0%"
+              ></div>
+              <input
+                id="resume-file-input"
+                type="file"
+                accept=".pdf,.docx,.doc"
+                hidden
+              />
+            </div>
+            <div
+              id="upload-progress"
+              class="hidden"
+              style="
+                margin-top: 8px;
+                font-family: var(--font-mono);
+                font-size: 11px;
+                color: var(--ink-muted);
+                text-align: center;
+              "
+            >
+              <span id="upload-percentage">0%</span>
+            </div>
+          </div>
+
+          <div class="setup__group">
+            <div class="section-label">
+              <span class="section-label__num">II.</span>
+              Search
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="keyword">Keyword · 关键词</label>
+              <input
+                id="keyword"
+                type="text"
+                placeholder="如：AI 算法工程师"
+                value="AI算法工程师"
+              />
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="city">City · 城市</label>
+              <select id="city">
+                <option value="shanghai">上海 · Shanghai</option>
+                <option value="beijing">北京 · Beijing</option>
+                <option value="shenzhen">深圳 · Shenzhen</option>
+                <option value="hangzhou">杭州 · Hangzhou</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="max_jobs"
+                >Volume · 抓取数量</label
+              >
+              <input id="max_jobs" type="number" min="5" max="50" value="20" />
+            </div>
+
+            <button id="start-search-btn" class="btn-run">Begin search</button>
+          </div>
+
+          <div class="setup__group">
+            <div class="section-label">
+              <span class="section-label__num">III.</span>
+              Tools
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <button
+                class="btn-secondary"
+                id="btn-delete-resume"
+                type="button"
+              >
+                删除当前简历
+              </button>
+              <button
+                class="btn-secondary"
+                id="btn-delete-profile"
+                type="button"
+              >
+                清除 Boss 登录态
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <!-- ============ COLUMN II — feed ============ -->
+        <main class="feed">
+          <header class="feed__head">
+            <div>
+              <div class="section-label" style="margin-bottom: 6px">
+                <span class="section-label__num">IV.</span>
+                Latest dispatch
+              </div>
+              <h2
+                class="text-display"
+                style="
+                  font-size: 30px;
+                  font-weight: 400;
+                  font-variation-settings:
+                    &quot;opsz&quot; 96,
+                    &quot;SOFT&quot; 25;
+                  line-height: 1.15;
+                  max-width: 32ch;
+                "
+              >
+                排序结果按 AI 给出的匹配评分由高到低呈现。
+              </h2>
+            </div>
+            <div
+              class="feed__stat"
+              id="stats-card"
+              style="text-align: right; display: none"
+            >
+              <div class="feed__stat-num" id="stat-qualified">0</div>
+              <span class="feed__stat-label"
+                >qualified / <span id="stat-total">0</span> total</span
+              >
+            </div>
+          </header>
+
+          <section class="qr-pane" id="qr-pane">
+            <div class="qr-pane__eyebrow">Boss · Authorization</div>
+            <h3 class="qr-pane__title">扫码登录 Boss 直聘</h3>
+            <div class="qr-pane__image" id="qr-image">
+              <span
+                class="text-mono"
+                style="color: var(--ink-muted); font-size: 11px"
+                >等待二维码…</span
+              >
+            </div>
+            <div class="qr-pane__state" id="qr-state" data-state="qr_ready">
+              QR_READY · 请用手机 Boss App 扫码
+            </div>
+          </section>
+
+          <section class="ticker" id="progress-bar">
+            <header class="ticker__head">
+              <span>Task · running</span>
+              <span class="ticker__pct"
+                ><span id="progress-percentage">0</span>%</span
+              >
+            </header>
+            <div class="ticker__bar">
+              <div
+                class="ticker__bar-fill"
+                id="progress-fill"
+                style="width: 0%"
+              ></div>
+            </div>
+            <div class="ticker__msg" id="progress-message">等待任务开始…</div>
+            <div class="ticker__stages" id="stage-indicators">
+              <div class="stage-item" data-stage="search">
+                <div></div>
+                <div>Search</div>
+              </div>
+              <div class="stage-item" data-stage="extract">
+                <div></div>
+                <div>Extract JD</div>
+              </div>
+              <div class="stage-item" data-stage="analysis">
+                <div></div>
+                <div>AI scoring</div>
+              </div>
+              <div class="stage-item" data-stage="complete">
+                <div></div>
+                <div>Complete</div>
+              </div>
+            </div>
+            <div style="margin-top: 14px; text-align: right">
+              <button class="btn-secondary" id="btn-toggle-logs" type="button">
+                展开日志
+              </button>
+            </div>
+            <div class="ticker__logs" id="progress-logs"></div>
+          </section>
+
+          <section id="jobs-list"></section>
+
+          <section class="empty-state" id="empty-state">
+            <div class="empty-state__icon">⌗</div>
+            <h3 class="empty-state__title">尚无搜索结果</h3>
+            <p class="empty-state__hint">输入关键词，按下 Begin search。</p>
+          </section>
+        </main>
+      </div>
+
+      <footer class="colophon">
+        <div>© Boss · Matcher · 2026</div>
+        <div>
+          <a
+            href="https://github.com/JJJJun123/boss_automation"
+            target="_blank"
+            rel="noopener"
+            >github</a
+          >
+          &nbsp;·&nbsp;
+          <span>DeepSeek V4-Flash · two-stage</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- AI Details modal -->
+    <div class="modal" id="ai-details-modal">
+      <div class="modal__card">
+        <button class="modal__close" id="modal-close" type="button">
+          ✕ close
+        </button>
+        <h3 class="modal__title" id="ai-details-title">详情</h3>
+        <div class="modal__content" id="ai-details-content"></div>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+      // ---------- Invite gate ----------
+      (async function () {
+        const gate = document.getElementById("invite-gate");
+        const form = document.getElementById("invite-form");
+        const input = document.getElementById("invite-input");
+        const err = document.getElementById("invite-error");
+
+        const urlInvite = new URLSearchParams(window.location.search).get(
+          "invite",
+        );
+        if (urlInvite) {
+          input.value = urlInvite;
+          await submitInvite(urlInvite);
+        } else {
+          try {
+            const r = await fetch("/api/auth/me", { credentials: "include" });
+            if (r.ok) {
+              gate.classList.remove("open");
+              return;
+            }
+          } catch (e) {}
+          gate.classList.add("open");
+        }
+
+        async function submitInvite(code) {
+          err.innerHTML = "&nbsp;";
+          try {
+            const r = await fetch("/login?invite=" + encodeURIComponent(code), {
+              credentials: "include",
+            });
+            const body = await r.json().catch(() => ({}));
+            if (r.ok) {
+              gate.classList.remove("open");
+              if (urlInvite)
+                history.replaceState({}, "", window.location.pathname);
+            } else if (r.status === 429) {
+              err.textContent = "尝试次数过多，10 分钟后重试";
+            } else {
+              err.textContent = body.error || "邀请码无效或已使用";
+            }
+          } catch (e) {
+            err.textContent = "网络错误，请重试";
+          }
+        }
+
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const v = input.value.trim();
+          if (!v) return;
+          await submitInvite(v);
+        });
+      })();
+
+      // ---------- modal close ----------
+      document.getElementById("modal-close")?.addEventListener("click", () => {
+        document.getElementById("ai-details-modal").classList.remove("open");
+      });
+      document
+        .getElementById("ai-details-modal")
+        ?.addEventListener("click", (e) => {
+          if (e.target.id === "ai-details-modal") {
+            document
+              .getElementById("ai-details-modal")
+              .classList.remove("open");
+          }
+        });
+
+      // ---------- logs toggle ----------
+      document
+        .getElementById("btn-toggle-logs")
+        ?.addEventListener("click", (e) => {
+          const logs = document.getElementById("progress-logs");
+          logs.classList.toggle("open");
+          e.target.textContent = logs.classList.contains("open")
+            ? "收起日志"
+            : "展开日志";
+        });
+
+      // ---------- delete resume / profile ----------
+      document
+        .getElementById("btn-delete-resume")
+        ?.addEventListener("click", async () => {
+          if (!confirm("删除当前简历？")) return;
+          try {
+            await fetch("/api/delete_resume", {
+              method: "POST",
+              credentials: "include",
+            });
+            const slot = document.getElementById("upload-area");
+            slot.classList.remove("uploaded");
+            document.getElementById("resume-title").textContent =
+              "拖拽或点击上传";
+            document.getElementById("resume-hint").textContent =
+              "PDF / DOCX · ≤ 5MB";
+          } catch (e) {
+            alert("删除失败");
+          }
+        });
+
+      document
+        .getElementById("btn-delete-profile")
+        ?.addEventListener("click", async () => {
+          if (!confirm("清除 Boss 登录态？下次搜索需要重新扫码。")) return;
+          try {
+            const r = await fetch("/api/profile/delete", {
+              method: "POST",
+              credentials: "include",
+            });
+            const body = await r.json().catch(() => ({}));
+            if (r.ok) alert("Boss 登录态已清除");
+            else alert(body.error || "清除失败");
+          } catch (e) {
+            alert("清除失败");
+          }
+        });
+    </script>
+  </body>
 </html>
-
