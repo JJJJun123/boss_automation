@@ -287,6 +287,29 @@ class TestRequireLoginGate:
         spider._ensure_logged_in = _fail_login
         _run(spider._require_login(GEEK_URL))
 
+    def test_redirected_to_login_page_triggers_login(self):
+        """形态 a：被异步重定向到 /web/user/ 登录页 → settle 判 login → 触发登录"""
+        page = self._GatePage(login_btn_visible=False)
+        page_url_holder = {"url": "https://www.zhipin.com/web/user/?from=passport-zp"}
+
+        class _LoginPage(type(page)):
+            @property
+            def url(self_inner):
+                return page_url_holder["url"]
+
+        page.__class__ = _LoginPage
+        spider = self._spider_with_page(page)
+        called = {}
+
+        async def _fake_login():
+            called["yes"] = True
+            page_url_holder["url"] = GEEK_URL
+            return True
+
+        spider._ensure_logged_in = _fake_login
+        _run(spider._require_login(GEEK_URL))
+        assert called.get("yes"), "落到登录页必须触发登录"
+
     def test_login_failure_raises_login_timeout(self):
         """登录失败 → RuntimeError 且消息含"登录超时"（app 层据此标 login_timeout）"""
         page = self._GatePage(login_btn_visible=True)

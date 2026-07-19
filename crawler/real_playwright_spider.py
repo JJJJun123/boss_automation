@@ -290,14 +290,17 @@ class RealPlaywrightBossSpider:
         await self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
 
     async def _is_login_ui_present(self) -> bool:
-        """DOM 判定是否未登录：页头存在可见的登录按钮
+        """DOM 判定是否未登录：登录浮层或页头登录按钮可见
 
-        URL 判定不可靠——未登录直接访问搜索 URL 时页面仍是 /web/geek/jobs，
-        但只有残血数据。登录按钮存在与否是决定性信号。
+        未登录访问搜索 URL 有两种形态：
+        a) 被异步重定向到 /web/user/ 登录页（URL 可判，调用方处理）
+        b) 停留在搜索页但只有残血数据，并弹出登录浮层（.login-dialog）
+        本方法检测形态 b 的 DOM 信号。
 
-        返回：bool - True 表示未登录（登录按钮可见）
+        返回：bool - True 表示未登录（登录 UI 可见）
         """
-        for selector in ('.header-login-btn', 'a[ka="header-login"]',
+        for selector in ('.login-dialog', '.dialog-wrap',
+                         '.header-login-btn', 'a[ka="header-login"]',
                          '[class*="login-btn"]'):
             try:
                 el = await self.page.query_selector(selector)
@@ -310,19 +313,27 @@ class RealPlaywrightBossSpider:
     async def _require_login(self, search_url: str) -> None:
         """搜索前强制登录门：未登录先登录，保证抓到全量信息
 
-        未登录状态 Boss 只给残血数据（薪资缺失、详情不全、列表限 ~15 条），
-        故导航后立即检查；未登录则走 _ensure_logged_in（云端模式自动推 QR
-        到用户网页，本机模式可见浏览器人肉扫码），成功后回到目标搜索页。
+        未登录状态 Boss 只给残血数据（薪资缺失、详情不全、列表限 ~15 条）。
+        导航后 Boss 的反爬/登录重定向是异步的（数秒后才落定），所以先
+        settle 轮询等 URL 稳定：落到登录页 → 直接登录；落到结果页 → 再查
+        登录浮层（残血形态）。未登录走 _ensure_logged_in（云端自动推 QR
+        到用户网页，本机可见浏览器人肉扫码），成功后回到目标搜索页。
 
         参数：search_url - 目标搜索页 URL
         异常：RuntimeError - 登录失败/超时（消息含"登录超时"，app 层据此
               把任务标记为 login_timeout）
         """
-        if not await self._is_login_ui_present():
+        settled = await self._wait_until_page_settled()
+
+        needs_login = settled == 'login'
+        if not needs_login:
+            needs_login = await self._is_login_ui_present()
+
+        if not needs_login:
             logger.info("🔓 已登录，直接抓取全量信息")
             return
 
-        logger.info("🔑 未登录（残血数据模式），先行登录以抓取全量信息...")
+        logger.info(f"🔑 未登录（落点={settled}），先行登录以抓取全量信息...")
         logged_in = await self._ensure_logged_in()
         if not logged_in:
             raise RuntimeError("登录超时：用户未在时限内扫码，无法抓取全量信息")
