@@ -143,6 +143,11 @@ document.addEventListener("DOMContentLoaded", function () {
   // 注意：文件上传事件监听器已在后面的代码中设置，避免重复绑定
 
   if (uploadArea) {
+    // 新版 UI 整个卡片即点击区（旧版的"选择文件"按钮已移除）
+    uploadArea.addEventListener("click", function () {
+      resumeFileInput?.click();
+    });
+
     // 拖拽上传
     uploadArea.addEventListener("dragover", function (e) {
       e.preventDefault();
@@ -471,12 +476,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       } else {
         if (apiKeyStatus) {
-          apiKeyStatus.textContent = body.code === "key_reconfigure_required"
-            ? "原 Key 已无法解密，请重新配置"
-            : "尚未配置 · 可先免费试用";
-          apiKeyStatus.className = body.code === "key_reconfigure_required"
-            ? "key-card__status error"
-            : "key-card__status";
+          apiKeyStatus.textContent =
+            body.code === "key_reconfigure_required"
+              ? "原 Key 已无法解密，请重新配置"
+              : "尚未配置 · 可先免费试用";
+          apiKeyStatus.className =
+            body.code === "key_reconfigure_required"
+              ? "key-card__status error"
+              : "key-card__status";
         }
         if (deleteApiKeyBtn) deleteApiKeyBtn.hidden = true;
       }
