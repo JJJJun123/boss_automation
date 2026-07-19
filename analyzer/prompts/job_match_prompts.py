@@ -212,7 +212,12 @@ class JobMatchPrompts:
     "match_highlights": ["核心竞争优势（最多3条）"],
     "potential_concerns": ["必须列出所有不匹配点和风险（至少2条）"],
     "interview_suggestions": ["2-3个针对性的面试准备建议"],
-    "action_recommendation": "具体行动建议（基于严格评分给出客观建议）"
+    "action_recommendation": "具体行动建议（基于严格评分给出客观建议）",
+    "final_decision": "apply（投）/consider（考虑）/research（再研究）/skip（跳过）四选一",
+    "hard_stops": ["不可解释、不可短期补足且导致不应投递的硬伤；无则空数组"],
+    "soft_gaps": ["可以补足或在面试中解释的差距"],
+    "discard_reasons": ["仅 skip 时填写；从 salary_too_low/seniority_mismatch/domain_mismatch/location_mismatch/company_type_mismatch/workload_mismatch/other 中选择"],
+    "advertised_comp": "逐字抄写招聘信息薪资，禁止换算或改写；缺失则为空字符串"
 }}
 
 ## Critical Rules (关键规则)

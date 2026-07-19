@@ -173,8 +173,11 @@ def job_passes_hard_filters(job: Dict[str, Any],
         if req_edu is not None and req_edu > int(edu_max):
             return False, f"要求学历等级 {req_edu} > 用户上限 {edu_max}"
 
-    # 4. 自定义排除标签
-    for tag in (hard_filters.get("exclude_tags") or []):
+    # 4. 自定义排除标签。exclude_keywords 是旧配置/接口使用过的同义键，
+    # 合并处理可避免升级后已有用户规则悄悄失效。
+    excluded_terms = list(hard_filters.get("exclude_tags") or [])
+    excluded_terms.extend(hard_filters.get("exclude_keywords") or [])
+    for tag in excluded_terms:
         if tag and tag in haystack:
             return False, f"命中排除标签「{tag}」"
 

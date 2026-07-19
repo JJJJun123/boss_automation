@@ -51,7 +51,7 @@ from backend.key_vault import (
 from backend.profile_manager import (
     ProfileManager, ProfileLockTimeout, ChromeSlotTimeout, ProfileBusyError
 )
-from utils.state_store import StateStore
+from utils.state_store import StateStore, resume_fingerprint
 
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,9 @@ logger = logging.getLogger(__name__)
 
 # 任务超时（秒）—— design.md 要求 5 分钟
 _TASK_DEADLINE_SECONDS = 300
+
+# 岗位详情事实可跨用户复用；超过 48 小时后重新点击详情，避免 JD 长期陈旧。
+JOB_DETAIL_FRESH_SECONDS = 48 * 3600
 
 # 全局配置管理器（无状态，只读）
 _config_manager = None
@@ -892,6 +895,9 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                     keyword, city, max_jobs,
                     profile_dir=profile_dir,
                     qr_callback=qr_callback,
+                    detail_cache_lookup=lambda job_id: store.get_fresh_job(
+                        job_id, JOB_DETAIL_FRESH_SECONDS
+                    ),
                 )
             )
             try:
@@ -928,6 +934,17 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                 raise RuntimeError("qr_capture_failed: 无法获取登录二维码")
             raise RuntimeError("未找到任何岗位")
 
+        # 搜索列表始终实时抓取；拿到 URL 后再补全全局 job_id 并刷新事实缓存。
+        # 详情查询回调可能已在本轮爬取中命中旧记录，此处 UPSERT 会更新 last_seen。
+        from crawler.real_playwright_spider import RealPlaywrightBossSpider
+        for job in jobs:
+            if not job.get("job_id"):
+                job["job_id"] = RealPlaywrightBossSpider._job_id_from_url(
+                    job.get("url", "")
+                )
+            job.setdefault("city", city)
+            store.upsert_job(job)
+
         if not session_data.get("has_resume_data"):
             result_payload = {
                 "qualified_jobs": [],
@@ -935,6 +952,9 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                 "total": len(jobs),
                 "analyzed_count": 0,
                 "qualified_count": 0,
+                "discarded": [],
+                "discarded_count": 0,
+                "cache_hits": 0,
                 "requires_resume": True,
             }
             # Codex round 2 P1-4：尊重 set_task_result 返回值；False=用户已 cancel
@@ -968,11 +988,40 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             api_key=user_api_key,
         )
         resume_text = session_data.get("resume_data", {}).get("resume_text", "")
+        resume_hash = resume_fingerprint(resume_text)
+        cached_jobs = []
+        jobs_to_analyze = []
+        for job in jobs:
+            job_id = job.get("job_id")
+            cached = (store.get_cached_analysis(user_id, job_id, resume_hash)
+                      if job_id else None)
+            if cached is not None:
+                # 分析判断来自缓存；标题、薪资、JD 等事实仍以本轮实时列表为准。
+                cached_jobs.append({**cached, **job})
+            else:
+                jobs_to_analyze.append(job)
+
         analyze_kwargs = {"resume_text": resume_text, "keyword": keyword}
         hard_filters = session_data.get("hard_filters") or {}
         if hard_filters:
             analyze_kwargs["hard_filters"] = hard_filters
-        analyzed_jobs = analyzer.analyze_jobs(jobs, **analyze_kwargs)
+        newly_analyzed = analyzer.analyze_jobs(jobs_to_analyze, **analyze_kwargs)
+        for analyzed in newly_analyzed:
+            job_id = analyzed.get("job_id")
+            if job_id:
+                store.set_cached_analysis(user_id, job_id, resume_hash, analyzed)
+
+        def _score_value(item):
+            try:
+                return float(item.get("score", 0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        analyzed_jobs = sorted(
+            [*cached_jobs, *newly_analyzed], key=_score_value, reverse=True
+        )
+        discarded_jobs = list(getattr(analyzer, "discarded_jobs", []) or [])
+        cache_hits = len(cached_jobs)
         _emit_progress(socketio, user_id, task_id,
             f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
 
@@ -984,7 +1033,13 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
         min_score = 0
         if _config_manager:
             min_score = _config_manager.get_ai_config().get("min_score", 0)
-        qualified_jobs = [j for j in analyzed_jobs if j.get("score", 0) >= min_score]
+        try:
+            min_score_value = float(min_score)
+        except (TypeError, ValueError):
+            min_score_value = 0.0
+        qualified_jobs = [
+            j for j in analyzed_jobs if _score_value(j) >= min_score_value
+        ]
 
         result_payload = {
             "qualified_jobs": qualified_jobs,
@@ -992,6 +1047,9 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             "total": len(analyzed_jobs),
             "analyzed_count": len(analyzed_jobs),
             "qualified_count": len(qualified_jobs),
+            "discarded": discarded_jobs,
+            "discarded_count": len(discarded_jobs),
+            "cache_hits": cache_hits,
         }
         # set_task_result 现返回 bool；False = 用户已 cancel 不能写终态
         if not store.set_task_result(task_id, "success",
@@ -1006,6 +1064,9 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
                 "results": qualified_jobs,
                 "all_jobs": analyzed_jobs,
+                "discarded": discarded_jobs,
+                "discarded_count": len(discarded_jobs),
+                "cache_hits": cache_hits,
                 "stats": {
                     "total": len(analyzed_jobs),
                     "analyzed": len(analyzed_jobs),

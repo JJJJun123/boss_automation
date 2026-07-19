@@ -16,6 +16,7 @@ SQLite 状态层
 """
 
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -38,6 +39,11 @@ _BUSY_TIMEOUT_MS = 5000  # SQLite 锁等待时长
 def _hash_token(token: str) -> str:
     """对 session token 做 hash，仅存 hash 不存原 token（防 db 泄漏后 cookie 直接复用）"""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def resume_fingerprint(text: str) -> str:
+    """生成只由简历正文决定的稳定 SHA-256 指纹。"""
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
 class StateStore:
@@ -337,6 +343,87 @@ class StateStore:
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    # ─── 岗位事实与分析缓存 ────────────────────────────────
+
+    def upsert_job(self, job: Dict[str, Any]) -> None:
+        """写入最新岗位事实；无 job_id 的列表噪声直接跳过。"""
+        job_id = (job or {}).get("job_id")
+        if not job_id:
+            return
+
+        now = time.time()
+        jd = job.get("jd")
+        if jd is None:
+            jd = job.get("job_description", "")
+        city = job.get("city")
+        if city is None:
+            city = job.get("location", "")
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO jobs "
+                "(job_id, title, company, salary, city, url, jd, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(job_id) DO UPDATE SET "
+                "title = excluded.title, company = excluded.company, "
+                "salary = excluded.salary, city = excluded.city, "
+                "url = excluded.url, jd = excluded.jd, last_seen = excluded.last_seen",
+                (str(job_id), job.get("title", ""), job.get("company", ""),
+                 job.get("salary", ""), city or "", job.get("url", ""),
+                 jd or "", now, now),
+            )
+            conn.commit()
+
+    def get_fresh_job(self, job_id: str,
+                      max_age_seconds: float) -> Optional[Dict[str, Any]]:
+        """返回仍在新鲜期内的岗位事实，过期或未知岗位返回 None。"""
+        if not job_id:
+            return None
+        cutoff = time.time() - max(0, float(max_age_seconds))
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ? AND last_seen >= ?",
+                (job_id, cutoff),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_cached_analysis(self, user_id: str, job_id: str,
+                            resume_hash: str, analysis_json: Any) -> None:
+        """按用户、岗位、简历版本保存完整分析结果。"""
+        if isinstance(analysis_json, str):
+            payload = analysis_json
+        else:
+            payload = json.dumps(analysis_json, ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO job_analyses "
+                "(user_id, job_id, resume_hash, analysis_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, job_id, resume_hash) DO UPDATE SET "
+                "analysis_json = excluded.analysis_json, "
+                "created_at = excluded.created_at",
+                (user_id, job_id, resume_hash, payload, time.time()),
+            )
+            conn.commit()
+
+    def get_cached_analysis(self, user_id: str, job_id: str,
+                            resume_hash: str) -> Optional[Dict[str, Any]]:
+        """读取完整分析 JSON；键不匹配或历史坏数据都视为缓存未命中。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT analysis_json FROM job_analyses "
+                "WHERE user_id = ? AND job_id = ? AND resume_hash = ?",
+                (user_id, job_id, resume_hash),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            parsed = json.loads(row["analysis_json"])
+            return parsed if isinstance(parsed, dict) else None
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("忽略无法解析的岗位分析缓存：job_id=%s", job_id)
+            return None
 
     # ─── BYOK API Key + 试用配额 ───────────────────────────
 
@@ -784,6 +871,29 @@ CREATE TABLE IF NOT EXISTS resumes (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_expires ON resumes(expires_at);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id     TEXT PRIMARY KEY,
+    title      TEXT,
+    company    TEXT,
+    salary     TEXT,
+    city       TEXT,
+    url        TEXT,
+    jd         TEXT,
+    first_seen REAL NOT NULL,
+    last_seen  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_last_seen ON jobs(last_seen);
+
+CREATE TABLE IF NOT EXISTS job_analyses (
+    user_id      TEXT NOT NULL,
+    job_id       TEXT NOT NULL,
+    resume_hash  TEXT NOT NULL,
+    analysis_json TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    PRIMARY KEY (user_id, job_id, resume_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_job_analyses_created ON job_analyses(created_at);
 """
 
 # Codex P1-2：partial unique index 保证每用户最多 1 个 active task

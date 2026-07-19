@@ -14,6 +14,7 @@ from datetime import datetime
 
 from .ai_client_factory import AIClientFactory
 from .job_analyzer import JobAnalyzer
+from .machine_summary import normalize_machine_summary
 from .prompts.extraction_prompts import ExtractionPrompts
 from .prompts.job_analysis_prompts import JobAnalysisPrompts, RESUME_MATCH_PROMPT
 
@@ -49,6 +50,7 @@ class EnhancedJobAnalyzer:
         )
         self._screening_fallback_active = False
         self._screening_rule_fallback_active = False
+        self.discarded_jobs: List[Dict[str, str]] = []
         
         # 获取用户配置
         self.user_requirements = self._get_user_requirements()
@@ -187,6 +189,8 @@ class EnhancedJobAnalyzer:
             keyword: 搜索关键词（用于类型筛选）
             hard_filters: F2 硬性过滤（薪资/年限/学历/排除标签），在 AI 前过滤省成本
         """
+        # 分析器实例可能跨搜索复用；每次调用都只暴露本轮被过滤的岗位。
+        self.discarded_jobs = []
         self._search_keyword = keyword
 
         # 阶段0：Hard filter（爬虫后、AI 前）——阶段 1.8。
@@ -195,17 +199,37 @@ class EnhancedJobAnalyzer:
             from .hard_filter import apply_hard_filters
             before = len(jobs_list)
             jobs_list, dropped = apply_hard_filters(jobs_list, hard_filters)
+            self.discarded_jobs.extend({
+                "title": item.get("title", ""),
+                "company": item.get("company", ""),
+                "stage": "hard_filter",
+                "reason": item.get("reason") or "命中硬性过滤条件",
+            } for item in dropped)
             logger.debug(f"🔪 Hard filter: {before} → {len(jobs_list)}（剔除 {len(dropped)} 个）")
 
         # 阶段1：GLM 类型过滤（判断岗位类型是否与搜索关键词相关，不比对简历）
         screened = []
-        for i, job in enumerate(jobs_list, 1):
-            if i % 10 == 0:
-                logger.debug(f"   筛选进度: {i}/{len(jobs_list)}")
-            response = self._call_ai_for_screening(job)
-            result = self._parse_screening_result(response)
-            if result.get("relevant", False):
-                screened.append(job)
+        if not self.screening_mode:
+            screened = list(jobs_list)
+        else:
+            for i, job in enumerate(jobs_list, 1):
+                if i % 10 == 0:
+                    logger.debug(f"   筛选进度: {i}/{len(jobs_list)}")
+                response = self._call_ai_for_screening(job)
+                result = self._parse_screening_result(response)
+                if result.get("relevant", False):
+                    screened.append(job)
+                    continue
+
+                raw_reason = result.get("reason") or "AI 判定岗位类型不相关"
+                reason = (raw_reason if self._screening_rule_fallback_active
+                          else f"类型不符：{raw_reason}")
+                self.discarded_jobs.append({
+                    "title": job.get("title", ""),
+                    "company": job.get("company", ""),
+                    "stage": "screening",
+                    "reason": reason,
+                })
 
         logger.debug(f"✅ 筛选出 {len(screened)}/{len(jobs_list)} 个相关岗位")
 
@@ -221,7 +245,8 @@ class EnhancedJobAnalyzer:
                 match["score"] = int(score) if score.is_integer() else score
             except (TypeError, ValueError):
                 match["score"] = 0
-            results.append({**job, **match})
+            machine_summary = normalize_machine_summary(match, job)
+            results.append({**job, **match, **machine_summary})
 
         return sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
@@ -354,6 +379,16 @@ class EnhancedJobAnalyzer:
             json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
+
+            # 简单二分类模型常直接返回“是”或“否”；这种合法短答不应被当成
+            # JSON 解析失败。若后面附了一句话，也保留下来供用户查看。
+            plain = (response_text or "").strip()
+            if plain.startswith("是"):
+                reason = plain[1:].lstrip("：:，,。 ") or "AI 判定岗位类型相关"
+                return {"relevant": True, "reason": reason}
+            if plain.startswith("否"):
+                reason = plain[1:].lstrip("：:，,。 ") or "AI 判定岗位类型不相关"
+                return {"relevant": False, "reason": reason}
             
             # 如果解析失败，默认为不相关
             return {"relevant": False, "reason": "解析失败"}

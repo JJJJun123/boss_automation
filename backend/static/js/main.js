@@ -27,8 +27,22 @@ document.addEventListener("DOMContentLoaded", function () {
   let isSearching = false;
   let allJobs = [];
   let qualifiedJobs = [];
+  let discardedJobs = [];
   let currentView = "qualified";
   let currentTaskId = null;
+
+  const DECISION_META = {
+    apply: { label: "投", heading: "投递", className: "apply" },
+    consider: { label: "考虑", heading: "考虑", className: "consider" },
+    research: { label: "再研究", heading: "再研究", className: "research" },
+    skip: { label: "跳过", heading: "跳过", className: "skip" },
+  };
+
+  function normalizedDecision(job) {
+    return DECISION_META[job?.final_decision]
+      ? job.final_decision
+      : "consider";
+  }
 
   // ========== 初始化所有DOM元素 ==========
   debugLog("📋 初始化DOM元素...");
@@ -624,6 +638,11 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       isSearching = true;
+      allJobs = [];
+      qualifiedJobs = [];
+      discardedJobs = [];
+      renderDiscardedJobs([]);
+      showCacheHits(0);
       startBtn.textContent = "搜索中…";
       startBtn.disabled = true;
       startBtn.classList.add("searching");
@@ -765,6 +784,18 @@ document.addEventListener("DOMContentLoaded", function () {
     if (data.data) {
       debugLog("📦 收到数据:", Object.keys(data.data));
 
+      // 先更新完整数据，再决定默认视图；否则“0 个达标”分支会读到上一轮 allJobs。
+      if (Object.prototype.hasOwnProperty.call(data.data, "all_jobs")) {
+        allJobs = data.data.all_jobs || [];
+      }
+      if (Object.prototype.hasOwnProperty.call(data.data, "discarded")) {
+        discardedJobs = data.data.discarded || [];
+        renderDiscardedJobs(discardedJobs);
+      }
+      if (Object.prototype.hasOwnProperty.call(data.data, "cache_hits")) {
+        showCacheHits(data.data.cache_hits);
+      }
+
       // 检查是否需要简历
       if (data.data.requires_resume) {
         displayResumeRequiredMessage(data.data);
@@ -772,10 +803,6 @@ document.addEventListener("DOMContentLoaded", function () {
         displayResults(data.data.results, data.data.stats);
       }
 
-      // 总是存储所有岗位数据
-      if (data.data.all_jobs) {
-        allJobs = data.data.all_jobs;
-      }
     }
   }
 
@@ -993,18 +1020,86 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  function showCacheHits(count) {
+    const note = document.getElementById("cache-note");
+    if (!note) return;
+    const safeCount = Math.max(0, Number(count) || 0);
+    note.hidden = safeCount === 0;
+    note.textContent = safeCount
+      ? `♻ ${safeCount} 个岗位复用历史分析`
+      : "";
+    syncResultNotesVisibility();
+  }
+
+  function syncResultNotesVisibility() {
+    const notes = document.getElementById("result-notes");
+    const cache = document.getElementById("cache-note");
+    const discarded = document.getElementById("discard-panel");
+    if (notes && cache && discarded) {
+      notes.hidden = cache.hidden && discarded.hidden;
+    }
+  }
+
+  function renderDiscardedJobs(discarded) {
+    const panel = document.getElementById("discard-panel");
+    const count = document.getElementById("discarded-count");
+    const list = document.getElementById("discarded-list");
+    if (!panel || !count || !list) return;
+
+    const items = Array.isArray(discarded) ? discarded : [];
+    count.textContent = String(items.length);
+    panel.hidden = items.length === 0;
+    if (!items.length) panel.open = false;
+    list.replaceChildren();
+
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "discard-panel__item";
+
+      const identity = document.createElement("div");
+      identity.className = "discard-panel__identity";
+      identity.textContent = `${item.title || "未知岗位"} · ${item.company || "未知公司"}`;
+
+      const reason = document.createElement("div");
+      reason.className = "discard-panel__reason";
+      reason.textContent = item.reason || "未提供过滤原因";
+
+      row.append(identity, reason);
+      list.appendChild(row);
+    });
+    syncResultNotesVisibility();
+  }
+
   // 渲染岗位列表
   function renderJobsList(jobs) {
     debugLog("🎨 渲染岗位列表:", jobs.length);
     if (!jobsList) return;
     jobsList.innerHTML = "";
-    // 添加岗位卡片
-    jobs.forEach((job, index) => {
-      const jobCard = createJobCard(job, index + 1);
+    let cardIndex = 0;
+    const appendCard = (job) => {
+      cardIndex += 1;
+      const jobCard = createJobCard(job, cardIndex);
       if (jobCard) {
         jobsList.appendChild(jobCard);
       }
-    });
+    };
+
+    if (currentView === "all") {
+      Object.keys(DECISION_META).forEach((decision) => {
+        const grouped = jobs.filter(
+          (job) => normalizedDecision(job) === decision,
+        );
+        if (!grouped.length) return;
+
+        const heading = document.createElement("div");
+        heading.className = `decision-group decision-group--${decision}`;
+        heading.textContent = `${DECISION_META[decision].heading} · ${grouped.length}`;
+        jobsList.appendChild(heading);
+        grouped.forEach(appendCard);
+      });
+    } else {
+      jobs.forEach(appendCard);
+    }
   }
 
   // 创建岗位卡片（editorial design）
@@ -1018,6 +1113,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const highlights = (job.match_highlights || []).filter(Boolean);
     const gaps = (job.gaps || []).filter(Boolean);
+    const hardStops = Array.isArray(job.hard_stops)
+      ? job.hard_stops.filter(Boolean)
+      : [];
+    const decision = normalizedDecision(job);
+    const decisionMeta = DECISION_META[decision];
     const escape = (s) =>
       (s || "")
         .toString()
@@ -1033,7 +1133,10 @@ document.addEventListener("DOMContentLoaded", function () {
             <span class="job-card__score-out">/ 10</span>
         </div>
         <div class="job-card__body">
-            <h3 class="job-card__title">${escape(cleanMarkdown(job.title)) || "未知岗位"}</h3>
+            <div class="job-card__heading">
+              <h3 class="job-card__title">${escape(cleanMarkdown(job.title)) || "未知岗位"}</h3>
+              <span class="decision-badge decision-badge--${decisionMeta.className}">${decisionMeta.label}</span>
+            </div>
             <div class="job-card__meta">
                 <span>${escape(cleanMarkdown(job.company)) || "未知公司"}</span>
                 <span class="job-card__meta-divider">·</span>
@@ -1042,6 +1145,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <span>${escape(job.work_location) || "未知地点"}</span>
                 ${job.url ? `<span class="job-card__meta-divider">·</span><a href="${escape(job.url)}" target="_blank" rel="noopener">原文链接 ↗</a>` : ""}
             </div>
+            ${hardStops.length ? `<div class="job-card__hard-stop"><span>Hard stop</span>${escape(hardStops[0])}</div>` : ""}
             ${job.summary ? `<div class="job-card__summary">"${escape(job.summary)}"</div>` : ""}
             ${
               highlights.length

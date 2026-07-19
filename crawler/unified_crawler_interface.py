@@ -23,6 +23,8 @@ class SearchParams:
     use_cache: bool = True
     profile_dir: Optional[str] = None  # per-user Chrome profile（profile_manager 提供）
     qr_callback: Optional[Any] = None  # 云端 QR 登录事件透传（本机模式可不传）
+    job_detail_cache: Optional[Dict[str, Dict[str, Any]]] = None
+    detail_cache_lookup: Optional[Any] = None  # 按 job_id 懒查询新鲜详情
 
 
 @dataclass 
@@ -94,6 +96,8 @@ class UnifiedCrawlerInterface:
                 use_cache=params.get("use_cache", True),
                 profile_dir=params.get("profile_dir"),
                 qr_callback=params.get("qr_callback"),
+                job_detail_cache=params.get("job_detail_cache"),
+                detail_cache_lookup=params.get("detail_cache_lookup"),
             )
         else:
             search_params = params
@@ -141,6 +145,8 @@ class UnifiedCrawlerInterface:
                 headless=False,
                 profile_dir=params.profile_dir,
                 qr_callback=params.qr_callback,
+                job_detail_cache=params.job_detail_cache,
+                detail_cache_lookup=params.detail_cache_lookup,
             )
             
             try:

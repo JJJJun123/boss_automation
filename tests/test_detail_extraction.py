@@ -143,6 +143,75 @@ def test_extract_panel_salary_accepts_valid_formats():
         assert result == valid_text, f"真实薪资 '{valid_text}' 应通过校验"
 
 
+# ─── 详情缓存跳过 ────────────────────────────────────────
+
+def test_fetch_job_details_reuses_complete_cache_and_keeps_live_list_fields():
+    """缓存完整时不点击详情；标题/薪资仍以本轮实时列表为准。"""
+    spider = RealPlaywrightBossSpider(detail_cache_lookup=lambda _job_id: {
+        "title": "缓存旧标题",
+        "salary": "20-30K",
+        "jd": "缓存中的完整 JD",
+    })
+    spider._extract_job_detail_page = AsyncMock()
+    jobs = [{
+        "title": "实时新标题",
+        "salary": "25-35K",
+        "url": "https://www.zhipin.com/job_detail/cache123.html",
+    }]
+
+    result = asyncio.run(spider._fetch_job_details(jobs))
+
+    spider._extract_job_detail_page.assert_not_awaited()
+    assert result[0]["title"] == "实时新标题"
+    assert result[0]["salary"] == "25-35K"
+    assert result[0]["job_description"] == "缓存中的完整 JD"
+    assert result[0]["detail_cache_hit"] is True
+
+
+def test_fetch_job_details_falls_back_when_cache_incomplete():
+    """只有薪资没有 JD 的缓存不完整，必须继续走实时详情。"""
+    spider = RealPlaywrightBossSpider(
+        detail_cache_lookup=lambda _job_id: {"salary": "20-30K"}
+    )
+    spider._extract_job_detail_page = AsyncMock(return_value={
+        "job_description": "实时 JD",
+        "detail_extraction_success": True,
+    })
+    jobs = [{
+        "title": "风险经理",
+        "salary": "20-30K",
+        "url": "https://www.zhipin.com/job_detail/live123.html",
+    }]
+
+    with patch("crawler.real_playwright_spider.asyncio.sleep", new=AsyncMock()):
+        result = asyncio.run(spider._fetch_job_details(jobs))
+
+    spider._extract_job_detail_page.assert_awaited_once()
+    assert result[0]["job_description"] == "实时 JD"
+
+
+def test_fetch_job_details_cache_error_degrades_to_live_detail():
+    """SQLite 查询等缓存故障不应中断整批抓取。"""
+    def _broken_lookup(_job_id):
+        raise RuntimeError("cache unavailable")
+
+    spider = RealPlaywrightBossSpider(detail_cache_lookup=_broken_lookup)
+    spider._extract_job_detail_page = AsyncMock(return_value={
+        "job_description": "降级后的实时 JD",
+        "detail_extraction_success": True,
+    })
+    jobs = [{
+        "title": "风险经理",
+        "salary": "20-30K",
+        "url": "https://www.zhipin.com/job_detail/error123.html",
+    }]
+
+    with patch("crawler.real_playwright_spider.asyncio.sleep", new=AsyncMock()):
+        result = asyncio.run(spider._fetch_job_details(jobs))
+
+    assert result[0]["job_description"] == "降级后的实时 JD"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

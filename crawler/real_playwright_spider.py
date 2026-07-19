@@ -36,6 +36,8 @@ class RealPlaywrightBossSpider:
         qr_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
         login_wait_seconds: Optional[float] = None,
         qr_poll_interval: Optional[float] = None,
+        job_detail_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+        detail_cache_lookup: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
     ):
         """
         参数：
@@ -45,10 +47,14 @@ class RealPlaywrightBossSpider:
             qr_callback - 登录二维码状态回调；不传时保持原本地浏览器轮询行为
             login_wait_seconds - 登录等待时限；主要用于部署调优和快速测试
             qr_poll_interval - 登录状态与二维码变化的轮询间隔
+            job_detail_cache - 可选的预加载岗位详情（job_id → 详情）
+            detail_cache_lookup - 点击详情前按 job_id 查询新鲜缓存的回调
         """
         self.headless = headless
         self.profile_dir_override = profile_dir  # 由 profile_manager 注入
         self.qr_callback = qr_callback
+        self.job_detail_cache = job_detail_cache or {}
+        self.detail_cache_lookup = detail_cache_lookup
         self.login_wait_seconds = (
             float(login_wait_seconds)
             if login_wait_seconds is not None
@@ -1142,6 +1148,18 @@ class RealPlaywrightBossSpider:
                     jobs_with_details.append(job)
                     continue
 
+                job_id = self._job_id_from_url(job_url)
+                cached = await self._lookup_cached_job_detail(job_id)
+                if self._cached_detail_is_complete(cached, job):
+                    logger.info("♻️ 复用岗位详情缓存: %s", job_id)
+                    jobs_with_details.append({
+                        **job,
+                        **self._cached_detail_fields(cached, job),
+                        "job_id": job_id,
+                        "detail_cache_hit": True,
+                    })
+                    continue
+
                 # 获取详情页数据
                 details = await self._extract_job_detail_page(job_url)
                 
@@ -1159,6 +1177,48 @@ class RealPlaywrightBossSpider:
                 continue
         
         return jobs_with_details
+
+    async def _lookup_cached_job_detail(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """读取详情缓存；查询故障只降级为实时抓取，不中断整批搜索。"""
+        if not job_id:
+            return None
+        cached = None
+        if self.detail_cache_lookup is not None:
+            try:
+                cached = self.detail_cache_lookup(job_id)
+                if inspect.isawaitable(cached):
+                    cached = await cached
+            except Exception as exc:
+                logger.warning("岗位详情缓存查询失败 job_id=%s type=%s，改走实时详情",
+                               job_id, type(exc).__name__)
+        if not cached:
+            cached = self.job_detail_cache.get(job_id)
+        return cached if isinstance(cached, dict) else None
+
+    @staticmethod
+    def _cached_detail_is_complete(cached: Optional[Dict[str, Any]],
+                                   list_job: Dict[str, Any]) -> bool:
+        """缓存 JD 且缓存/实时列表任一侧有薪资时，详情产物已足够完整。"""
+        if not isinstance(cached, dict):
+            return False
+        jd = cached.get("jd") or cached.get("job_description")
+        salary = cached.get("salary") or list_job.get("salary")
+        return bool(jd and salary)
+
+    @staticmethod
+    def _cached_detail_fields(cached: Dict[str, Any],
+                              list_job: Dict[str, Any]) -> Dict[str, Any]:
+        """回填详情字段，同时让本轮实时列表字段保持最高优先级。"""
+        jd = cached.get("jd") or cached.get("job_description") or ""
+        fields = {
+            "jd": jd,
+            "job_description": jd,
+            "job_requirements": jd,
+            "detail_extraction_success": True,
+        }
+        if not list_job.get("salary") and cached.get("salary"):
+            fields["salary"] = cached["salary"]
+        return fields
     
     @staticmethod
     def _job_id_from_url(job_url: str) -> str:

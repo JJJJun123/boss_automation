@@ -268,7 +268,12 @@ RESUME_MATCH_PROMPT = """你是一个严格的招聘评估专家。给你一份�
   "score": <1-10的整数，10表示完美匹配>,
   "match_highlights": [<最多3条匹配亮点，字符串列表>],
   "gaps": [<最多3条关键差距，字符串列表>],
-  "summary": "<一句话综合评价>"
+  "summary": "<一句话综合评价>",
+  "final_decision": "<apply（投）|consider（考虑）|research（再研究）|skip（跳过）之一>",
+  "hard_stops": [<不可通过解释或短期补足来缓解、导致不应投递的硬伤；没有则为空数组>],
+  "soft_gaps": [<可补足或可在面试解释的差距，字符串列表>],
+  "discard_reasons": [<仅 final_decision=skip 时填写；从 salary_too_low|seniority_mismatch|domain_mismatch|location_mismatch|company_type_mismatch|workload_mismatch|other 中选，可多选>],
+  "advertised_comp": "<逐字抄写招聘信息中的薪资，禁止换算或改写；没有则为空字符串>"
 }}
 
 评分标准：
