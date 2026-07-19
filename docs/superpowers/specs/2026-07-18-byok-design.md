@@ -150,6 +150,83 @@ ai:
 
 3-4 天：测试 0.5 天 → key_vault + store 0.5 天 → 透传链 1 天 → API+配额 0.5 天 → 前端 0.5 天 → 两轮 Codex review + 修复 0.5-1 天
 
+---
+
+# 阶段 Q：QR 登录云端透传（云端化首要阻塞）
+
+**状态：** 计划（2026-07-18 追加）
+**问题：** Chrome 在服务端以可见模式跑在 xvfb 虚拟显示器上，云端用户看不到浏览器窗口。`_ensure_logged_in()`（`crawler/real_playwright_spider.py:788`）跳到登录页后死等 300 秒人肉扫码——云端永远等不到，任务超时、会话过期后信息抓不全。
+
+**方案：** 爬虫截取登录页二维码图 → base64 → 回调 → SocketIO 推到用户浏览器 → 用户手机扫网页上显示的码 → 爬虫轮询检测登录成功 → 任务继续。**改 `_ensure_logged_in` 一处即覆盖两个触发场景**（首次启动登录 + 会话过期自愈 `_recover_expired_session`，都调它）。
+
+## Q1. 状态机（7 态）
+
+```
+INIT → QR_READY → SCANNED → LOGGED_IN          （主路径）
+         ↑  ↓
+       QR_EXPIRED（Boss 二维码 ~2min 过期，自动重截 → 回 QR_READY）
+QR_CAPTURE_FAILED（登录页找不到二维码元素 → 任务 failed）
+LOGIN_TIMEOUT（等待超 180s → 任务 failed）
+```
+
+- SCANNED：Boss 登录页扫码后出现"已扫描，请在手机上确认"overlay，检测到即推送（用户体验反馈，检测不到不阻塞主路径）
+- LOGGED_IN：URL 出现 `/web/geek/`（复用现有 `_is_logged_in_by_url`）
+
+## Q2. 回调通道（爬虫 → 后端 → 前端）
+
+- `unified_search_jobs(..., qr_callback=None)` → `SearchParams.qr_callback` → `RealPlaywrightBossSpider(qr_callback=...)`（模式同已有 `profile_dir` 透传链）
+- 回调签名：`qr_callback(event: dict)`，event = `{"state": str, "image_b64": Optional[str], "message": str}`
+- `_run_job_search_task` 构造回调：`socketio.emit("qr_update", {**event, "task_id": task_id}, to=user_id)`——沿用现有房间隔离，QR 图只进本人房间
+- 回调是同步函数，爬虫 async 循环里直接调（socketio.emit 线程安全，现有 `_emit_progress` 同模式）
+
+## Q3. `_ensure_logged_in` 改造
+
+1. 跳登录页（现状保留，不动反爬规避逻辑）
+2. 定位二维码元素（Boss 登录页 QR 容器 selector，实现时实测确定；定位失败 → 降级整页截图裁剪；再失败 → `QR_CAPTURE_FAILED`）
+3. `element.screenshot()` → bytes → base64 → 回调 `QR_READY`
+4. 轮询循环（间隔 3s，总窗 180s）：
+   - 截图指纹（md5）变化 → 二维码刷新/过期重发 → 重推 `QR_READY`
+   - 检测"已扫描"overlay → 推 `SCANNED`
+   - `_is_logged_in_by_url()` → 推 `LOGGED_IN`，返回 True
+5. 超时 → 推 `LOGIN_TIMEOUT` → RuntimeError（任务 failed，`result_json` 带 `{"code": "login_timeout"}`）
+6. `qr_callback=None` 时行为完全回退现状（本地可见浏览器人肉扫码），不破坏本机使用
+
+## Q4. 任务 deadline 交互
+
+现有 5 分钟任务 deadline 会被登录等待吃掉（最坏 180s 登录 + 爬取 + AI 分析必超时）。决策：**登录完成后 deadline 重新计时**——`LOGGED_IN` 回调时任务线程更新计时起点（`_bail_if_cancelled_or_timeout` 的 `started` 参数改为可更新的引用），登录等待用独立的 180s 预算。
+
+## Q5. 前端
+
+- `#qr-pane` / `#qr-image` / `#qr-state` 已在新版 UI 占位，只需接线
+- `socket.on("qr_update")`：QR_READY → 显示 pane + `img.src = "data:image/png;base64," + image_b64`；SCANNED → 状态文案"已扫描，请在手机确认"；LOGGED_IN → 隐藏 pane、恢复进度条；LOGIN_TIMEOUT/QR_CAPTURE_FAILED → 错误文案 + 建议重试
+- 校验 event.task_id 等于当前任务，防串台
+
+## Q6. 安全
+
+- QR 图 base64 只 `to=user_id` 房间推送；**不落盘、不入日志**（`task_logger` 敏感字段集新增 `image_b64`）
+- QR 图含登录凭据性质（扫了就登录该账号）——泄露即账号被他人绑走，房间隔离是硬要求（已有 join_room 机制）
+
+## Q7. 测试计划（TDD）
+
+`tests/test_qr_passthrough.py`
+
+- 状态机：QR_READY→SCANNED→LOGGED_IN 合法序列；QR_EXPIRED 重截回 QR_READY；超时抛 RuntimeError 且推 LOGIN_TIMEOUT
+- 截图指纹变化触发重推（mock page.screenshot 返回不同 bytes）
+- `qr_callback=None` 回退现状路径（不截图、不推送、维持原轮询）
+- 定位失败降级链：元素 → 整页 → QR_CAPTURE_FAILED
+
+`tests/test_app_qr.py`
+
+- `qr_update` 事件 emit 带 `to=user_id`（房间隔离，mock socketio 捕获参数）
+- event 带 task_id；image_b64 不出现在 task_logger 输出（脱敏测试）
+- login_timeout 任务标 failed + `result_json.code == "login_timeout"`，试用次数不扣
+- deadline 重计时：登录耗时不吞噬爬取/分析预算
+
+## Q8. 工作量与依赖
+
+- 2-3 天；无新 pip 依赖；xvfb 可见模式保留（反检测要求），`page.screenshot` 在 xvfb 下正常工作
+- 与 BYOK 无代码耦合，可并行开发；**建议实施顺序：先 QR（云端可用性阻塞）后 BYOK（商业化）**，或按 BYOK 已写好的 54 例测试先做 BYOK——由用户定
+
 ## 后续独立工作项（不在本 spec）
 
 - UI 风格回迁：新版编辑风 → 旧版简洁卡片风（用户已选定方向）
