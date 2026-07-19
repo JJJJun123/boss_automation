@@ -173,6 +173,24 @@ class TestLoginSuccess:
         assert _run(spider._ensure_logged_in()) is True
         assert events[-1]["state"] == "logged_in"
 
+    def test_login_detected_via_api_when_url_stays_homepage(self):
+        """实测：扫码确认后 Boss 跳首页 www.zhipin.com/（非 /web/geek/）。
+        URL 判定漏判，必须靠 Boss API（code 0）识别登录成功。"""
+        events = []
+
+        class _HomePage(FakePage):
+            @property
+            def url(self):
+                return "https://www.zhipin.com/"  # 登录后落首页
+
+            async def evaluate(self, script):
+                return {"code": 0}  # Boss API：已登录
+
+        page = _HomePage(qr_element=FakeElement([QR_PNG_A]))
+        spider = _make_spider(page, qr_events=events)
+        assert _run(spider._ensure_logged_in()) is True
+        assert events[-1]["state"] == "logged_in"
+
     def test_scanned_overlay_pushed(self):
         events = []
         page = FakePage(qr_element=FakeElement([QR_PNG_A]),

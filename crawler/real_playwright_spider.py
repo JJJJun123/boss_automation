@@ -1034,7 +1034,13 @@ class RealPlaywrightBossSpider:
 
             deadline = time.monotonic() + max_wait_time
             while time.monotonic() < deadline:
-                if await self._is_logged_in_by_url():
+                # 登录成功判定双通道：URL（/web/geek/）或 Boss API（code 0）。
+                # 实测扫码确认后 Boss 常跳到首页 www.zhipin.com/（非 /web/geek/），
+                # 只看 URL 会漏判、死等到超时；API 判定在任意 zhipin 页面都有效。
+                logged = await self._is_logged_in_by_url()
+                if not logged:
+                    logged = (await self._is_logged_in_api()) is True
+                if logged:
                     logger.info("✅ 检测到登录成功！")
                     if self.qr_callback is not None:
                         await self._emit_qr_event("logged_in", "登录成功，开始搜索岗位")
