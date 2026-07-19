@@ -90,8 +90,7 @@ class ClaudeClientSDK(BaseAIClient):
         Returns:
             AI响应文本
         """
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 合并参数。Claude 5 家族已移除采样参数（temperature 等），一律不发。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -103,7 +102,6 @@ class ClaudeClientSDK(BaseAIClient):
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=temperature,
                 max_tokens=max_tokens
             )
             
@@ -132,8 +130,7 @@ class ClaudeClientSDK(BaseAIClient):
         Returns:
             AI响应文本
         """
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 合并参数。Claude 5 家族已移除采样参数（temperature 等），一律不发。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -144,7 +141,6 @@ class ClaudeClientSDK(BaseAIClient):
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=temperature,
                 max_tokens=max_tokens
             )
             
@@ -172,7 +168,6 @@ class ClaudeClientSDK(BaseAIClient):
         Yields:
             流式响应片段
         """
-        temperature = kwargs.get('temperature', self.temperature)
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -184,7 +179,6 @@ class ClaudeClientSDK(BaseAIClient):
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=temperature,
                 max_tokens=max_tokens
             ) as stream:
                 for text in stream.text_stream:

@@ -85,15 +85,14 @@ class ClaudeClient(BaseAIClient):
         if not self.api_key:
             raise Exception("Claude API Key未配置")
         
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 合并参数。Claude 5 家族已移除采样参数（temperature/top_p/top_k），
+        # 传非默认值直接 400；对旧模型省略 = 用默认值，同样安全，故一律不发。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
-        
+
         payload = {
             "model": model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": system_prompt,  # Claude的系统提示词格式
             "messages": [
                 {
@@ -136,15 +135,13 @@ class ClaudeClient(BaseAIClient):
         if not self.api_key:
             raise Exception("Claude API Key未配置")
         
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 合并参数（采样参数一律不发，理由见 call_api）
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
-        
+
         payload = {
             "model": model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": [
                 {
                     "role": "user",
