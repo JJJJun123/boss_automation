@@ -188,8 +188,16 @@ LOGIN_TIMEOUT（等待超 180s → 任务 failed）
    - 截图指纹（md5）变化 → 二维码刷新/过期重发 → 重推 `QR_READY`
    - 检测"已扫描"overlay → 推 `SCANNED`
    - `_is_logged_in_by_url()` → 推 `LOGGED_IN`，返回 True
-5. 超时 → 推 `LOGIN_TIMEOUT` → RuntimeError（任务 failed，`result_json` 带 `{"code": "login_timeout"}`）
+5. 超时 → 推 `login_timeout` → `_ensure_logged_in` 返回 False（不抛）；调用方（会话自愈路径）沿现有逻辑抛 RuntimeError → 任务 failed，`result_json` 带 `{"code": "login_timeout"}`
 6. `qr_callback=None` 时行为完全回退现状（本地可见浏览器人肉扫码），不破坏本机使用
+
+**实现契约（测试依赖，不可偏离）：**
+
+- `RealPlaywrightBossSpider.__init__` 新增可选 kwargs：`qr_callback=None`、`login_wait_seconds=None`（默认 300，有 qr_callback 时默认 180）、`qr_poll_interval=None`（默认 5，有 qr_callback 时默认 3）；实例暴露 `self.qr_callback` 属性
+- 事件 state 值小写：`qr_ready / scanned / logged_in / qr_capture_failed / login_timeout`
+- 截图指纹去重：同图不重复推 `qr_ready`；图变化（过期刷新）重推带新图
+- `backend/app.py` 提供 `_make_qr_callback(socketio, user_id, task_id, deadline_anchor) -> Callable`：emit `qr_update`（payload 并入 task_id，`to=user_id`）；`logged_in` 事件时重置 `deadline_anchor["started"]`（Q4 重计时）；emit 异常吞掉不外抛（不能炸爬虫循环）
+- `task_logger._SENSITIVE_KEYS` 新增 `image_b64`（递归嵌套也脱敏）
 
 ## Q4. 任务 deadline 交互
 
