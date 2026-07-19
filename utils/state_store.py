@@ -447,6 +447,28 @@ class StateStore:
 
     # ─── Task 记录 ────────────────────────────────────────
 
+    def terminate_orphan_active_tasks(self) -> int:
+        """服务启动时清理孤儿任务：把所有 pending/running 标为 failed
+
+        服务重启后任务线程全部死亡，但 DB 状态残留 running，会被
+        partial unique index 永久拦住该用户的新任务（前端表现为
+        "已有任务正在运行中" 409）。应在 create_app 启动时调用一次。
+
+        返回：int - 清理的任务数
+        """
+        now = time.time()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE tasks SET status = 'failed', "
+                "result_json = '{\"error\": \"server_restarted\"}', "
+                "finished_at = ? WHERE status IN ('pending', 'running')",
+                (now,),
+            )
+            conn.commit()
+            if cur.rowcount:
+                logger.warning(f"启动清理：{cur.rowcount} 个孤儿任务标为 failed")
+            return cur.rowcount
+
     def create_task(self, user_id: str, keyword: str, city: str) -> str:
         """创建一个 task 记录
 

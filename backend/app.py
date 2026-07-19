@@ -199,6 +199,8 @@ def create_app(store=None) -> Flask:
     if store is None:
         store = StateStore(db_path=os.path.join(PROJECT_ROOT, "data/state.db"))
         store.init_schema()
+        # 服务重启后任务线程全灭，DB 残留 running 会永久 409 挡新任务
+        store.terminate_orphan_active_tasks()
     app.config["STORE"] = store
 
     # ─── Profile 管理（阶段 1.2/1.3：UUID profile + 互斥锁 + 全局并发槽） ──

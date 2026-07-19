@@ -108,6 +108,36 @@ class TestTrialQuota:
 # ─── 老库迁移 ────────────────────────────────────────────
 
 
+class TestOrphanTaskCleanup:
+    """服务重启后孤儿任务清理：running/pending 任务的线程已死，
+    必须在启动时标 failed，否则永久挡住该用户的新任务（409）"""
+
+    def test_terminate_orphan_active_tasks(self, store, user_id):
+        task_id = store.create_task(user_id, keyword="AI", city="shanghai")
+        store.set_task_status(task_id, "running", progress=30)
+
+        n = store.terminate_orphan_active_tasks()
+
+        assert n == 1
+        task = store._get_task_unscoped(task_id)
+        assert task["status"] == "failed"
+        # 解卡后能立刻建新任务（partial unique index 不再拦截）
+        new_id = store.create_task(user_id, keyword="AI", city="shanghai")
+        assert new_id
+
+    def test_no_orphans_returns_zero(self, store, user_id):
+        assert store.terminate_orphan_active_tasks() == 0
+
+    def test_terminated_task_carries_restart_marker(self, store, user_id):
+        import json
+        task_id = store.create_task(user_id, keyword="AI", city="shanghai")
+        store.set_task_status(task_id, "running")
+        store.terminate_orphan_active_tasks()
+        task = store._get_task_unscoped(task_id)
+        result = json.loads(task["result_json"] or "{}")
+        assert result.get("error") == "server_restarted"
+
+
 class TestMigration:
     def test_old_db_without_trial_column_migrates(self, tmp_path):
         """已存在的老库（users 无 trial_searches_used 列）init_schema 后可用"""
