@@ -391,6 +391,10 @@ document.addEventListener("DOMContentLoaded", function () {
   window.showAllJobs = function () {
     debugLog("📋 显示所有岗位");
     currentView = "all";
+    const q = document.getElementById("btn-view-qualified");
+    const a = document.getElementById("btn-view-all");
+    if (q) q.classList.remove("active");
+    if (a) a.classList.add("active");
     if (allJobs && allJobs.length > 0) {
       renderJobsList(allJobs);
     } else {
@@ -401,6 +405,10 @@ document.addEventListener("DOMContentLoaded", function () {
   window.showQualifiedJobs = function () {
     debugLog("⭐ 显示合格岗位");
     currentView = "qualified";
+    const q = document.getElementById("btn-view-qualified");
+    const a = document.getElementById("btn-view-all");
+    if (q) q.classList.add("active");
+    if (a) a.classList.remove("active");
 
     if (qualifiedJobs && qualifiedJobs.length > 0) {
       renderJobsList(qualifiedJobs);
@@ -409,19 +417,12 @@ document.addEventListener("DOMContentLoaded", function () {
       const jobsList = document.getElementById("jobs-list");
       if (jobsList) {
         jobsList.innerHTML = `
-                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-                        <div class="w-16 h-16 bg-yellow-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                            <span class="text-3xl">📊</span>
-                        </div>
-                        <h3 class="text-lg font-semibold text-yellow-800 mb-2">暂无合格岗位</h3>
-                        <p class="text-yellow-700 mb-4">
-                            当前没有评分达标的岗位。
-                        </p>
-                        <p class="text-sm text-yellow-600">
-                            建议：点击"总搜索数"查看所有岗位，或调整搜索条件
-                        </p>
-                    </div>
-                `;
+          <section class="empty-state">
+              <div class="empty-state__icon">⌗</div>
+              <h3 class="empty-state__title">暂无合格岗位</h3>
+              <p class="empty-state__hint">点上方"全部岗位"查看逐个评分，或调整关键词重搜。</p>
+          </section>
+        `;
       }
     }
   };
@@ -897,6 +898,13 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // 显示结果
+  function setViewToggle(view) {
+    const q = document.getElementById("btn-view-qualified");
+    const a = document.getElementById("btn-view-all");
+    if (q) q.classList.toggle("active", view === "qualified");
+    if (a) a.classList.toggle("active", view === "all");
+  }
+
   function displayResults(results, stats) {
     debugLog("📊 显示结果:", { results: results?.length, stats });
 
@@ -908,10 +916,25 @@ document.addEventListener("DOMContentLoaded", function () {
       if (statsCard) statsCard.style.display = "block";
     }
 
+    // 有结果就显示"达标/全部"切换入口
+    const viewToggle = document.getElementById("view-toggle");
+    if (viewToggle && (stats?.total || 0) > 0) {
+      viewToggle.style.display = "flex";
+    }
+
     if (results && results.length > 0) {
       if (emptyState) emptyState.style.display = "none";
       qualifiedJobs = results;
+      currentView = "qualified";
+      setViewToggle("qualified");
       renderJobsList(results);
+    } else if (allJobs && allJobs.length > 0) {
+      // 没有达标岗位但有分析结果：自动切到"全部"视图，别让用户面对空白
+      qualifiedJobs = [];
+      if (emptyState) emptyState.style.display = "none";
+      currentView = "all";
+      setViewToggle("all");
+      renderJobsList(allJobs);
     } else {
       qualifiedJobs = [];
       const jobsList = document.getElementById("jobs-list");
@@ -921,7 +944,7 @@ document.addEventListener("DOMContentLoaded", function () {
               <div class="empty-state__icon">⌗</div>
               <h3 class="empty-state__title">暂无合格岗位</h3>
               <p class="empty-state__hint">
-                  搜索到 <strong>${stats?.total || 0}</strong> 个岗位，没有评分达标的。
+                  搜索到 <strong>${stats?.total || 0}</strong> 个岗位，没有评分达标的。可点上方"全部岗位"查看逐个评分。
               </p>
           </section>
         `;

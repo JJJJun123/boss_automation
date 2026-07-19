@@ -1097,3 +1097,13 @@ a:hover {
 .modal__card::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ─── 达标/全部 视图切换 ─── */
+.view-toggle {
+  display: flex;
+}
+.view-toggle__btn.active {
+  background: var(--ink);
+  color: var(--cream);
+  border-color: var(--ink);
+}

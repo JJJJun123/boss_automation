@@ -61,10 +61,6 @@
           Quiet <em>intelligence</em>,<br />
           for the long hunt.
         </h1>
-        <aside class="hero__lead">
-          <strong>AI 解读简历与 JD</strong>，把数十个岗位按真实匹配度排序——
-          不是平台的推荐，不是付费排名，是你这份履历的视角。
-        </aside>
       </section>
 
       <div class="workspace">
@@ -208,20 +204,28 @@
                 <span class="section-label__num">IV.</span>
                 Latest dispatch
               </div>
-              <h2
-                class="text-display"
-                style="
-                  font-size: 30px;
-                  font-weight: 400;
-                  font-variation-settings:
-                    &quot;opsz&quot; 96,
-                    &quot;SOFT&quot; 25;
-                  line-height: 1.15;
-                  max-width: 32ch;
-                "
+              <div
+                class="view-toggle"
+                id="view-toggle"
+                style="display: none; gap: 8px; margin-top: 6px"
               >
-                排序结果按 AI 给出的匹配评分由高到低呈现。
-              </h2>
+                <button
+                  class="btn-secondary view-toggle__btn active"
+                  id="btn-view-qualified"
+                  type="button"
+                  onclick="showQualifiedJobs()"
+                >
+                  达标岗位
+                </button>
+                <button
+                  class="btn-secondary view-toggle__btn"
+                  id="btn-view-all"
+                  type="button"
+                  onclick="showAllJobs()"
+                >
+                  全部岗位
+                </button>
+              </div>
             </div>
             <div
               class="feed__stat"

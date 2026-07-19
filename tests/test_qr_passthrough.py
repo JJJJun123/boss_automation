@@ -226,6 +226,81 @@ class TestFailurePaths:
 # ─── 无回调回退现状 ──────────────────────────────────────
 
 
+class TestRequireLoginGate:
+    """搜索前强制登录门（_require_login）
+
+    背景：未登录直接访问搜索 URL 也是 /web/geek/jobs（URL 判定误判已登录），
+    但只能拿残血数据（薪资缺失、列表限 ~15 条）。必须用 DOM 判定（页头登录
+    按钮存在 = 未登录），未登录先走 _ensure_logged_in 再抓取。
+    """
+
+    class _GatePage(FakePage):
+        """可配置登录按钮的页面；URL 恒为搜索页（复现误判场景）"""
+
+        def __init__(self, login_btn_visible, **kwargs):
+            super().__init__(**kwargs)
+            self._login_btn_visible = login_btn_visible
+            self._url = GEEK_URL  # 未登录也显示搜索页 URL
+
+        @property
+        def url(self):
+            return GEEK_URL
+
+        async def query_selector(self, selector):
+            sel = selector.lower()
+            if "login" in sel or "登录" in sel:
+                if self._login_btn_visible:
+                    return FakeElement(visible=True)
+                return None
+            return await super().query_selector(selector)
+
+    def _spider_with_page(self, page):
+        spider = RealPlaywrightBossSpider(
+            login_wait_seconds=0.3, qr_poll_interval=0.05)
+        spider.page = page
+        spider.context = None
+        return spider
+
+    def test_not_logged_in_triggers_login(self):
+        """登录按钮可见 → 必须调用 _ensure_logged_in"""
+        page = self._GatePage(login_btn_visible=True)
+        spider = self._spider_with_page(page)
+        called = {}
+
+        async def _fake_login():
+            called["yes"] = True
+            page._login_btn_visible = False
+            return True
+
+        spider._ensure_logged_in = _fake_login
+        _run(spider._require_login(GEEK_URL))
+        assert called.get("yes"), "未登录时必须触发登录流程"
+
+    def test_logged_in_skips_login(self):
+        """登录按钮不存在 → 不触发登录"""
+        page = self._GatePage(login_btn_visible=False)
+        spider = self._spider_with_page(page)
+
+        async def _fail_login():
+            raise AssertionError("已登录不应触发登录")
+
+        spider._ensure_logged_in = _fail_login
+        _run(spider._require_login(GEEK_URL))
+
+    def test_login_failure_raises_login_timeout(self):
+        """登录失败 → RuntimeError 且消息含"登录超时"（app 层据此标 login_timeout）"""
+        page = self._GatePage(login_btn_visible=True)
+        spider = self._spider_with_page(page)
+
+        async def _fake_login():
+            return False
+
+        spider._ensure_logged_in = _fake_login
+        with pytest.raises(RuntimeError) as exc:
+            _run(spider._require_login(GEEK_URL))
+        assert "登录超时" in str(exc.value)
+
+
 class TestLegacyFallback:
     def test_no_callback_no_screenshot(self):
         """qr_callback=None：不截图、不推送，URL 轮询照常工作（本机模式不回归）"""

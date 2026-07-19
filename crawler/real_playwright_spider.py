@@ -215,6 +215,9 @@ class RealPlaywrightBossSpider:
         logger.info(f"🔍 直接导航到搜索页: {search_url}")
         await self._navigate_to_search_page(search_url)
 
+        # 强制登录门：未登录只能拿残血数据（薪资缺失/列表受限），先登录再抓
+        await self._require_login(search_url)
+
         # 最小交互快照：尽快抓取一次，防止后续被反爬重定向导致整批丢失
         early_snapshot_jobs = await self.enhanced_extractor.extract_job_listings_quick_snapshot(self.page, max_jobs)
         if early_snapshot_jobs:
@@ -283,8 +286,51 @@ class RealPlaywrightBossSpider:
         """导航到搜索页面"""
         logger.info("🔗 正在导航到Boss直聘搜索页面...")
         logger.info("👀 请观察浏览器窗口，你应该能看到页面加载过程")
-        
+
         await self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+
+    async def _is_login_ui_present(self) -> bool:
+        """DOM 判定是否未登录：页头存在可见的登录按钮
+
+        URL 判定不可靠——未登录直接访问搜索 URL 时页面仍是 /web/geek/jobs，
+        但只有残血数据。登录按钮存在与否是决定性信号。
+
+        返回：bool - True 表示未登录（登录按钮可见）
+        """
+        for selector in ('.header-login-btn', 'a[ka="header-login"]',
+                         '[class*="login-btn"]'):
+            try:
+                el = await self.page.query_selector(selector)
+                if el and await el.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _require_login(self, search_url: str) -> None:
+        """搜索前强制登录门：未登录先登录，保证抓到全量信息
+
+        未登录状态 Boss 只给残血数据（薪资缺失、详情不全、列表限 ~15 条），
+        故导航后立即检查；未登录则走 _ensure_logged_in（云端模式自动推 QR
+        到用户网页，本机模式可见浏览器人肉扫码），成功后回到目标搜索页。
+
+        参数：search_url - 目标搜索页 URL
+        异常：RuntimeError - 登录失败/超时（消息含"登录超时"，app 层据此
+              把任务标记为 login_timeout）
+        """
+        if not await self._is_login_ui_present():
+            logger.info("🔓 已登录，直接抓取全量信息")
+            return
+
+        logger.info("🔑 未登录（残血数据模式），先行登录以抓取全量信息...")
+        logged_in = await self._ensure_logged_in()
+        if not logged_in:
+            raise RuntimeError("登录超时：用户未在时限内扫码，无法抓取全量信息")
+
+        # 登录成功后 Boss 可能落在任意页，确保回到目标搜索页
+        if not self._url_matches_search_target(self.page.url or '', search_url):
+            logger.info("🔗 登录成功，重新导航到目标搜索页")
+            await self._navigate_to_search_page(search_url)
     
     async def _prepare_search_page(self, target_jobs: int = 20, search_url: Optional[str] = None) -> None:
         """准备搜索页面 - 快速模式，避免触发延迟反爬检测"""
