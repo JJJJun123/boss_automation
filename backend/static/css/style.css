@@ -291,6 +291,7 @@ a:hover {
 }
 .field input[type="text"],
 .field input[type="number"],
+.field input[type="password"],
 .field select {
   width: 100%;
   padding: 11px 0;
@@ -317,6 +318,59 @@ a:hover {
   background-repeat: no-repeat;
   background-position: right 0 center;
   padding-right: 18px;
+}
+
+.trial-status {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.trial-status.exhausted {
+  color: var(--terracotta);
+}
+
+.key-card {
+  padding: 18px;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper);
+}
+
+.key-card__action {
+  width: 100%;
+  justify-content: center;
+}
+
+.key-card__status {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+.key-card__status.configured {
+  color: var(--forest);
+}
+
+.key-card__status.error {
+  color: var(--terracotta);
+}
+
+.key-card__delete {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--terracotta);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 
 /* ---------- Resume slot ---------- */
@@ -912,6 +966,16 @@ a:hover {
   color: var(--ink-muted);
 }
 
+.qr-pane__state[data-state="scanned"],
+.qr-pane__state[data-state="logged_in"] {
+  color: var(--forest);
+}
+
+.qr-pane__state[data-state="login_timeout"],
+.qr-pane__state[data-state="qr_capture_failed"] {
+  color: var(--terracotta);
+}
+
 /* =================================================================
    Footer (colophon)
    ================================================================= */
@@ -989,6 +1053,19 @@ a:hover {
   line-height: 1.7;
   color: var(--ink-soft);
   font-variation-settings: "opsz" 48;
+}
+
+.modal__card--compact {
+  max-width: 560px;
+}
+
+.byok-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* =================================================================

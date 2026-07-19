@@ -5,13 +5,16 @@
 """
 
 import asyncio
+import base64
+import hashlib
+import inspect
 import logging
 import re
 import urllib.parse
 import time
 import os
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, Callable, List, Dict, Optional
 # 使用 patchright（Playwright 反检测分支）：从驱动层避免 Runtime.enable 等 CDP 痕迹，
 # 绕过 Boss 的 security.html?code=37 反爬挑战。API 与 playwright 完全兼容。
 from patchright.async_api import async_playwright, Browser, Page, BrowserContext
@@ -26,15 +29,36 @@ logger = logging.getLogger(__name__)
 class RealPlaywrightBossSpider:
     """真正的Playwright Boss直聘爬虫"""
     
-    def __init__(self, headless: bool = False, profile_dir: Optional[str] = None):
+    def __init__(
+        self,
+        headless: bool = False,
+        profile_dir: Optional[str] = None,
+        qr_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        login_wait_seconds: Optional[float] = None,
+        qr_poll_interval: Optional[float] = None,
+    ):
         """
         参数：
             headless - 是否无头模式
             profile_dir - 覆盖 config 的 user_data_dir（per-user UUID profile 用）；
                           不传则用 config 的全局默认（向后兼容单用户场景）
+            qr_callback - 登录二维码状态回调；不传时保持原本地浏览器轮询行为
+            login_wait_seconds - 登录等待时限；主要用于部署调优和快速测试
+            qr_poll_interval - 登录状态与二维码变化的轮询间隔
         """
         self.headless = headless
         self.profile_dir_override = profile_dir  # 由 profile_manager 注入
+        self.qr_callback = qr_callback
+        self.login_wait_seconds = (
+            float(login_wait_seconds)
+            if login_wait_seconds is not None
+            else (180.0 if qr_callback is not None else 300.0)
+        )
+        self.qr_poll_interval = (
+            float(qr_poll_interval)
+            if qr_poll_interval is not None
+            else (3.0 if qr_callback is not None else 5.0)
+        )
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
@@ -785,6 +809,61 @@ class RealPlaywrightBossSpider:
                 return False
         return True
 
+    async def _emit_qr_event(
+        self, state: str, message: str, image_b64: Optional[str] = None
+    ) -> None:
+        """向上游发送结构稳定的 QR 事件；回调故障不能打断登录轮询。"""
+        if self.qr_callback is None:
+            return
+        event = {"state": state, "image_b64": image_b64, "message": message}
+        try:
+            result = self.qr_callback(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning("QR 状态回调失败 type=%s", type(exc).__name__)
+
+    async def _capture_qr_image(self) -> Optional[bytes]:
+        """优先截取二维码元素；元素定位失败时降级为当前登录页截图。"""
+        selectors = (
+            ".qr-img-box img",
+            ".qr-code img",
+            ".login-qrcode img",
+            "img[class*='qr']",
+            "canvas[class*='qr']",
+        )
+        for selector in selectors:
+            try:
+                element = await self.page.query_selector(selector)
+                if element is not None and await element.is_visible():
+                    image = await element.screenshot(type="png")
+                    if image:
+                        return image
+            except Exception:
+                continue
+        try:
+            return await self.page.screenshot(type="png")
+        except Exception as exc:
+            logger.warning("二维码截图失败 type=%s", type(exc).__name__)
+            return None
+
+    async def _qr_scanned(self) -> bool:
+        """检测 Boss 登录页的“已扫码/待手机确认”覆盖层。"""
+        selectors = (
+            ".scan-success",
+            ".qrcode-confirm",
+            "[class*='scan']",
+            "text=已扫描",
+        )
+        for selector in selectors:
+            try:
+                element = await self.page.query_selector(selector)
+                if element is not None and await element.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def _ensure_logged_in(self) -> bool:
         """引导用户完成登录（直接跳登录页，不导航首页以避免反爬）"""
         try:
@@ -797,7 +876,7 @@ class RealPlaywrightBossSpider:
                 )
             except Exception as e:
                 logger.warning(f"登录页加载异常: {e}")
-            await asyncio.sleep(2)
+            await asyncio.sleep(min(2.0, max(self.qr_poll_interval, 0.01)))
 
             # [诊断] 监听登录阶段每一次页面跳转/刷新，定位"登录页不停刷新"的根因
             nav_count = {'n': 0}
@@ -820,26 +899,63 @@ class RealPlaywrightBossSpider:
             logger.info("🔐 请在浏览器中完成登录（扫码或手机号）")
             logger.info("💡 登录成功后，程序会自动检测并继续")
 
-            # 循环等待登录，通过URL判断（每5秒检查一次）
-            max_wait_time = 300
-            check_interval = 5
-            waited_time = 0
+            max_wait_time = self.login_wait_seconds
+            check_interval = max(self.qr_poll_interval, 0.01)
 
-            while waited_time < max_wait_time:
-                await asyncio.sleep(check_interval)
-                waited_time += check_interval
+            # 部署模式：把二维码图像和状态向上游推送。截图内容做指纹去重，
+            # Boss 自动刷新二维码时，图像变化会自然触发下一次 qr_ready。
+            last_qr_hash = None
+            scanned_emitted = False
+            if self.qr_callback is not None:
+                image = await self._capture_qr_image()
+                if not image:
+                    await self._emit_qr_event(
+                        "qr_capture_failed", "无法获取登录二维码，请稍后重试"
+                    )
+                    return False
+                last_qr_hash = hashlib.sha256(image).hexdigest()
+                await self._emit_qr_event(
+                    "qr_ready", "请使用 Boss 直聘 App 扫码登录",
+                    base64.b64encode(image).decode("ascii"),
+                )
 
-                # 登录成功后，URL会变为 /web/geek/ 路径
+            deadline = time.monotonic() + max_wait_time
+            while time.monotonic() < deadline:
                 if await self._is_logged_in_by_url():
                     logger.info("✅ 检测到登录成功！")
-                    await asyncio.sleep(2)
+                    if self.qr_callback is not None:
+                        await self._emit_qr_event("logged_in", "登录成功，开始搜索岗位")
+                    else:
+                        await asyncio.sleep(min(2.0, check_interval))
                     return True
 
-                remaining_time = max_wait_time - waited_time
+                if self.qr_callback is not None:
+                    if not scanned_emitted and await self._qr_scanned():
+                        scanned_emitted = True
+                        await self._emit_qr_event("scanned", "二维码已扫描，请在手机上确认")
+
+                    image = await self._capture_qr_image()
+                    if image:
+                        image_hash = hashlib.sha256(image).hexdigest()
+                        if image_hash != last_qr_hash:
+                            last_qr_hash = image_hash
+                            scanned_emitted = False
+                            await self._emit_qr_event(
+                                "qr_ready", "二维码已刷新，请重新扫码",
+                                base64.b64encode(image).decode("ascii"),
+                            )
+
+                remaining_time = max(0, int(deadline - time.monotonic()))
                 tab_n = len(self.context.pages) if self.context else '?'
-                logger.info(f"⏳ 等待登录中... (剩余 {remaining_time} 秒，标签页={tab_n}，本阶段跳转 {nav_count['n']} 次)")
+                logger.info(
+                    f"⏳ 等待登录中... (剩余 {remaining_time} 秒，标签页={tab_n}，"
+                    f"本阶段跳转 {nav_count['n']} 次)"
+                )
+                await asyncio.sleep(min(check_interval, max(0, deadline - time.monotonic())))
 
             logger.error("❌ 登录超时，请重试")
+            if self.qr_callback is not None:
+                await self._emit_qr_event("login_timeout", "扫码登录超时，请重新发起搜索")
             return False
 
         except Exception as e:

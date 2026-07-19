@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 class ClaudeClient(BaseAIClient):
     """Claude API客户端 - 纯API调用器"""
     
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 api_key: Optional[str] = None):
         """
         初始化Claude客户端
         
@@ -40,7 +41,7 @@ class ClaudeClient(BaseAIClient):
                 self.model_name = 'claude-sonnet-4-6'
         
         # API配置
-        self.api_key = os.getenv('CLAUDE_API_KEY')
+        self.api_key = api_key or os.getenv('CLAUDE_API_KEY')
         self.base_url = "https://api.anthropic.com/v1/messages"
         self.headers = {
             "x-api-key": self.api_key,

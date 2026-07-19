@@ -41,6 +41,13 @@ from backend.security import load_secret_key, get_cors_origins, safe_error_respo
 from backend.upload_validator import validate_resume_file, UploadValidationError
 from backend.rate_limiter import invite_limiter
 from backend.task_logger import task_logger
+from backend.key_vault import (
+    decrypt_key,
+    encrypt_key,
+    load_encryption_key,
+    mask_key,
+    validate_api_key,
+)
 from backend.profile_manager import (
     ProfileManager, ProfileLockTimeout, ChromeSlotTimeout, ProfileBusyError
 )
@@ -122,6 +129,54 @@ def _get_client_ip(req) -> str:
     return direct
 
 
+def _get_trial_limit() -> int:
+    """读取 BYOK 试用上限；配置异常时安全回落到 3 次。"""
+    if _config_manager:
+        value = _config_manager.get_app_config("ai.byok.trial_limit", 3)
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            pass
+    return 3
+
+
+def _get_provider_models(provider: str) -> tuple[str, str]:
+    """返回 (screening_model, analysis_model)。"""
+    defaults = {
+        "deepseek": ("deepseek-v4-flash", "deepseek-v4"),
+        "claude": ("claude-haiku-4-5", "claude-sonnet-5"),
+        "gpt": ("gpt-5-mini", "gpt-5.2"),
+    }
+    screening, analysis = defaults.get(provider, defaults["deepseek"])
+    if _config_manager:
+        config = _config_manager.get_app_config(
+            f"ai.byok.provider_models.{provider}", {}
+        ) or {}
+        screening = config.get("screening", screening)
+        analysis = config.get("analysis", analysis)
+    return screening, analysis
+
+
+def _is_user_key_auth_error(exc: Exception) -> bool:
+    """识别用户 Key 失效、无权限或余额不足类错误。"""
+    message = str(exc).lower()
+    key_specific = any(marker in message for marker in (
+        "invalid api key", "invalid_api_key", "api key未配置", "api key 无效",
+        "api key已失效", "api_key_invalid", "incorrect api key",
+    ))
+    quota_specific = any(marker in message for marker in (
+        "insufficient balance", "insufficient_quota", "余额不足", "无可用资源包",
+    ))
+    ai_context = any(marker in message for marker in (
+        "deepseek api", "claude api", "gpt api", "openai api",
+        "anthropic api", "api key", "api_key",
+    ))
+    auth_or_status = any(marker in message for marker in (
+        "401", "403", "authentication", "unauthorized", "forbidden",
+    ))
+    return key_specific or quota_specific or (ai_context and auth_or_status)
+
+
 def create_app(store=None) -> Flask:
     """Flask 应用工厂
 
@@ -134,6 +189,11 @@ def create_app(store=None) -> Flask:
 
     # ─── SECRET_KEY 强制环境变量（fail-fast） ─────────────
     app.secret_key = load_secret_key()
+
+    # 生产真实启动必须同时配置独立的 BYOK 加密密钥。测试通过注入 store
+    # 创建隔离 app，不要求每个既有 fixture 都携带生产部署密钥。
+    if store is None and os.environ.get("FLASK_ENV", "production").lower() != "development":
+        load_encryption_key()
 
     # ─── State store 初始化 ────────────────────────────────
     if store is None:
@@ -259,6 +319,80 @@ def create_app(store=None) -> Flask:
             "app": _config_manager.get_app_config(),
         })
 
+    @app.route("/api/settings/api-key", methods=["POST"])
+    @require_user_id
+    def set_api_key():
+        """验证并保存当前用户唯一的 BYOK Key。"""
+        if not _is_same_origin(request):
+            return jsonify({"error": "请求来源不合法"}), 403
+
+        data = request.get_json(silent=True) or {}
+        provider = str(data.get("provider", "")).strip().lower()
+        api_key = str(data.get("api_key", "")).strip()
+        if provider not in {"deepseek", "claude", "gpt"}:
+            return jsonify({"error": "不支持的 AI provider"}), 400
+        if not api_key:
+            return jsonify({"error": "API Key 必填"}), 400
+        try:
+            is_valid = validate_api_key(
+                provider, api_key, raise_on_timeout=True
+            )
+        except TimeoutError:
+            return jsonify({
+                "error": "Key 验证超时，请稍后重试",
+                "code": "key_validation_timeout",
+            }), 503
+        if not is_valid:
+            return jsonify({"error": "Key 验证失败，请检查"}), 400
+
+        store.set_user_api_key(
+            request.user_id, provider, encrypt_key(api_key)
+        )
+        return jsonify({
+            "success": True,
+            "provider": provider,
+            "masked": mask_key(api_key),
+        })
+
+    @app.route("/api/settings/api-key", methods=["GET"])
+    @require_user_id
+    def get_api_key():
+        """只回显 provider 与掩码，永不把 Key 原文送回浏览器。"""
+        if not _is_same_origin(request):
+            return jsonify({"error": "请求来源不合法"}), 403
+        row = store.get_user_api_key(request.user_id)
+        trial_limit = _get_trial_limit()
+        used = store.get_trial_usage(request.user_id)
+        trial = {
+            "trial_used": used,
+            "trial_limit": trial_limit,
+            "trial_remaining": max(0, trial_limit - used),
+        }
+        if not row:
+            return jsonify({"error": "尚未配置 API Key", **trial}), 404
+        try:
+            plain = decrypt_key(row["key_encrypted"])
+        except RuntimeError:
+            return jsonify({
+                "error": "API Key 无法解密，请重新配置",
+                "code": "key_reconfigure_required",
+                **trial,
+            }), 404
+        return jsonify({
+            "provider": row["provider"],
+            "masked": mask_key(plain),
+            "last_verified_at": row.get("last_verified_at"),
+            **trial,
+        })
+
+    @app.route("/api/settings/api-key", methods=["DELETE"])
+    @require_user_id
+    def delete_api_key():
+        if not _is_same_origin(request):
+            return jsonify({"error": "请求来源不合法"}), 403
+        store.delete_user_api_key(request.user_id)
+        return jsonify({"success": True})
+
     @app.route("/api/upload_resume", methods=["POST"])
     @require_user_id
     def upload_resume():
@@ -376,6 +510,27 @@ def create_app(store=None) -> Flask:
         city = data.get("city", "shanghai")
         max_jobs = data.get("max_jobs", 30)
 
+        # BYOK 配额门：有可解密 Key 永远放行；否则仅允许站方 Key 试用 N 次。
+        key_row = store.get_user_api_key(request.user_id)
+        user_api_key = None
+        ai_provider = "deepseek"
+        if key_row:
+            try:
+                user_api_key = decrypt_key(key_row["key_encrypted"])
+                ai_provider = key_row["provider"]
+            except RuntimeError:
+                # 密钥轮换/密文损坏按未配置处理，绝不向用户抛 500。
+                user_api_key = None
+                ai_provider = "deepseek"
+
+        uses_station_key = user_api_key is None
+        trial_limit = _get_trial_limit()
+        if uses_station_key and store.get_trial_usage(request.user_id) >= trial_limit:
+            return jsonify({
+                "error": "试用次数已用完，请配置你的 API Key",
+                "code": "byok_required",
+            }), 402
+
         import sqlite3 as _sqlite3
         try:
             task_id = store.create_task(request.user_id, keyword=keyword, city=city)
@@ -400,6 +555,10 @@ def create_app(store=None) -> Flask:
             "keyword": keyword,
             "city": city,
             "max_jobs": max_jobs,
+            "ai_provider": ai_provider,
+            "api_key": user_api_key,
+            "uses_station_key": uses_station_key,
+            "hard_filters": data.get("hard_filters") or {},
         }
 
         thread = threading.Thread(
@@ -567,23 +726,50 @@ def _emit_progress(socketio, user_id, task_id, message, progress=None, data=None
     socketio.emit("progress_update", payload, to=user_id)
 
 
+def _make_qr_callback(socketio, user_id, task_id, deadline_anchor):
+    """把爬虫 QR 状态桥接到当前用户的 Socket.IO 私有房间。"""
+    def _callback(event):
+        payload = dict(event or {})
+        payload["task_id"] = task_id
+        state = payload.get("state")
+        deadline_anchor["qr_state"] = state
+        if state == "logged_in":
+            # 扫码耗时不挤占后续爬取和 AI 分析的五分钟预算。
+            deadline_anchor["started"] = datetime.now()
+        try:
+            socketio.emit("qr_update", payload, to=user_id)
+        except Exception as exc:
+            logger.warning("QR Socket 推送失败 type=%s", type(exc).__name__)
+
+    return _callback
+
+
 def _check_cancelled(store, task_id: str, user_id: str) -> bool:
     """检查任务是否被用户取消（用户调 /api/jobs/cancel 后 status=cancelled）"""
     task = store.get_task(task_id, user_id=user_id)
     return bool(task) and task.get("status") == "cancelled"
 
 
-def _check_deadline(started_at: datetime) -> bool:
+def _deadline_started(started_at):
+    """兼容旧 datetime 入参和可被 QR 回调重置的 anchor 字典。"""
+    if isinstance(started_at, dict):
+        return started_at["started"]
+    return started_at
+
+
+def _check_deadline(started_at) -> bool:
     """检查任务整体是否已超过 deadline（5 分钟）
 
     Codex P1-4：原 wait_for 只包爬虫，不包 AI 分析。改成全任务 checkpoint
     检查 elapsed time。
     """
-    return (datetime.now() - started_at).total_seconds() > _TASK_DEADLINE_SECONDS
+    return (
+        datetime.now() - _deadline_started(started_at)
+    ).total_seconds() > _TASK_DEADLINE_SECONDS
 
 
 def _bail_if_cancelled_or_timeout(store, socketio, task_id: str, user_id: str,
-                                   started: datetime) -> bool:
+                                   started) -> bool:
     """统一的 abort checkpoint。返回 True 表示已 abort，调用方应直接 return
 
     Codex round 2 P1-2：原 _check_deadline 命中后只 return，task 留 running
@@ -629,9 +815,13 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
     keyword = session_data["keyword"]
     city = session_data["city"]
     max_jobs = session_data["max_jobs"]
+    ai_provider = session_data.get("ai_provider", "deepseek")
+    user_api_key = session_data.get("api_key")
+    uses_station_key = bool(session_data.get("uses_station_key", True))
 
     import json as _json
-    started = datetime.now()
+    task_started = datetime.now()
+    deadline_anchor = {"started": task_started, "qr_state": None}
 
     # 阶段 1.2/1.3：先拿 chrome slot + profile 锁；拿不到立即标 failed 而非空转
     profile_acquired = None
@@ -658,11 +848,16 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             return  # 用户已 cancel
         _emit_progress(socketio, user_id, task_id, "🚀 开始初始化爬虫...", 5)
 
-        deepseek_model = "deepseek-v4-flash"
-        if _config_manager:
-            deepseek_model = _config_manager.get_app_config(
-                "ai.models.deepseek.model_name", "deepseek-v4-flash"
-            )
+        if uses_station_key:
+            station_model = "deepseek-v4-flash"
+            if _config_manager:
+                station_model = _config_manager.get_app_config(
+                    "ai.models.deepseek.model_name", "deepseek-v4-flash"
+                )
+            screening_model = station_model
+            analysis_model = station_model
+        else:
+            screening_model, analysis_model = _get_provider_models(ai_provider)
 
         task_logger.log_task_event(
             task_id=task_id, kind="task_start",
@@ -670,32 +865,65 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
         )
 
         _emit_progress(socketio, user_id, task_id,
-            f"🤖 AI模型: DeepSeek({deepseek_model})", 8)
+            f"🤖 AI模型: {ai_provider}({analysis_model})", 8)
         _emit_progress(socketio, user_id, task_id,
             f"🔍 搜索设置: {keyword} | {city} | {max_jobs}个岗位", 10)
 
-        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+        if _bail_if_cancelled_or_timeout(
+            store, socketio, task_id, user_id, deadline_anchor
+        ):
             return
 
         if not store.set_task_status(task_id, "running", progress=20):
             return
         _emit_progress(socketio, user_id, task_id, "🕷️ 启动统一爬虫引擎...", 20)
 
-        # 爬虫层超时 = 剩余预算（不是固定 5 分钟）
+        # 爬虫层按可变 anchor 动态计时：QR logged_in 会重置 anchor，因此扫码
+        # 耗时不会被固定 wait_for 的旧 timeout 错误吞进后续爬取预算。
         # 关键：把 profile_dir 透传给爬虫，实现真正的 per-user 隔离（Codex P0）
-        remaining = _TASK_DEADLINE_SECONDS - (datetime.now() - started).total_seconds()
+        qr_callback = _make_qr_callback(
+            socketio, user_id, task_id, deadline_anchor
+        )
         async def _crawl_with_timeout():
-            return await asyncio.wait_for(
-                unified_search_jobs(keyword, city, max_jobs, profile_dir=profile_dir),
-                timeout=max(remaining, 1),
+            crawl_task = asyncio.create_task(
+                unified_search_jobs(
+                    keyword, city, max_jobs,
+                    profile_dir=profile_dir,
+                    qr_callback=qr_callback,
+                )
             )
+            try:
+                while True:
+                    remaining = _TASK_DEADLINE_SECONDS - (
+                        datetime.now() - _deadline_started(deadline_anchor)
+                    ).total_seconds()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
+                    done, _ = await asyncio.wait(
+                        {crawl_task}, timeout=min(1.0, remaining)
+                    )
+                    if crawl_task in done:
+                        return await crawl_task
+            finally:
+                if not crawl_task.done():
+                    crawl_task.cancel()
+                    try:
+                        await crawl_task
+                    except asyncio.CancelledError:
+                        pass
         jobs = asyncio.run(_crawl_with_timeout())
         _emit_progress(socketio, user_id, task_id, f"🔍 搜索完成: 找到 {len(jobs)} 个岗位", 50)
 
-        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+        if _bail_if_cancelled_or_timeout(
+            store, socketio, task_id, user_id, deadline_anchor
+        ):
             return
 
         if not jobs:
+            if deadline_anchor.get("qr_state") == "login_timeout":
+                raise RuntimeError("login_timeout: 用户未在时限内扫码")
+            if deadline_anchor.get("qr_state") == "qr_capture_failed":
+                raise RuntimeError("qr_capture_failed: 无法获取登录二维码")
             raise RuntimeError("未找到任何岗位")
 
         if not session_data.get("has_resume_data"):
@@ -722,24 +950,33 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                  "message": "请先上传简历"}, to=user_id)
             return
 
-        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+        if _bail_if_cancelled_or_timeout(
+            store, socketio, task_id, user_id, deadline_anchor
+        ):
             return
         if not store.set_task_status(task_id, "running", progress=60):
             return
         _emit_progress(socketio, user_id, task_id, "🤖 启动AI两阶段分析...", 60)
 
         analyzer = EnhancedJobAnalyzer(
-            extraction_provider="deepseek",
-            analysis_provider="deepseek",
-            model_name=deepseek_model,
-            extraction_model_name=deepseek_model,
+            extraction_provider=ai_provider,
+            analysis_provider=ai_provider,
+            model_name=analysis_model,
+            extraction_model_name=screening_model,
+            api_key=user_api_key,
         )
         resume_text = session_data.get("resume_data", {}).get("resume_text", "")
-        analyzed_jobs = analyzer.analyze_jobs(jobs, resume_text=resume_text, keyword=keyword)
+        analyze_kwargs = {"resume_text": resume_text, "keyword": keyword}
+        hard_filters = session_data.get("hard_filters") or {}
+        if hard_filters:
+            analyze_kwargs["hard_filters"] = hard_filters
+        analyzed_jobs = analyzer.analyze_jobs(jobs, **analyze_kwargs)
         _emit_progress(socketio, user_id, task_id,
             f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
 
-        if _bail_if_cancelled_or_timeout(store, socketio, task_id, user_id, started):
+        if _bail_if_cancelled_or_timeout(
+            store, socketio, task_id, user_id, deadline_anchor
+        ):
             return
 
         min_score = 0
@@ -759,6 +996,10 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                                      _json.dumps(result_payload, ensure_ascii=False)):
             return  # 用户 cancel 优先生效
 
+        # 只有站方 Key 且任务真正成功落终态后才消耗一次试用。
+        if uses_station_key:
+            store.increment_trial_usage(user_id)
+
         _emit_progress(socketio, user_id, task_id,
             f"✅ 任务完成! 找到 {len(qualified_jobs)} 个合适岗位", 100, {
                 "results": qualified_jobs,
@@ -775,7 +1016,7 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
         task_logger.log_task_event(
             task_id=task_id, kind="task_end", status="success",
             total=len(analyzed_jobs), qualified=len(qualified_jobs),
-            duration_sec=(datetime.now() - started).total_seconds(),
+            duration_sec=(datetime.now() - task_started).total_seconds(),
         )
 
     except asyncio.TimeoutError:
@@ -792,13 +1033,43 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
                 {"task_id": task_id, "status": "failed", "message": "任务超时"}, to=user_id)
     except Exception as e:
         logger.error(f"搜索任务失败 type={type(e).__name__}")
+        error_text = str(e).lower()
+        if deadline_anchor.get("qr_state") == "qr_capture_failed":
+            result = {
+                "error": "qr_capture_failed",
+                "code": "qr_capture_failed",
+                "type": type(e).__name__,
+            }
+            message = "无法获取登录二维码，请稍后重试"
+        elif (
+            deadline_anchor.get("qr_state") == "login_timeout"
+            or "login_timeout" in error_text
+            or "登录超时" in str(e)
+            or "未在时限内扫码" in str(e)
+        ):
+            result = {
+                "error": "login_timeout",
+                "code": "login_timeout",
+                "type": type(e).__name__,
+            }
+            message = "扫码登录超时，请重新发起搜索"
+        elif not uses_station_key and _is_user_key_auth_error(e):
+            result = {
+                "error": "user_key_invalid",
+                "code": "user_key_invalid",
+                "type": type(e).__name__,
+            }
+            message = "你的 API Key 已失效，请到设置更新"
+        else:
+            result = {"error": "internal", "type": type(e).__name__}
+            message = "任务执行出错"
         if store.set_task_result(task_id, "failed",
-                _json.dumps({"error": "internal", "type": type(e).__name__})):
+                _json.dumps(result, ensure_ascii=False)):
             task_logger.log_task_event(task_id=task_id, kind="task_failed",
                                        error_type=type(e).__name__)
-            _emit_progress(socketio, user_id, task_id, "❌ 任务执行出错，详情见后台日志", None)
+            _emit_progress(socketio, user_id, task_id, f"❌ {message}", None)
             socketio.emit("search_complete",
-                {"task_id": task_id, "status": "failed", "message": "任务执行出错"}, to=user_id)
+                {"task_id": task_id, "status": "failed", "message": message}, to=user_id)
     finally:
         # 释放 profile 锁 + chrome slot（即使中途抛任何异常）
         if profile_acquired is not None:

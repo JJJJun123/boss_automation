@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 class GPTClient(BaseAIClient):
     """GPT API客户端 - 纯API调用器"""
     
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 api_key: Optional[str] = None):
         """
         初始化GPT客户端
         
@@ -40,7 +41,7 @@ class GPTClient(BaseAIClient):
                 self.model_name = 'gpt-5.5-2026-04-23'
         
         # API配置
-        self.api_key = os.getenv('OPENAI_API_KEY')
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         self.base_url = "https://api.openai.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",

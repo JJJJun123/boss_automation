@@ -50,7 +50,11 @@ patchright install chrome
 # CLAUDE_API_KEY=sk-ant-xxx
 # OPENAI_API_KEY=sk-xxx
 
-# 4. 启动服务
+# 4. 配置运行时安全密钥（首次生成后须持久保存，生产写入 systemd EnvironmentFile）
+export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export APP_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+
+# 5. 启动服务
 python run_web.py
 ```
 
@@ -62,13 +66,22 @@ python run_web.py
 
 三层配置，启动前必须存在所有文件：
 
-| 文件                           | 用途                                  |
-| ------------------------------ | ------------------------------------- |
+| 文件                             | 用途                                  |
+| -------------------------------- | ------------------------------------- |
 | `config/secrets.env`           | API 密钥（不提交 Git）                |
 | `config/app_config.yaml`       | 应用级配置（爬虫参数、AI 默认提供商） |
 | `config/user_preferences.yaml` | 用户搜索偏好（关键词、城市、数量）    |
 
 `ConfigManager` (`config/config_manager.py`) 统一加载三层配置，通过 `get_app_config(key, default)` 读取。
+
+另外有两个不写入上述配置文件的运行时环境变量：
+
+| 环境变量               | 用途                                                         |
+| ---------------------- | ------------------------------------------------------------ |
+| `FLASK_SECRET_KEY`     | Flask 会话签名密钥；生产启动必填，重启后须保持不变           |
+| `APP_ENCRYPTION_KEY`   | Fernet 密钥，用于加密用户 BYOK；必须独立保存且不能随意轮换   |
+
+`APP_ENCRYPTION_KEY` 一旦更换，已有用户 Key 将无法解密，需要用户重新配置。
 
 ## 架构概览
 
@@ -91,15 +104,12 @@ python run_web.py
 ### 关键模块说明
 
 - **`backend/app.py`**：Flask 入口，SocketIO 发送实时进度 (`emit_progress`)，前端用 Jinja2 模板渲染。
-
 - **`crawler/unified_crawler_interface.py`**：统一爬虫接口，`unified_search_jobs()` 是对外主函数，内部调用 `real_playwright_spider.py`。
-
 - **`analyzer/enhanced_job_analyzer.py`**：两阶段分析器：
+
   1. **类型筛选**（DeepSeek V4-Flash，thinking=off，廉价快速）：过滤明显不符岗位
   2. **简历匹配**（主力模型）：按用户简历评分（1-10分）+ 匹配亮点 + 不足
-
 - **`analyzer/ai_client_factory.py`**：工厂模式，根据 `provider` 参数创建对应 AI 客户端。支持官方 SDK 和 HTTP 两种方式。
-
 - **`analyzer/prompts/`**：所有 prompt 模板集中管理，修改分析逻辑只需改此目录。
 
 ## 测试
@@ -111,12 +121,12 @@ pytest tests/ --ignore=tests/integration_test_crawl.py    # 单元测试
 python tests/integration_test_crawl.py                     # 集成测试（需手动扫码）
 ```
 
-| 测试文件                        | 覆盖内容                                                         |
-| ------------------------------- | ---------------------------------------------------------------- |
+| 测试文件                          | 覆盖内容                                                         |
+| --------------------------------- | ---------------------------------------------------------------- |
 | `test_prompts.py`               | prompt 占位符完整性、JSON 格式验证                               |
 | `test_enhanced_job_analyzer.py` | 筛选、排序、匹配输出格式、thinking 模式 max_tokens、解析失败日志 |
-| `test_session_expiry.py`        | 反爬重定向 settle 轮询、`_url_matches_search_target` URL 匹配    |
-| `test_detail_extraction.py`     | 详情面板 JD/公司/薪资提取、`_extract_panel_salary` 格式校验      |
+| `test_session_expiry.py`        | 反爬重定向 settle 轮询、`_url_matches_search_target` URL 匹配  |
+| `test_detail_extraction.py`     | 详情面板 JD/公司/薪资提取、`_extract_panel_salary` 格式校验    |
 | `test_app_no_market.py`         | 代码静态检查（已废弃功能未残留）                                 |
 | `integration_test_crawl.py`     | 爬虫全流程（需扫码，手动运行）                                   |
 
@@ -131,3 +141,7 @@ python tests/integration_test_crawl.py                     # 集成测试（需�
 3. 在 `config/app_config.yaml` 的 `ai.providers` 中注册
 
 支持的提供商：`deepseek`、`claude`、`gpt`
+
+# 开发规范
+
+- 每次commit之前要调用codex review代码

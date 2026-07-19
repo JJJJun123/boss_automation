@@ -18,6 +18,20 @@ ai:
   # 默认AI服务商
   default_provider: "claude"
 
+  # BYOK：无 Key 可试用 3 次；配置 Key 后两阶段都使用该 provider。
+  byok:
+    trial_limit: 3
+    provider_models:
+      deepseek:
+        screening: "deepseek-v4-flash"
+        analysis: "deepseek-v4"
+      claude:
+        screening: "claude-haiku-4-5"
+        analysis: "claude-sonnet-5"
+      gpt:
+        screening: "gpt-5-mini"
+        analysis: "gpt-5.2"
+
   # 各 AI 模型的默认配置（截至 2026-05 的最新版本）
   models:
     claude:

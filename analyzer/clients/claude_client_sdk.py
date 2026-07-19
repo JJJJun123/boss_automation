@@ -28,7 +28,8 @@ except ImportError:
 class ClaudeClientSDK(BaseAIClient):
     """Claude API客户端 - 使用官方SDK"""
     
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 api_key: Optional[str] = None):
         """
         初始化Claude客户端
         
@@ -50,11 +51,11 @@ class ClaudeClientSDK(BaseAIClient):
                 self.model_name = 'claude-sonnet-4-6'
         
         # 初始化Anthropic客户端
-        api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
+        self.api_key = api_key or os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')
+        if not self.api_key:
             logger.warning("未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，请在config/secrets.env文件中配置")
         
-        self.client = Anthropic(api_key=api_key)
+        self.client = Anthropic(api_key=self.api_key)
         
         # 从配置读取参数
         try:
@@ -74,7 +75,7 @@ class ClaudeClientSDK(BaseAIClient):
     
     def _validate_configuration(self) -> None:
         """验证Claude配置"""
-        if not (os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')):
+        if not self.api_key:
             logger.warning("未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，API调用将失败")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:

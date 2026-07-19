@@ -145,11 +145,54 @@
             </div>
 
             <button id="start-search-btn" class="btn-run">Begin search</button>
+            <div class="trial-status" id="trial-status">
+              免费试用次数：加载中…
+            </div>
           </div>
 
           <div class="setup__group">
             <div class="section-label">
               <span class="section-label__num">III.</span>
+              Model Key
+            </div>
+            <div class="key-card">
+              <div class="field">
+                <label class="field__label" for="api-provider"
+                  >Provider · 模型服务</label
+                >
+                <select id="api-provider">
+                  <option value="deepseek">DeepSeek · 推荐</option>
+                  <option value="claude">Claude</option>
+                  <option value="gpt">GPT</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field__label" for="api-key-input"
+                  >API Key · 仅加密保存</label
+                >
+                <input
+                  id="api-key-input"
+                  type="password"
+                  placeholder="sk-…"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <button class="btn-secondary key-card__action" id="btn-save-api-key" type="button">
+                验证并保存
+              </button>
+              <div class="key-card__status" id="api-key-status">
+                尚未配置 · 可先免费试用
+              </div>
+              <button class="key-card__delete" id="btn-delete-api-key" type="button" hidden>
+                删除已保存的 Key
+              </button>
+            </div>
+          </div>
+
+          <div class="setup__group">
+            <div class="section-label">
+              <span class="section-label__num">IV.</span>
               Tools
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px">
@@ -291,6 +334,25 @@
       </div>
     </div>
 
+    <div class="modal" id="byok-required-modal" role="dialog" aria-modal="true">
+      <div class="modal__card modal__card--compact">
+        <button class="modal__close" id="byok-modal-close" type="button">
+          ✕ close
+        </button>
+        <div class="gate__eyebrow">Trial complete · 试用结束</div>
+        <h3 class="modal__title">配置你的模型 Key</h3>
+        <div class="modal__content">
+          三次免费搜索已经用完。选择 DeepSeek、Claude 或 GPT，验证并保存 Key 后即可继续。
+          Key 只会加密保存在服务器，不会回显原文。
+        </div>
+        <div class="byok-links">
+          <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">创建 DeepSeek Key ↗</a>
+          <a href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener noreferrer">DeepSeek 充值指引 ↗</a>
+        </div>
+        <button class="btn-run" id="byok-go-settings" type="button">去配置</button>
+      </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script>
       // ---------- Invite gate ----------
@@ -311,6 +373,7 @@
             const r = await fetch("/api/auth/me", { credentials: "include" });
             if (r.ok) {
               gate.classList.remove("open");
+              window.dispatchEvent(new CustomEvent("auth-ready"));
               return;
             }
           } catch (e) {}
@@ -326,6 +389,7 @@
             const body = await r.json().catch(() => ({}));
             if (r.ok) {
               gate.classList.remove("open");
+              window.dispatchEvent(new CustomEvent("auth-ready"));
               if (urlInvite)
                 history.replaceState({}, "", window.location.pathname);
             } else if (r.status === 429) {

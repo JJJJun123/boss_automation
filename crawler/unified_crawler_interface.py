@@ -22,6 +22,7 @@ class SearchParams:
     priority: int = 1
     use_cache: bool = True
     profile_dir: Optional[str] = None  # per-user Chrome profile（profile_manager 提供）
+    qr_callback: Optional[Any] = None  # 云端 QR 登录事件透传（本机模式可不传）
 
 
 @dataclass 
@@ -92,6 +93,7 @@ class UnifiedCrawlerInterface:
                 priority=params.get("priority", 1),
                 use_cache=params.get("use_cache", True),
                 profile_dir=params.get("profile_dir"),
+                qr_callback=params.get("qr_callback"),
             )
         else:
             search_params = params
@@ -136,7 +138,9 @@ class UnifiedCrawlerInterface:
             
             # 创建爬虫实例（per-user profile 由 profile_manager 通过 params 提供）
             spider = RealPlaywrightBossSpider(
-                headless=False, profile_dir=params.profile_dir
+                headless=False,
+                profile_dir=params.profile_dir,
+                qr_callback=params.qr_callback,
             )
             
             try:

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class AIClientFactory:
     @staticmethod
-    def create_client(provider=None, model_name=None):
+    def create_client(provider=None, model_name=None, api_key=None):
         """
         直接创建纯净的AI客户端（重构后的简化版本）
         
@@ -25,10 +25,13 @@ class AIClientFactory:
         Returns:
             具体的AI客户端实例（不再是AIService）
         """
-        return AIClientFactory.create_pure_client(provider, model_name)
+        return AIClientFactory.create_pure_client(
+            provider, model_name, api_key=api_key
+        )
     
     @staticmethod
-    def create_pure_client(provider=None, model_name=None, use_sdk=True):
+    def create_pure_client(provider=None, model_name=None, use_sdk=True,
+                           api_key=None):
         """
         创建纯净的AI客户端，跳过AIService包装层
         
@@ -54,27 +57,27 @@ class AIClientFactory:
         # 根据提供商和SDK可用性选择客户端
         if provider == "deepseek":
             from .clients.deepseek_client import DeepSeekClient
-            return DeepSeekClient(model_name)
+            return DeepSeekClient(model_name, api_key=api_key)
             
         elif provider == "claude":
             if use_sdk:
                 try:
                     from .clients.claude_client_sdk import ClaudeClientSDK
-                    return ClaudeClientSDK(model_name)
+                    return ClaudeClientSDK(model_name, api_key=api_key)
                 except ImportError:
                     logger.warning("Claude SDK不可用，回退到HTTP客户端")
             from .clients.claude_client import ClaudeClient
-            return ClaudeClient(model_name)
+            return ClaudeClient(model_name, api_key=api_key)
             
         elif provider in ["gpt", "openai"]:
             if use_sdk:
                 try:
                     from .clients.gpt_client_sdk import GPTClientSDK
-                    return GPTClientSDK(model_name)
+                    return GPTClientSDK(model_name, api_key=api_key)
                 except ImportError:
                     logger.warning("OpenAI SDK不可用，回退到HTTP客户端")
             from .clients.gpt_client import GPTClient
-            return GPTClient(model_name)
+            return GPTClient(model_name, api_key=api_key)
             
         else:
             raise ValueError(f"不支持的AI提供商: {provider}")

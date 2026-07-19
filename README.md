@@ -22,9 +22,16 @@ patchright install chrome
 #   CLAUDE_API_KEY=sk-ant-xxx
 #   OPENAI_API_KEY=sk-xxx
 
-# 4. 启动
+# 4. 首次生成并持久保存两个运行时密钥（生产请写入 systemd EnvironmentFile）
+export FLASK_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export APP_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+
+# 5. 启动
 python run_web.py
 ```
+
+`APP_ENCRYPTION_KEY` 用于加密用户保存的模型 Key，必须与 Flask 会话密钥分开，
+并且在服务重启后保持不变；更换它会使已有密文无法解密，用户需要重新配置模型 Key。
 
 访问 **http://localhost:3001**（默认端口；可在 `config/app_config.yaml` 的 `web.port` 调整。注意 macOS 26 的 5000 端口被 AirPlay 占了，本项目避开了）。首次使用会弹出浏览器，**扫码登录 Boss 直聘**（登录态持久化保存，下次免登）。
 

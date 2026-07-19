@@ -94,6 +94,21 @@ class TestApiKeyRoutes:
         assert r.status_code == 400
         assert store.get_user_api_key(uid) is None
 
+    def test_post_validation_timeout_is_retryable(self, authed, store):
+        client, uid = authed
+        with _mock.patch(
+            "backend.app.validate_api_key", side_effect=TimeoutError
+        ):
+            r = client.post(
+                "/api/settings/api-key",
+                json={"provider": "deepseek", "api_key": "sk-maybe-valid"},
+                headers=ORIGIN,
+            )
+        assert r.status_code == 503
+        assert r.get_json()["code"] == "key_validation_timeout"
+        assert "超时" in r.get_json()["error"]
+        assert store.get_user_api_key(uid) is None
+
     def test_post_unknown_provider_400(self, authed):
         client, _uid = authed
         r = client.post("/api/settings/api-key",
@@ -192,6 +207,20 @@ class TestTrialQuotaGate:
             r = client.post("/api/jobs/search", json={"keyword": "AI"},
                             headers=ORIGIN)
         assert r.status_code == 202
+
+
+class TestUserKeyErrorClassification:
+    def test_boss_antibot_403_is_not_key_error(self):
+        from backend.app import _is_user_key_auth_error
+        assert _is_user_key_auth_error(
+            RuntimeError("Boss security.html 403 anti-bot challenge")
+        ) is False
+
+    def test_ai_provider_403_is_key_error(self):
+        from backend.app import _is_user_key_auth_error
+        assert _is_user_key_auth_error(
+            RuntimeError("DeepSeek API调用失败: 403 - forbidden")
+        ) is True
 
 
 # ─── 试用计数与 Key 透传（后台任务级） ────────────────────

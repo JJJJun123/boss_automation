@@ -65,6 +65,9 @@ class StateStore:
             # Step 2: 旧 db 加 progress 列（如缺）
             self._migrate_tasks_table(conn)
 
+            # Step 2.1: BYOK 老库迁移（users 补试用次数字段）
+            self._migrate_users_table(conn)
+
             # Step 3: Codex round 2 P1-1：旧 db 若有重复 active task，先终结再建唯一索引
             # 同一用户多个 pending/running 状态 → 只保留最新一个，其余标 failed
             self._cleanup_duplicate_active_tasks(conn)
@@ -81,6 +84,20 @@ class StateStore:
                 conn.execute("ALTER TABLE tasks ADD COLUMN progress INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass  # 并发 init 时其它进程已 ALTER 过
+
+    def _migrate_users_table(self, conn) -> None:
+        """老库 users 表补 trial_searches_used；并发初始化时保持幂等。"""
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "trial_searches_used" not in existing_cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN trial_searches_used "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass
 
     def _cleanup_duplicate_active_tasks(self, conn) -> int:
         """Codex round 2 P1-1：旧 db 同一用户多个 pending/running 时先清理
@@ -317,6 +334,66 @@ class StateStore:
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    # ─── BYOK API Key + 试用配额 ───────────────────────────
+
+    def set_user_api_key(self, user_id: str, provider: str,
+                         key_encrypted: str) -> None:
+        """保存用户唯一的加密 API Key；更换 provider 时覆盖旧记录。"""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO user_api_keys "
+                "(user_id, provider, key_encrypted, created_at, last_verified_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "provider = excluded.provider, "
+                "key_encrypted = excluded.key_encrypted, "
+                "created_at = excluded.created_at, "
+                "last_verified_at = excluded.last_verified_at",
+                (user_id, provider, key_encrypted, now, now),
+            )
+            conn.commit()
+
+    def get_user_api_key(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT provider, key_encrypted, created_at, last_verified_at "
+                "FROM user_api_keys WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_user_api_key(self, user_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM user_api_keys WHERE user_id = ?", (user_id,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_trial_usage(self, user_id: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT trial_searches_used FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return int(row["trial_searches_used"]) if row else 0
+
+    def increment_trial_usage(self, user_id: str) -> int:
+        """成功的站方 Key 任务计数 +1，并返回最新值。"""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET trial_searches_used = trial_searches_used + 1 "
+                "WHERE user_id = ?",
+                (user_id,),
+            )
+            row = conn.execute(
+                "SELECT trial_searches_used FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            conn.commit()
+        return int(row["trial_searches_used"]) if row else 0
 
     # ─── Profile 映射 ──────────────────────────────────────
 
@@ -602,7 +679,17 @@ CREATE TABLE IF NOT EXISTS users (
     user_id      TEXT PRIMARY KEY,
     invite_code  TEXT NOT NULL,
     created_at   REAL NOT NULL,
-    last_seen_at REAL NOT NULL
+    last_seen_at REAL NOT NULL,
+    trial_searches_used INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    user_id          TEXT PRIMARY KEY,
+    provider         TEXT NOT NULL,
+    key_encrypted    TEXT NOT NULL,
+    created_at       REAL NOT NULL,
+    last_verified_at REAL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS profiles (

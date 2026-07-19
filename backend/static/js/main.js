@@ -28,6 +28,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let allJobs = [];
   let qualifiedJobs = [];
   let currentView = "qualified";
+  let currentTaskId = null;
 
   // ========== 初始化所有DOM元素 ==========
   debugLog("📋 初始化DOM元素...");
@@ -53,6 +54,16 @@ document.addEventListener("DOMContentLoaded", function () {
   const statsCard = document.getElementById("stats-card");
   const jobsList = document.getElementById("jobs-list");
   const emptyState = document.getElementById("empty-state");
+  const qrPane = document.getElementById("qr-pane");
+  const qrImage = document.getElementById("qr-image");
+  const qrState = document.getElementById("qr-state");
+  const apiProvider = document.getElementById("api-provider");
+  const apiKeyInput = document.getElementById("api-key-input");
+  const apiKeyStatus = document.getElementById("api-key-status");
+  const saveApiKeyBtn = document.getElementById("btn-save-api-key");
+  const deleteApiKeyBtn = document.getElementById("btn-delete-api-key");
+  const trialStatus = document.getElementById("trial-status");
+  const byokModal = document.getElementById("byok-required-modal");
 
   // ========== 单页面应用，移除页面切换功能 ==========
 
@@ -74,16 +85,57 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   socket.on("progress_update", (data) => {
+    if (currentTaskId && data.task_id !== currentTaskId) return;
     updateProgress(data);
   });
 
   socket.on("search_complete", (data) => {
+    if (currentTaskId && data.task_id !== currentTaskId) return;
     debugLog("🎉 搜索完成");
     isSearching = false;
     if (startBtn) {
       startBtn.textContent = "Begin search";
       startBtn.disabled = false;
       startBtn.classList.remove("searching");
+    }
+    if ((data.message || "").includes("API Key")) {
+      loadApiKeyStatus();
+      byokModal?.classList.add("open");
+    }
+    currentTaskId = null;
+  });
+
+  socket.on("qr_update", (data) => {
+    // QR 图本质上是临时登录凭据，只接收当前页面刚启动任务的事件。
+    if (!currentTaskId || data.task_id !== currentTaskId) return;
+    if (!qrPane || !qrImage || !qrState) return;
+
+    const state = data.state;
+    qrState.dataset.state = state || "";
+    if (state === "qr_ready") {
+      qrPane.classList.add("open");
+      if (data.image_b64) {
+        const image = document.createElement("img");
+        image.alt = "Boss 直聘登录二维码";
+        image.src = "data:image/png;base64," + data.image_b64;
+        qrImage.replaceChildren(image);
+      }
+      qrState.textContent = "QR READY · 请用 Boss 直聘 App 扫码";
+    } else if (state === "scanned") {
+      qrPane.classList.add("open");
+      qrState.textContent = "SCANNED · 已扫描，请在手机上确认";
+    } else if (state === "logged_in") {
+      qrState.textContent = "LOGGED IN · 登录成功，继续搜索";
+      qrPane.classList.remove("open");
+      progressBar?.classList.add("active");
+    } else if (state === "login_timeout") {
+      qrPane.classList.add("open");
+      qrImage.textContent = "二维码已失效";
+      qrState.textContent = "LOGIN TIMEOUT · 扫码超时，请重新发起搜索";
+    } else if (state === "qr_capture_failed") {
+      qrPane.classList.add("open");
+      qrImage.textContent = "暂时无法获取二维码";
+      qrState.textContent = "CAPTURE FAILED · 请稍后重新发起搜索";
     }
   });
 
@@ -389,8 +441,132 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  function updateTrialStatus(status) {
+    if (!trialStatus || status.trial_remaining === undefined) return;
+    const remaining = Number(status.trial_remaining) || 0;
+    const limit = Number(status.trial_limit) || 3;
+    trialStatus.textContent = `免费试用剩余 ${remaining} / ${limit} 次`;
+    trialStatus.classList.toggle("exhausted", remaining <= 0);
+  }
+
+  async function loadApiKeyStatus() {
+    try {
+      const response = await fetch("/api/settings/api-key", {
+        credentials: "include",
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) return;
+      updateTrialStatus(body);
+
+      if (response.ok) {
+        if (apiProvider) apiProvider.value = body.provider;
+        if (apiKeyStatus) {
+          apiKeyStatus.textContent = `已配置 ${body.masked} · ${body.provider}`;
+          apiKeyStatus.className = "key-card__status configured";
+        }
+        if (deleteApiKeyBtn) deleteApiKeyBtn.hidden = false;
+        if (trialStatus) {
+          trialStatus.textContent = `已使用自有 ${body.provider} Key · 不消耗试用次数`;
+          trialStatus.classList.remove("exhausted");
+        }
+      } else {
+        if (apiKeyStatus) {
+          apiKeyStatus.textContent = body.code === "key_reconfigure_required"
+            ? "原 Key 已无法解密，请重新配置"
+            : "尚未配置 · 可先免费试用";
+          apiKeyStatus.className = body.code === "key_reconfigure_required"
+            ? "key-card__status error"
+            : "key-card__status";
+        }
+        if (deleteApiKeyBtn) deleteApiKeyBtn.hidden = true;
+      }
+    } catch (error) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = "暂时无法读取 Key 状态";
+        apiKeyStatus.className = "key-card__status error";
+      }
+    }
+  }
+
+  function showByokRequired() {
+    byokModal?.classList.add("open");
+  }
+
+  saveApiKeyBtn?.addEventListener("click", async () => {
+    const apiKey = apiKeyInput?.value.trim() || "";
+    if (!apiKey) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = "请先输入 API Key";
+        apiKeyStatus.className = "key-card__status error";
+      }
+      return;
+    }
+
+    saveApiKeyBtn.disabled = true;
+    saveApiKeyBtn.textContent = "验证中…";
+    try {
+      const response = await fetch("/api/settings/api-key", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: apiProvider?.value || "deepseek",
+          api_key: apiKey,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Key 验证失败");
+      if (apiKeyInput) apiKeyInput.value = "";
+      byokModal?.classList.remove("open");
+      await loadApiKeyStatus();
+    } catch (error) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = error.message;
+        apiKeyStatus.className = "key-card__status error";
+      }
+    } finally {
+      saveApiKeyBtn.disabled = false;
+      saveApiKeyBtn.textContent = "验证并保存";
+    }
+  });
+
+  deleteApiKeyBtn?.addEventListener("click", async () => {
+    if (!confirm("删除已保存的 API Key？之后将继续消耗免费试用次数。")) return;
+    try {
+      const response = await fetch("/api/settings/api-key", {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("删除失败");
+      await loadApiKeyStatus();
+    } catch (error) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = error.message;
+        apiKeyStatus.className = "key-card__status error";
+      }
+    }
+  });
+
+  document.getElementById("byok-modal-close")?.addEventListener("click", () => {
+    byokModal?.classList.remove("open");
+  });
+  document.getElementById("byok-go-settings")?.addEventListener("click", () => {
+    byokModal?.classList.remove("open");
+    apiKeyInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+    apiKeyInput?.focus();
+  });
+  byokModal?.addEventListener("click", (event) => {
+    if (event.target === byokModal) byokModal.classList.remove("open");
+  });
+
+  window.addEventListener("auth-ready", () => {
+    loadConfig();
+    loadApiKeyStatus();
+  });
+
   // 页面加载时获取配置
   loadConfig();
+  loadApiKeyStatus();
 
   // ========== 岗位搜索功能 ==========
   if (startBtn) {
@@ -424,14 +600,25 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         debugLog("✅ 搜索任务已启动:", response.data);
+        currentTaskId = response.data.task_id;
+        qrPane?.classList.remove("open");
       } catch (error) {
         console.error("❌ 启动搜索失败:", error);
-        alert(
-          "启动搜索失败: " + (error.response?.data?.error || error.message),
-        );
+        if (
+          error.response?.status === 402 &&
+          error.response?.data?.code === "byok_required"
+        ) {
+          showByokRequired();
+          loadApiKeyStatus();
+        } else {
+          alert(
+            "启动搜索失败: " + (error.response?.data?.error || error.message),
+          );
+        }
         isSearching = false;
         startBtn.textContent = "Begin search";
         startBtn.disabled = false;
+        startBtn.classList.remove("searching");
       }
     });
   }

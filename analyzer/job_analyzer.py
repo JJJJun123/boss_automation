@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobAnalyzer:
-    def __init__(self, ai_provider=None, model_name=None):
+    def __init__(self, ai_provider=None, model_name=None, api_key=None):
         self.ai_provider = ai_provider or os.getenv('AI_PROVIDER', 'claude')
         self.model_name = model_name
         
@@ -22,7 +22,9 @@ class JobAnalyzer:
                 self.ai_provider = 'claude'
         
         # 直接创建AI客户端，跳过AIService包装层
-        self.ai_client = self._create_ai_client(self.ai_provider, model_name)
+        self.ai_client = self._create_ai_client(
+            self.ai_provider, model_name, api_key=api_key
+        )
         self.user_requirements = self.get_default_requirements()
 
         logger.debug(f"🤖 岗位匹配使用AI服务: {self.ai_provider.upper()}")
@@ -61,17 +63,18 @@ class JobAnalyzer:
 说明：请检查配置文件或上传简历
 """
 
-    def _create_ai_client(self, provider: str, model_name: str = None):
+    def _create_ai_client(self, provider: str, model_name: str = None,
+                          api_key: str = None):
         """直接创建AI客户端，跳过AIService包装层"""
         if provider == "deepseek":
             from .clients.deepseek_client import DeepSeekClient
-            return DeepSeekClient(model_name)
+            return DeepSeekClient(model_name, api_key=api_key)
         elif provider == "claude":
             from .clients.claude_client import ClaudeClient
-            return ClaudeClient(model_name)
+            return ClaudeClient(model_name, api_key=api_key)
         elif provider in ["gpt", "openai"]:
             from .clients.gpt_client import GPTClient
-            return GPTClient(model_name)
+            return GPTClient(model_name, api_key=api_key)
         else:
             raise ValueError(f"不支持的AI提供商: {provider}")
     

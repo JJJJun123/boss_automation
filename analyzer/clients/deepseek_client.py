@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 class DeepSeekClient(BaseAIClient):
     """DeepSeek API客户端 - 纯API调用器"""
     
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 api_key: Optional[str] = None):
         """
         初始化DeepSeek客户端
         
@@ -43,7 +44,7 @@ class DeepSeekClient(BaseAIClient):
                 self.model_name = 'deepseek-v4-pro'
         
         # API配置
-        self.api_key = os.getenv('DEEPSEEK_API_KEY')
+        self.api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         self.base_url = "https://api.deepseek.com/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",

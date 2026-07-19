@@ -160,6 +160,17 @@ class TestValidateApiKey:
                    side_effect=_requests.exceptions.Timeout):
             assert validate_api_key("deepseek", "sk-any") is False
 
+    def test_timeout_can_be_reported_separately(self):
+        """交互式保存接口可要求区分网络超时与 Key 无效。"""
+        import requests as _requests
+        from backend.key_vault import KeyValidationTimeout, validate_api_key
+        with patch("backend.key_vault.requests.get",
+                   side_effect=_requests.exceptions.Timeout):
+            with pytest.raises(KeyValidationTimeout):
+                validate_api_key(
+                    "deepseek", "sk-any", raise_on_timeout=True
+                )
+
     def test_network_error_returns_false(self):
         import requests as _requests
         from backend.key_vault import validate_api_key

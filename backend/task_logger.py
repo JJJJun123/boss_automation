@@ -35,6 +35,8 @@ _SENSITIVE_KEYS = {
     "resume",
     "cookie",
     "api_key",
+    "key_encrypted",
+    "image_b64",
     "apikey",
     "secret",
     "token",

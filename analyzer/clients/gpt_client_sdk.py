@@ -28,7 +28,8 @@ except ImportError:
 class GPTClientSDK(BaseAIClient):
     """GPT API客户端 - 使用官方SDK"""
     
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 api_key: Optional[str] = None):
         """
         初始化GPT客户端
         
@@ -50,11 +51,11 @@ class GPTClientSDK(BaseAIClient):
                 self.model_name = 'gpt-5.5-2026-04-23'
         
         # 初始化OpenAI客户端
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        if not self.api_key:
             logger.warning("未设置OPENAI_API_KEY，请在config/secrets.env文件中配置")
         
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=self.api_key)
         
         # 从配置读取参数
         try:
@@ -74,7 +75,7 @@ class GPTClientSDK(BaseAIClient):
     
     def _validate_configuration(self) -> None:
         """验证GPT配置"""
-        if not os.getenv('OPENAI_API_KEY'):
+        if not self.api_key:
             logger.warning("未设置OPENAI_API_KEY，API调用将失败")
     
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:

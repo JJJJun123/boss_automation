@@ -27,7 +27,8 @@ class EnhancedJobAnalyzer:
                  analysis_provider: Optional[str] = None,
                  model_name: Optional[str] = None,
                  screening_mode: bool = True,
-                 extraction_model_name: Optional[str] = "deepseek-v4-flash"):
+                 extraction_model_name: Optional[str] = "deepseek-v4-flash",
+                 api_key: Optional[str] = None):
         """
         初始化增强版分析器
         
@@ -39,9 +40,13 @@ class EnhancedJobAnalyzer:
             extraction_model_name: 信息提取阶段的具体模型名称
         """
         # 创建AI服务实例
-        self.extraction_service = AIClientFactory.create_client(extraction_provider, extraction_model_name)
+        self.extraction_service = AIClientFactory.create_client(
+            extraction_provider, extraction_model_name, api_key=api_key
+        )
         self.extraction_provider = extraction_provider  # 保存provider信息以便显示
-        self.job_analyzer = JobAnalyzer(ai_provider=analysis_provider, model_name=model_name)
+        self.job_analyzer = JobAnalyzer(
+            ai_provider=analysis_provider, model_name=model_name, api_key=api_key
+        )
         self._screening_fallback_active = False
         self._screening_rule_fallback_active = False
         
@@ -170,16 +175,27 @@ class EnhancedJobAnalyzer:
         self.resume_analysis = resume_analysis
         logger.debug(f"📝 简历分析结果已加载")
     
-    def analyze_jobs(self, jobs_list: List[Dict[str, Any]], resume_text: str = "", keyword: str = "") -> List[Dict[str, Any]]:
+    def analyze_jobs(self, jobs_list: List[Dict[str, Any]], resume_text: str = "",
+                     keyword: str = "",
+                     hard_filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
-        两阶段流水线：GLM 类型筛选 → 主力模型简历匹配，按分数降序返回。
+        流水线：Hard filter（省 API 成本）→ AI 类型筛选 → 主力模型简历匹配，按分数降序返回。
 
         Args:
             jobs_list: 岗位列表
             resume_text: 简历全文（直接传入，不做额外结构化）
             keyword: 搜索关键词（用于类型筛选）
+            hard_filters: F2 硬性过滤（薪资/年限/学历/排除标签），在 AI 前过滤省成本
         """
         self._search_keyword = keyword
+
+        # 阶段0：Hard filter（爬虫后、AI 前）——阶段 1.8。
+        # 命中用户硬性排除条件的岗位直接剔除，不送昂贵 AI。
+        if hard_filters:
+            from .hard_filter import apply_hard_filters
+            before = len(jobs_list)
+            jobs_list, dropped = apply_hard_filters(jobs_list, hard_filters)
+            logger.debug(f"🔪 Hard filter: {before} → {len(jobs_list)}（剔除 {len(dropped)} 个）")
 
         # 阶段1：GLM 类型过滤（判断岗位类型是否与搜索关键词相关，不比对简历）
         screened = []
