@@ -31,4 +31,4 @@ anthropic>=0.7.0       # Claude模型
 # 注意：GLM（智谱）通过 HTTP 直接调用，无需 SDK
 
 # Testing
-pytest>=8.0.0
+pytest>=8.0.0cryptography>=42.0
