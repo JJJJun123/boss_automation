@@ -16,11 +16,14 @@ SQLite 状态层
 """
 
 import hashlib
+import logging
 import os
 import secrets
 import sqlite3
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
