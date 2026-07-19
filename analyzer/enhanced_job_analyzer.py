@@ -260,6 +260,13 @@ class EnhancedJobAnalyzer:
                     raise
             raise
 
+    def _analysis_max_tokens(self) -> int:
+        """返回阶段二预算；推理模型留足 reasoning 与最终 JSON 空间。"""
+        provider = (self.job_analyzer.ai_provider or "").strip().lower()
+        if provider in {"claude", "gpt", "openai"}:  # openai 是 gpt 的工厂别名
+            return 16000
+        return 6000
+
     def _call_ai_for_matching(self, job: Dict[str, Any], resume_text: str) -> str:
         """调用主力模型进行简历×JD深度匹配。可被测试 mock 替换。"""
         requirements_text = job.get('job_requirements') or ''
@@ -274,11 +281,14 @@ class EnhancedJobAnalyzer:
             requirements=requirements_text[:800],
         )
         # Stage 2 需要打分/判断，开启 thinking 让 DeepSeek 先做链式推理再输出 JSON。
-        # max_tokens=6000：thinking 模式 reasoning + content 共占 max_tokens；客户端默认
-        # 1000 会被 reasoning 吃光导致 JSON content 截断 → _parse_match_result 兜底失败、
-        # 全部 jobs 显示 score=0/解析失败（用户实测）。6000 给 ~4000 reasoning + 2000 输出 JSON。
+        # Claude/GPT 推理模型使用 16000；DeepSeek 维持已调优的 6000，避免超过
+        # 其输出上限。各客户端负责把兼容输入名 max_tokens 转成实际 API 参数。
         try:
-            return self.job_analyzer.ai_client.call_api_simple(prompt, thinking=True, max_tokens=6000)
+            return self.job_analyzer.ai_client.call_api_simple(
+                prompt,
+                thinking=True,
+                max_tokens=self._analysis_max_tokens(),
+            )
         except Exception as e:
             if self._is_ai_quota_error(e):
                 logger.warning(f"匹配阶段AI不可用（配额/余额），返回未分析结果: {e}")

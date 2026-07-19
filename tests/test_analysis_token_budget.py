@@ -49,6 +49,7 @@ class TestAnalysisMaxTokens:
     @pytest.mark.parametrize("provider,expected", [
         ("claude", 16000),
         ("gpt", 16000),
+        ("openai", 16000),
         ("deepseek", 6000),
     ])
     def test_budget_by_provider(self, provider, expected):

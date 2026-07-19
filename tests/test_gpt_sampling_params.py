@@ -113,6 +113,21 @@ class TestGptSdkClient:
         assert "max_tokens" not in kwargs
         assert kwargs.get("max_completion_tokens") == 6000
 
+    def test_sdk_stream_uses_reasoning_safe_params(self):
+        """流式入口也必须剥离采样参数并转换 token 参数名。"""
+        client = self._client_with_capture()
+        client.client.chat.completions.create.return_value = []
+        list(client.call_api_stream(
+            "system", "user", temperature=0.1, top_p=0.2,
+            top_k=3, max_tokens=4321,
+        ))
+        kwargs = self._create_kwargs(client)
+        for key in SAMPLING_KEYS:
+            assert key not in kwargs
+        assert "max_tokens" not in kwargs
+        assert kwargs.get("max_completion_tokens") == 4321
+        assert kwargs.get("stream") is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

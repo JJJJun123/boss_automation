@@ -90,8 +90,8 @@ class GPTClientSDK(BaseAIClient):
         Returns:
             AI响应文本
         """
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # GPT-5 推理模型拒收非默认采样参数。对外仍接受 kwargs，但不下发
+        # temperature/top_p/top_k；max_tokens 仅作为兼容输入名。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -103,8 +103,7 @@ class GPTClientSDK(BaseAIClient):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=temperature,
-                max_tokens=max_tokens
+                max_completion_tokens=max_tokens
             )
             
             # 返回响应内容
@@ -132,8 +131,7 @@ class GPTClientSDK(BaseAIClient):
         Returns:
             AI响应文本
         """
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 采样参数一律忽略，理由见 call_api。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -144,8 +142,7 @@ class GPTClientSDK(BaseAIClient):
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                temperature=temperature,
-                max_tokens=max_tokens
+                max_completion_tokens=max_tokens
             )
             
             # 返回响应内容
@@ -172,7 +169,7 @@ class GPTClientSDK(BaseAIClient):
         Yields:
             流式响应片段
         """
-        temperature = kwargs.get('temperature', self.temperature)
+        # 流式调用与非流式保持同一参数契约：不发送任何采样参数。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -184,8 +181,7 @@ class GPTClientSDK(BaseAIClient):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=temperature,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_tokens,
                 stream=True
             )
             

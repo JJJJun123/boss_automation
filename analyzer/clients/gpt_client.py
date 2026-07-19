@@ -84,8 +84,8 @@ class GPTClient(BaseAIClient):
         if not self.api_key:
             raise Exception("OpenAI API Key未配置")
         
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # GPT-5 推理模型拒收非默认采样参数（temperature/top_p/top_k）。
+        # 对外仍接受这些 kwargs 以保持客户端接口兼容，但请求体一律不发送。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -95,8 +95,7 @@ class GPTClient(BaseAIClient):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_completion_tokens": max_tokens
         }
         
         try:
@@ -132,8 +131,7 @@ class GPTClient(BaseAIClient):
         if not self.api_key:
             raise Exception("OpenAI API Key未配置")
         
-        # 合并参数
-        temperature = kwargs.get('temperature', self.temperature)
+        # 采样参数一律忽略，理由见 call_api。
         max_tokens = kwargs.get('max_tokens', self.max_tokens)
         model = kwargs.get('model', self.model_name)
         
@@ -142,8 +140,7 @@ class GPTClient(BaseAIClient):
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_completion_tokens": max_tokens
         }
         
         try:
