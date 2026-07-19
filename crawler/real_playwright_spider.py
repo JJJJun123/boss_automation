@@ -913,9 +913,32 @@ class RealPlaywrightBossSpider:
         except Exception as exc:
             logger.warning("QR 状态回调失败 type=%s", type(exc).__name__)
 
+    async def _switch_to_qr_login(self) -> None:
+        """把登录页从默认的手机验证码视图切到 APP 扫码视图
+
+        实测（2026-07）：Boss 登录页默认显示短信验证码表单，二维码在点击
+        右上角 `.switch-tip`（文本 "APP扫码登录"）后才渲染（.qr-img-box）。
+        不切换的话截到的是验证码表单而非二维码。幂等：已在扫码视图
+        （.qr-img-box 可见）则不动。
+        """
+        try:
+            qr_box = await self.page.query_selector(".qr-img-box")
+            if qr_box is not None and await qr_box.is_visible():
+                return  # 已在扫码视图
+            tip = await self.page.query_selector(".switch-tip")
+            if tip is not None and await tip.is_visible():
+                await tip.click()
+                await asyncio.sleep(2)
+                logger.info("🔁 登录页已切换到 APP 扫码视图")
+        except Exception as exc:
+            logger.warning("切换扫码视图失败 type=%s（继续尝试截图）",
+                           type(exc).__name__)
+
     async def _capture_qr_image(self) -> Optional[bytes]:
         """优先截取二维码元素；元素定位失败时降级为当前登录页截图。"""
+        await self._switch_to_qr_login()
         selectors = (
+            ".qr-img-box",
             ".qr-img-box img",
             ".qr-code img",
             ".login-qrcode img",
