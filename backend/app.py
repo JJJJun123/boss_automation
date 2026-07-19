@@ -1032,7 +1032,8 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             socketio.emit("search_complete",
                 {"task_id": task_id, "status": "failed", "message": "任务超时"}, to=user_id)
     except Exception as e:
-        logger.error(f"搜索任务失败 type={type(e).__name__}")
+        # journald 记录完整 traceback（服务端排障）；用户可见 result 仍只给分类码
+        logger.error("搜索任务失败 type=%s", type(e).__name__, exc_info=True)
         error_text = str(e).lower()
         if deadline_anchor.get("qr_state") == "qr_capture_failed":
             result = {
