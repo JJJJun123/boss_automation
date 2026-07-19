@@ -120,7 +120,8 @@ document.addEventListener("DOMContentLoaded", function () {
         image.src = "data:image/png;base64," + data.image_b64;
         qrImage.replaceChildren(image);
       }
-      qrState.textContent = "QR READY · 请用 Boss 直聘 App 扫码";
+      qrState.textContent =
+        "QR READY · 打开 Boss 直聘 App → 首页「+」→ 扫一扫（微信扫码无效）";
     } else if (state === "scanned") {
       qrPane.classList.add("open");
       qrState.textContent = "SCANNED · 已扫描，请在手机上确认";
