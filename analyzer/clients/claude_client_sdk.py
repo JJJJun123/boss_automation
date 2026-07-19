@@ -78,6 +78,21 @@ class ClaudeClientSDK(BaseAIClient):
         if not self.api_key:
             logger.warning("未设置CLAUDE_API_KEY或ANTHROPIC_API_KEY，API调用将失败")
     
+    @staticmethod
+    def _extract_text(message) -> str:
+        """从 SDK 响应 content 块列表取第一个 text 块文本
+
+        claude-sonnet-5 默认自适应思考，content[0] 可能是 thinking 块；
+        必须按 block.type 找 text 块，不能写死 content[0]。
+
+        参数：message - SDK Message 对象
+        返回：str - 文本内容；找不到 text 块抛 Exception
+        """
+        for block in message.content:
+            if getattr(block, "type", None) == "text" and hasattr(block, "text"):
+                return block.text
+        raise Exception("Claude API响应中没有 text 块（可能仅返回 thinking 或被拒答）")
+
     def call_api(self, system_prompt: str, user_prompt: str, **kwargs) -> str:
         """
         调用Claude API - 系统提示词 + 用户提示词模式
@@ -106,7 +121,7 @@ class ClaudeClientSDK(BaseAIClient):
             )
             
             # 返回响应内容
-            return message.content[0].text
+            return self._extract_text(message)
             
         except Exception as e:
             error_msg = str(e)
@@ -145,7 +160,7 @@ class ClaudeClientSDK(BaseAIClient):
             )
             
             # 返回响应内容
-            return message.content[0].text
+            return self._extract_text(message)
             
         except Exception as e:
             error_msg = str(e)

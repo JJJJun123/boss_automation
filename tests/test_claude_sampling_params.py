@@ -33,7 +33,8 @@ class TestClaudeHttpClientNoSampling:
             captured.update(json or {})
             resp = MagicMock()
             resp.status_code = 200
-            resp.json.return_value = {"content": [{"text": "ok"}]}
+            resp.json.return_value = {
+                "content": [{"type": "text", "text": "ok"}]}
             return resp
 
         with patch("analyzer.clients.claude_client.requests.post",
@@ -67,7 +68,10 @@ class TestClaudeSdkClientNoSampling:
             pytest.skip("anthropic SDK 未安装")
         client = mod.ClaudeClientSDK("claude-sonnet-5", api_key="sk-test")
         fake_msg = MagicMock()
-        fake_msg.content = [MagicMock(text="ok")]
+        ok_block = MagicMock()
+        ok_block.type = "text"
+        ok_block.text = "ok"
+        fake_msg.content = [ok_block]
         client.client = MagicMock()
         client.client.messages.create.return_value = fake_msg
 
@@ -83,7 +87,10 @@ class TestClaudeSdkClientNoSampling:
             pytest.skip("anthropic SDK 未安装")
         client = mod.ClaudeClientSDK("claude-sonnet-5", api_key="sk-test")
         fake_msg = MagicMock()
-        fake_msg.content = [MagicMock(text="ok")]
+        ok_block = MagicMock()
+        ok_block.type = "text"
+        ok_block.text = "ok"
+        fake_msg.content = [ok_block]
         client.client = MagicMock()
         client.client.messages.create.return_value = fake_msg
 
@@ -92,6 +99,63 @@ class TestClaudeSdkClientNoSampling:
         kwargs = client.client.messages.create.call_args.kwargs
         for key in SAMPLING_KEYS:
             assert key not in kwargs, f"SDK 调用不应含 {key}"
+
+
+class TestClaudeThinkingBlockParsing:
+    """claude-sonnet-5 默认自适应思考：content[0] 可能是 thinking 块，
+    文本在后续 type=text 块。客户端必须按类型取块，不能写死 content[0]。"""
+
+    def _http_client_with_response(self, content_blocks):
+        from analyzer.clients.claude_client import ClaudeClient
+        client = ClaudeClient("claude-sonnet-5")
+        client.api_key = "sk-test"
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"content": content_blocks}
+        return client, resp
+
+    def test_http_client_skips_thinking_block(self):
+        client, resp = self._http_client_with_response([
+            {"type": "thinking", "thinking": "推理过程…"},
+            {"type": "text", "text": "最终答案"},
+        ])
+        with patch("analyzer.clients.claude_client.requests.post",
+                   return_value=resp):
+            assert client.call_api_simple("提示词") == "最终答案"
+
+    def test_http_client_plain_text_still_works(self):
+        client, resp = self._http_client_with_response([
+            {"type": "text", "text": "普通回答"},
+        ])
+        with patch("analyzer.clients.claude_client.requests.post",
+                   return_value=resp):
+            assert client.call_api("system", "user") == "普通回答"
+
+    def test_http_client_no_text_block_raises_clear_error(self):
+        client, resp = self._http_client_with_response([
+            {"type": "thinking", "thinking": "只有思考没有文本"},
+        ])
+        with patch("analyzer.clients.claude_client.requests.post",
+                   return_value=resp):
+            with pytest.raises(Exception):
+                client.call_api_simple("提示词")
+
+    def test_sdk_client_skips_thinking_block(self):
+        from analyzer.clients import claude_client_sdk as mod
+        if not mod.ANTHROPIC_SDK_AVAILABLE:
+            pytest.skip("anthropic SDK 未安装")
+        client = mod.ClaudeClientSDK("claude-sonnet-5", api_key="sk-test")
+        thinking_block = MagicMock()
+        thinking_block.type = "thinking"
+        del thinking_block.text  # thinking 块没有 text 属性
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "最终答案"
+        fake_msg = MagicMock()
+        fake_msg.content = [thinking_block, text_block]
+        client.client = MagicMock()
+        client.client.messages.create.return_value = fake_msg
+        assert client.call_api_simple("提示词") == "最终答案"
 
 
 if __name__ == "__main__":

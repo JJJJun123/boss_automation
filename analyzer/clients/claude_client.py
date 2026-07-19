@@ -112,7 +112,7 @@ class ClaudeClient(BaseAIClient):
             
             if response.status_code == 200:
                 result = response.json()
-                return result['content'][0]['text']
+                return self._extract_text(result)
             else:
                 raise Exception(f"Claude API调用失败: {response.status_code} - {response.text}")
                 
@@ -120,7 +120,22 @@ class ClaudeClient(BaseAIClient):
             raise Exception(f"Claude API网络请求失败: {e}")
         except KeyError as e:
             raise Exception(f"Claude API响应格式错误: {e}")
-    
+
+    @staticmethod
+    def _extract_text(result: dict) -> str:
+        """从响应 content 块列表中取第一个 text 块的文本
+
+        claude-sonnet-5 等模型默认自适应思考，content[0] 可能是 thinking 块
+        （无 text 字段），真正文本在后续 type=text 块——不能写死 content[0]。
+
+        参数：result - API 响应 JSON（含 content 列表）
+        返回：str - 文本内容；找不到 text 块抛 Exception
+        """
+        for block in result.get('content', []):
+            if block.get('type') == 'text' and 'text' in block:
+                return block['text']
+        raise Exception("Claude API响应中没有 text 块（可能仅返回 thinking 或被拒答）")
+
     def call_api_simple(self, prompt: str, **kwargs) -> str:
         """
         简单API调用 - 单一提示词模式
@@ -160,7 +175,7 @@ class ClaudeClient(BaseAIClient):
             
             if response.status_code == 200:
                 result = response.json()
-                return result['content'][0]['text']
+                return self._extract_text(result)
             else:
                 raise Exception(f"Claude API调用失败: {response.status_code} - {response.text}")
                 
