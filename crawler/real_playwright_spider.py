@@ -68,6 +68,10 @@ class RealPlaywrightBossSpider:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        # 搜索 API 明文数据映射（encryptJobId → {salary/title/company}）。
+        # 2026-07 Boss 给列表 DOM 的薪资数字上了字体反爬（innerText 只剩
+        # "-K·薪"），但页面自调的 joblist.json 接口仍是明文——监听响应取真值。
+        self._api_job_map: Dict[str, Dict[str, str]] = {}
         self.playwright = None
         self.enhanced_extractor = EnhancedDataExtractor()  # 集成增强提取器
         self.session_manager = SessionManager()  # 集成会话管理器
@@ -207,6 +211,9 @@ class RealPlaywrightBossSpider:
         """核心搜索逻辑（内部方法，供重试使用）"""
         if not self.page:
             raise RuntimeError("浏览器未启动")
+
+        # 导航前挂搜索接口监听：joblist.json 携带明文薪资（DOM 已被字体反爬）
+        self._attach_joblist_listener()
 
         # 获取城市代码
         city_code = self.city_codes.get(city, "101210100")  # 默认上海
@@ -1133,8 +1140,31 @@ class RealPlaywrightBossSpider:
         """获取当前会话信息"""
         return self.session_manager.get_session_info()
     
+    def _attach_joblist_listener(self) -> None:
+        """监听搜索接口响应，捕获明文岗位数据（薪资字体反爬的绕行通道）
+
+        幂等：每个 spider 实例只挂一次。响应解析失败静默忽略（不影响爬取）。
+        """
+        if getattr(self, "_joblist_listener_attached", False) or not self.page:
+            return
+
+        async def _on_response(resp):
+            try:
+                if "zpgeek/search/joblist.json" in resp.url:
+                    payload = await resp.json()
+                    n = self._ingest_joblist_payload(payload)
+                    if n:
+                        logger.info(f"📡 搜索接口捕获 {n} 条明文岗位数据（含薪资）")
+            except Exception:
+                pass
+
+        self.page.on("response", _on_response)
+        self._joblist_listener_attached = True
+
     async def _fetch_job_details(self, jobs: List[Dict]) -> List[Dict]:
         """获取岗位详细信息"""
+        # 先用 API 明文数据修正 DOM 提取（薪资被字体反爬污染为 "-K·薪"）
+        jobs = self._merge_api_job_data(jobs)
         jobs_with_details = []
         
         for i, job in enumerate(jobs):
@@ -1220,6 +1250,56 @@ class RealPlaywrightBossSpider:
             fields["salary"] = cached["salary"]
         return fields
     
+    def _ingest_joblist_payload(self, payload: Any) -> int:
+        """解析搜索接口 joblist.json 响应体，累积岗位明文数据映射
+
+        参数：payload - 接口 JSON（dict，形如 {zpData: {jobList: [...]}}）
+        返回：int - 本次新增/更新的条数；结构异常返回 0（不抛）
+        """
+        try:
+            job_list = ((payload or {}).get("zpData") or {}).get("jobList")
+        except AttributeError:
+            return 0
+        if not isinstance(job_list, list):
+            return 0
+        count = 0
+        for item in job_list:
+            if not isinstance(item, dict):
+                continue
+            job_id = item.get("encryptJobId")
+            if not job_id:
+                continue
+            self._api_job_map[job_id] = {
+                "salary": (item.get("salaryDesc") or "").strip(),
+                "title": (item.get("jobName") or "").strip(),
+                "company": (item.get("brandName") or "").strip(),
+            }
+            count += 1
+        return count
+
+    def _merge_api_job_data(self, jobs: List[Dict]) -> List[Dict]:
+        """把 API 明文数据合并进 DOM 提取结果
+
+        DOM 薪资已知不可信（字体反爬渲染为 "-K·薪"），API 薪资只要通过
+        格式校验就覆盖；title/company 仅在 DOM 缺失时补齐。
+
+        参数：jobs - DOM 提取的岗位列表（含 url）
+        返回：List[Dict] - 合并后的同一列表（原地更新）
+        """
+        for job in jobs:
+            job_id = self._job_id_from_url(job.get("url") or "")
+            api = self._api_job_map.get(job_id)
+            if not api:
+                continue
+            api_salary = api.get("salary") or ""
+            if api_salary and self._SALARY_VALID_RE.search(api_salary):
+                job["salary"] = api_salary
+            if not job.get("company") and api.get("company"):
+                job["company"] = api["company"]
+            if not job.get("title") and api.get("title"):
+                job["title"] = api["title"]
+        return jobs
+
     @staticmethod
     def _job_id_from_url(job_url: str) -> str:
         """从岗位 URL 提取岗位 id（用于定位列表卡片）
