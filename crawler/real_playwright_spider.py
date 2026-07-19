@@ -1038,6 +1038,7 @@ class RealPlaywrightBossSpider:
             last_qr_hash = None
             scanned_emitted = False
             polls_since_push = 0
+            renav_attempts = 0
             if self.qr_callback is not None:
                 image = await self._capture_qr_image()
                 if not image:
@@ -1068,6 +1069,22 @@ class RealPlaywrightBossSpider:
                     return True
 
                 if self.qr_callback is not None:
+                    # 反爬会把登录页弹回首页（实测非确定性）——不在登录页就
+                    # 重新导航，否则循环只能截到首页当"二维码"推给用户。
+                    if '/web/user/' not in (self.page.url or '') and renav_attempts < 8:
+                        renav_attempts += 1
+                        logger.warning(
+                            f"⚠️ 被弹离登录页（当前 {self.page.url}），"
+                            f"重新导航（第 {renav_attempts} 次）")
+                        try:
+                            await self.page.goto(
+                                "https://www.zhipin.com/web/user/?ka=header-login",
+                                wait_until="domcontentloaded", timeout=15000)
+                            await asyncio.sleep(min(2.0, check_interval))
+                        except Exception as exc:
+                            logger.warning("重导航登录页失败 type=%s",
+                                           type(exc).__name__)
+
                     if not scanned_emitted and await self._qr_scanned():
                         scanned_emitted = True
                         await self._emit_qr_event("scanned", "二维码已扫描，请在手机上确认")

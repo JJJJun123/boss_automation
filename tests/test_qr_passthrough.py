@@ -187,6 +187,53 @@ class TestLoginSuccess:
         assert _run(spider._ensure_logged_in()) is True
         assert events[-1]["state"] == "logged_in"
 
+    def test_bounced_off_login_page_renavigates_and_captures(self):
+        """反爬把登录页弹回首页 → 循环应重新导航回登录页再截码
+
+        实测：goto 登录页后被弹到 www.zhipin.com/ 首页，循环在首页打转，
+        推出去的"二维码"是首页截图。循环内检测 URL 不在 /web/user/ 时
+        必须重新 goto 登录页。
+        """
+        events = []
+
+        class _BouncedPage(FakePage):
+            """首次落在首页；goto 登录页后才真正停留在登录页"""
+
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self._on_login_page = False
+
+            @property
+            def url(self):
+                if self._on_login_page:
+                    return "https://www.zhipin.com/web/user/?ka=header-login"
+                return "https://www.zhipin.com/"  # 被弹回首页
+
+            async def goto(self, url, **kwargs):
+                self.goto_calls.append(url)
+                if "/web/user/" in url:
+                    # 第一次 goto 被反爬弹回首页；重试才落住
+                    n = sum(1 for u in self.goto_calls if "/web/user/" in u)
+                    self._on_login_page = n >= 2
+
+            async def evaluate(self, script):
+                return {"code": 7}  # 全程未登录（考察导航自愈而非登录）
+
+        page = _BouncedPage(qr_element=FakeElement([QR_PNG_A]))
+        # 初始 goto（_ensure_logged_in 开头会 goto 一次；此测试直接从循环态开始，
+        # 模拟"goto 后被弹回"：_on_login_page 初始 False
+        spider = _make_spider(page, qr_events=events,
+                              login_wait_seconds=1.2, qr_poll_interval=0.05)
+        _run(spider._ensure_logged_in())
+
+        renav = [u for u in page.goto_calls if "/web/user/" in u]
+        # 第 1 次是 _ensure_logged_in 的初始导航（被弹回），之后循环必须重试
+        assert len(renav) >= 2, f"被弹离登录页后未重新导航（goto 共 {len(renav)} 次）"
+        assert page._on_login_page, "循环结束时仍未回到登录页"
+        ready = [e for e in events if e["state"] == "qr_ready"]
+        assert any(e["image_b64"] == base64.b64encode(QR_PNG_A).decode()
+                   for e in ready), "重导航后未捕获到真二维码"
+
     def test_login_detected_via_api_when_url_stays_homepage(self):
         """实测：扫码确认后 Boss 跳首页 www.zhipin.com/（非 /web/geek/）。
         URL 判定漏判，必须靠 Boss API（code 0）识别登录成功。"""
