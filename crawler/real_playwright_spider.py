@@ -913,6 +913,24 @@ class RealPlaywrightBossSpider:
         except Exception as exc:
             logger.warning("QR 状态回调失败 type=%s", type(exc).__name__)
 
+    async def _refresh_expired_qr(self) -> None:
+        """Boss 二维码 ~2 分钟失效后页面出现"刷新"按钮，自动点掉换新码
+
+        best-effort：选择器命中就点（Boss 改版最多退化为用户手动重发搜索），
+        点击后短暂等待新码渲染。
+        """
+        for selector in ('.qr-code-box .refresh', '.qr-img-box .refresh',
+                         '.btn-refresh', '[class*="refresh"]'):
+            try:
+                el = await self.page.query_selector(selector)
+                if el is not None and await el.is_visible():
+                    await el.click()
+                    await asyncio.sleep(1.5)
+                    logger.info("🔄 二维码已失效，已自动点击刷新")
+                    return
+            except Exception:
+                continue
+
     async def _switch_to_qr_login(self) -> None:
         """把登录页从默认的手机验证码视图切到 APP 扫码视图
 
@@ -1019,6 +1037,7 @@ class RealPlaywrightBossSpider:
             # Boss 自动刷新二维码时，图像变化会自然触发下一次 qr_ready。
             last_qr_hash = None
             scanned_emitted = False
+            polls_since_push = 0
             if self.qr_callback is not None:
                 image = await self._capture_qr_image()
                 if not image:
@@ -1053,14 +1072,20 @@ class RealPlaywrightBossSpider:
                         scanned_emitted = True
                         await self._emit_qr_event("scanned", "二维码已扫描，请在手机上确认")
 
+                    await self._refresh_expired_qr()
                     image = await self._capture_qr_image()
                     if image:
                         image_hash = hashlib.sha256(image).hexdigest()
-                        if image_hash != last_qr_hash:
+                        # 指纹变化 → 新码立即推；未变化也每 5 轮强制重推一次，
+                        # 让刷新页面后重新连上的前端能拿到当前二维码。
+                        polls_since_push += 1
+                        if image_hash != last_qr_hash or polls_since_push >= 5:
+                            if image_hash != last_qr_hash:
+                                scanned_emitted = False
                             last_qr_hash = image_hash
-                            scanned_emitted = False
+                            polls_since_push = 0
                             await self._emit_qr_event(
-                                "qr_ready", "二维码已刷新，请重新扫码",
+                                "qr_ready", "请用 Boss 直聘 App 扫码",
                                 base64.b64encode(image).decode("ascii"),
                             )
 

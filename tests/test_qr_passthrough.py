@@ -139,15 +139,26 @@ class TestQrReadyPush:
         for e in events:
             assert set(e.keys()) >= {"state", "image_b64", "message"}, e
 
-    def test_same_image_not_repushed(self):
-        """截图指纹未变 → 不重复推 qr_ready（防前端闪烁/带宽浪费）"""
+    def test_same_image_not_repushed_immediately(self):
+        """截图指纹未变 → 短窗口内不重复推 qr_ready（防前端闪烁）"""
         events = []
         page = FakePage(qr_element=FakeElement([QR_PNG_A]),
-                        login_success_after_reads=8)
+                        login_success_after_reads=3)
         spider = _make_spider(page, qr_events=events)
         _run(spider._ensure_logged_in())
         ready = [e for e in events if e["state"] == "qr_ready"]
-        assert len(ready) == 1, f"同图重复推送 {len(ready)} 次"
+        assert len(ready) == 1, f"同图短窗口内重复推送 {len(ready)} 次"
+
+    def test_same_image_repushed_on_cadence(self):
+        """同图也按周期强制重推——刷新页面后重连的前端要能拿到当前码"""
+        events = []
+        page = FakePage(qr_element=FakeElement([QR_PNG_A]),
+                        login_success_after_reads=16)
+        spider = _make_spider(page, qr_events=events,
+                              login_wait_seconds=2, qr_poll_interval=0.05)
+        _run(spider._ensure_logged_in())
+        ready = [e for e in events if e["state"] == "qr_ready"]
+        assert len(ready) >= 2, "长等待期间未周期性重推二维码"
 
     def test_changed_image_repushed(self):
         """二维码过期刷新（截图 bytes 变化）→ 再推一次 qr_ready 带新图"""
@@ -157,8 +168,11 @@ class TestQrReadyPush:
         spider = _make_spider(page, qr_events=events)
         _run(spider._ensure_logged_in())
         ready = [e for e in events if e["state"] == "qr_ready"]
-        assert len(ready) == 2, f"图变化后应重推，实际 {len(ready)} 次"
+        assert len(ready) >= 2, f"图变化后应重推，实际 {len(ready)} 次"
         assert ready[1]["image_b64"] == base64.b64encode(QR_PNG_B).decode()
+        # 变化后的所有推送都应是新图（周期重推允许，但不能倒退回旧图）
+        for e in ready[1:]:
+            assert e["image_b64"] == base64.b64encode(QR_PNG_B).decode()
 
 
 # ─── 登录成功 / 已扫描 ───────────────────────────────────

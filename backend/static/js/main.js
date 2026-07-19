@@ -568,14 +568,43 @@ document.addEventListener("DOMContentLoaded", function () {
     if (event.target === byokModal) byokModal.classList.remove("open");
   });
 
+  // 刷新页面后接回进行中的任务：恢复 task_id 绑定与进度/二维码显示。
+  // 不恢复的话用户刷新后"失忆"，再点搜索必撞 409。
+  async function reattachActiveTask() {
+    try {
+      const r = await axios.get("/api/jobs/list");
+      const active = (r.data.tasks || []).find(
+        (t) => t.status === "pending" || t.status === "running",
+      );
+      if (!active) return false;
+      currentTaskId = active.task_id;
+      isSearching = true;
+      if (startBtn) {
+        startBtn.textContent = "搜索中… →";
+        startBtn.disabled = true;
+        startBtn.classList.add("searching");
+      }
+      if (progressBar) progressBar.classList.add("active");
+      if (progressMessage)
+        progressMessage.textContent =
+          "任务进行中（已恢复显示）。若在等扫码，二维码将在数秒内出现…";
+      debugLog("🔗 已接回进行中任务:", active.task_id);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   window.addEventListener("auth-ready", () => {
     loadConfig();
     loadApiKeyStatus();
+    reattachActiveTask();
   });
 
   // 页面加载时获取配置
   loadConfig();
   loadApiKeyStatus();
+  reattachActiveTask();
 
   // ========== 岗位搜索功能 ==========
   if (startBtn) {
@@ -619,6 +648,16 @@ document.addEventListener("DOMContentLoaded", function () {
         ) {
           showByokRequired();
           loadApiKeyStatus();
+        } else if (error.response?.status === 409) {
+          // 已有任务在跑（多为刷新后失忆再点）：接回显示，不弹窗打断
+          const attached = await reattachActiveTask();
+          if (attached) {
+            if (progressMessage)
+              progressMessage.textContent =
+                "已有任务在进行中，已恢复显示——无需重复点击搜索。";
+            return; // 按钮状态由 reattach 设置（保持搜索中）
+          }
+          alert("已有任务正在运行中，请稍候或刷新重试");
         } else {
           alert(
             "启动搜索失败: " + (error.response?.data?.error || error.message),
