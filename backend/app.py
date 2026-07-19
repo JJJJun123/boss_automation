@@ -762,15 +762,34 @@ def _deadline_started(started_at):
     return started_at
 
 
+def _task_deadline_seconds(max_jobs: int) -> float:
+    """按抓取量动态计算任务限时
+
+    固定 300s 在 20 岗 + 推理模型（每岗 10-20s 分析）下必超时（实测事故）。
+    基数覆盖启动/登录/爬列表，每岗 30s 覆盖详情抓取 + 两阶段分析。
+    参数：max_jobs - 本次抓取岗位数
+    返回：float - 限时秒数（20 岗 → 900s）
+    """
+    try:
+        n = max(0, int(max_jobs))
+    except (TypeError, ValueError):
+        n = 0
+    return float(_TASK_DEADLINE_SECONDS + 30 * n)
+
+
 def _check_deadline(started_at) -> bool:
-    """检查任务整体是否已超过 deadline（5 分钟）
+    """检查任务整体是否已超过 deadline
 
     Codex P1-4：原 wait_for 只包爬虫，不包 AI 分析。改成全任务 checkpoint
-    检查 elapsed time。
+    检查 elapsed time。限时值优先取 anchor 携带的动态值（按岗位数），
+    兼容旧 datetime 入参（用全局默认）。
     """
+    limit = _TASK_DEADLINE_SECONDS
+    if isinstance(started_at, dict):
+        limit = started_at.get("deadline_sec", _TASK_DEADLINE_SECONDS)
     return (
         datetime.now() - _deadline_started(started_at)
-    ).total_seconds() > _TASK_DEADLINE_SECONDS
+    ).total_seconds() > limit
 
 
 def _bail_if_cancelled_or_timeout(store, socketio, task_id: str, user_id: str,
@@ -826,7 +845,8 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
 
     import json as _json
     task_started = datetime.now()
-    deadline_anchor = {"started": task_started, "qr_state": None}
+    deadline_anchor = {"started": task_started, "qr_state": None,
+                       "deadline_sec": _task_deadline_seconds(max_jobs)}
 
     # 阶段 1.2/1.3：先拿 chrome slot + profile 锁；拿不到立即标 failed 而非空转
     profile_acquired = None
@@ -902,7 +922,8 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
             )
             try:
                 while True:
-                    remaining = _TASK_DEADLINE_SECONDS - (
+                    remaining = deadline_anchor.get(
+                        "deadline_sec", _TASK_DEADLINE_SECONDS) - (
                         datetime.now() - _deadline_started(deadline_anchor)
                     ).total_seconds()
                     if remaining <= 0:
@@ -1025,9 +1046,15 @@ def _run_job_search_task(session_data, socketio, store, profile_mgr=None):
         _emit_progress(socketio, user_id, task_id,
             f"📈 AI分析完成，{len(analyzed_jobs)} 个岗位通过筛选", 90)
 
-        if _bail_if_cancelled_or_timeout(
-            store, socketio, task_id, user_id, deadline_anchor
-        ):
+        # 分析已完成 = 用户的 AI 钱已花、结果在手——此处只认用户取消，
+        # 绝不因超时作废结果（实测事故：20 岗分析完被 timeout 检查点整体丢弃）
+        if _check_cancelled(store, task_id, user_id):
+            try:
+                socketio.emit("search_complete",
+                    {"task_id": task_id, "status": "cancelled", "message": "已取消"},
+                    to=user_id)
+            except Exception:
+                pass
             return
 
         min_score = 0
