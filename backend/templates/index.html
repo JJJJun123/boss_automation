@@ -178,37 +178,23 @@
                   spellcheck="false"
                 />
               </div>
-              <button class="btn-secondary key-card__action" id="btn-save-api-key" type="button">
+              <button
+                class="btn-secondary key-card__action"
+                id="btn-save-api-key"
+                type="button"
+              >
                 验证并保存
               </button>
               <div class="key-card__status" id="api-key-status">
                 尚未配置 · 可先免费试用
               </div>
-              <button class="key-card__delete" id="btn-delete-api-key" type="button" hidden>
+              <button
+                class="key-card__delete"
+                id="btn-delete-api-key"
+                type="button"
+                hidden
+              >
                 删除已保存的 Key
-              </button>
-            </div>
-          </div>
-
-          <div class="setup__group">
-            <div class="section-label">
-              <span class="section-label__num">IV.</span>
-              Tools
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 8px">
-              <button
-                class="btn-secondary"
-                id="btn-delete-resume"
-                type="button"
-              >
-                删除当前简历
-              </button>
-              <button
-                class="btn-secondary"
-                id="btn-delete-profile"
-                type="button"
-              >
-                清除平台登录态
               </button>
             </div>
           </div>
@@ -342,14 +328,26 @@
         <div class="gate__eyebrow">Trial complete · 试用结束</div>
         <h3 class="modal__title">配置你的模型 Key</h3>
         <div class="modal__content">
-          三次免费搜索已经用完。选择 DeepSeek、Claude 或 GPT，验证并保存 Key 后即可继续。
-          Key 只会加密保存在服务器，不会回显原文。
+          三次免费搜索已经用完。选择 DeepSeek、Claude 或 GPT，验证并保存 Key
+          后即可继续。 Key 只会加密保存在服务器，不会回显原文。
         </div>
         <div class="byok-links">
-          <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">创建 DeepSeek Key ↗</a>
-          <a href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener noreferrer">DeepSeek 充值指引 ↗</a>
+          <a
+            href="https://platform.deepseek.com/api_keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            >创建 DeepSeek Key ↗</a
+          >
+          <a
+            href="https://platform.deepseek.com/top_up"
+            target="_blank"
+            rel="noopener noreferrer"
+            >DeepSeek 充值指引 ↗</a
+          >
         </div>
-        <button class="btn-run" id="byok-go-settings" type="button">去配置</button>
+        <button class="btn-run" id="byok-go-settings" type="button">
+          去配置
+        </button>
       </div>
     </div>
 
@@ -433,44 +431,6 @@
           e.target.textContent = logs.classList.contains("open")
             ? "收起日志"
             : "展开日志";
-        });
-
-      // ---------- delete resume / profile ----------
-      document
-        .getElementById("btn-delete-resume")
-        ?.addEventListener("click", async () => {
-          if (!confirm("删除当前简历？")) return;
-          try {
-            await fetch("/api/delete_resume", {
-              method: "POST",
-              credentials: "include",
-            });
-            const slot = document.getElementById("upload-area");
-            slot.classList.remove("uploaded");
-            document.getElementById("resume-title").textContent =
-              "拖拽或点击上传";
-            document.getElementById("resume-hint").textContent =
-              "PDF / DOCX · ≤ 5MB";
-          } catch (e) {
-            alert("删除失败");
-          }
-        });
-
-      document
-        .getElementById("btn-delete-profile")
-        ?.addEventListener("click", async () => {
-          if (!confirm("清除平台登录态？下次搜索需要重新扫码。")) return;
-          try {
-            const r = await fetch("/api/profile/delete", {
-              method: "POST",
-              credentials: "include",
-            });
-            const body = await r.json().catch(() => ({}));
-            if (r.ok) alert("平台登录态已清除");
-            else alert(body.error || "清除失败");
-          } catch (e) {
-            alert("清除失败");
-          }
         });
     </script>
   </body>
