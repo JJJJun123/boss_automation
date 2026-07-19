@@ -242,6 +242,10 @@ class TestRequireLoginGate:
             self._login_btn_visible = login_btn_visible
             self._url = GEEK_URL  # 未登录也显示搜索页 URL
 
+        async def evaluate(self, script):
+            """模拟 Boss getUserInfo API：未登录 code 7 / 已登录 code 0"""
+            return {"code": 7 if self._login_btn_visible else 0}
+
         @property
         def url(self):
             return GEEK_URL

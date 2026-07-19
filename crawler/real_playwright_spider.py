@@ -310,14 +310,43 @@ class RealPlaywrightBossSpider:
                 continue
         return False
 
+    async def _is_logged_in_api(self):
+        """问 Boss 自身接口判定登录态（最权威信号）
+
+        实测：未登录时 /wapi/zpuser/wap/getUserInfo.json 返回
+        {code: 7, message: "当前登录状态已失效"}；已登录返回 code 0。
+        URL/DOM 判定都有假阴性（未登录也停留在搜索页、浮层出现时机不定），
+        此接口来自 Boss 自己，无时机竞态。
+
+        返回：True 已登录 / False 未登录 / None 探测失败（调用方走 DOM 兜底）
+        """
+        try:
+            r = await self.page.evaluate("""async () => {
+                try {
+                    const resp = await fetch(
+                        "/wapi/zpuser/wap/getUserInfo.json",
+                        {credentials: "include"});
+                    const j = await resp.json();
+                    return {code: j.code};
+                } catch (e) { return {error: 1}; }
+            }""")
+            if isinstance(r, dict) and "code" in r:
+                logged = (r["code"] == 0)
+                logger.info(f"🔍 登录状态（Boss API）: code={r['code']} → "
+                            f"{'已登录' if logged else '未登录'}")
+                return logged
+        except Exception as e:
+            logger.debug(f"登录态 API 探测失败，转 DOM 兜底: {e}")
+        return None
+
     async def _require_login(self, search_url: str) -> None:
         """搜索前强制登录门：未登录先登录，保证抓到全量信息
 
         未登录状态 Boss 只给残血数据（薪资缺失、详情不全、列表限 ~15 条）。
-        导航后 Boss 的反爬/登录重定向是异步的（数秒后才落定），所以先
-        settle 轮询等 URL 稳定：落到登录页 → 直接登录；落到结果页 → 再查
-        登录浮层（残血形态）。未登录走 _ensure_logged_in（云端自动推 QR
-        到用户网页，本机可见浏览器人肉扫码），成功后回到目标搜索页。
+        判定三层：settle 等 URL 落定（登录页 → 直接登录）→ Boss getUserInfo
+        API（权威）→ 登录浮层 DOM（兜底）。未登录走 _ensure_logged_in
+        （云端自动推 QR 到用户网页，本机可见浏览器人肉扫码），成功后回到
+        目标搜索页。
 
         参数：search_url - 目标搜索页 URL
         异常：RuntimeError - 登录失败/超时（消息含"登录超时"，app 层据此
@@ -327,7 +356,11 @@ class RealPlaywrightBossSpider:
 
         needs_login = settled == 'login'
         if not needs_login:
-            needs_login = await self._is_login_ui_present()
+            api_logged = await self._is_logged_in_api()
+            if api_logged is False:
+                needs_login = True
+            elif api_logged is None:
+                needs_login = await self._is_login_ui_present()
 
         if not needs_login:
             logger.info("🔓 已登录，直接抓取全量信息")
