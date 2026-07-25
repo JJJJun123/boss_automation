@@ -365,11 +365,11 @@ document.addEventListener("DOMContentLoaded", function () {
         cleanedText.length > 800
           ? cleanedText.substring(0, 800) + "..."
           : cleanedText;
-      element.innerHTML = truncatedText;
+      element.textContent = truncatedText;
       buttonElement.textContent = "展开全文";
     } else {
       // 展开：显示完整文本
-      element.innerHTML = cleanedText;
+      element.textContent = cleanedText;
       buttonElement.textContent = "收起";
     }
   };
@@ -403,12 +403,12 @@ document.addEventListener("DOMContentLoaded", function () {
           cleanedText.length > 800
             ? cleanedText.substring(0, 800) + "..."
             : cleanedText;
-        element.innerHTML = truncatedText;
+        element.textContent = truncatedText;
         buttonElement.textContent = "展开全文";
         debugLog("✅ 文本已收起");
       } else {
         // 展开：显示完整文本
-        element.innerHTML = cleanedText;
+        element.textContent = cleanedText;
         buttonElement.textContent = "收起";
         debugLog("✅ 文本已展开，完整长度:", cleanedText.length);
       }
@@ -606,8 +606,22 @@ document.addEventListener("DOMContentLoaded", function () {
     .getElementById("profile-rechat-btn")
     ?.addEventListener("click", () => startProfileInterview(true));
 
-  function populateProfileEditor() {
-    if (!careerProfile || !profileEditor) return;
+  async function populateProfileEditor() {
+    if (!profileEditor) return;
+    if (!careerProfile) {
+      try {
+        const response = await axios.get("/api/career-profile");
+        careerProfile = response.data.profile || null;
+        careerProfileNeedsRefresh = Boolean(response.data.needs_refresh);
+      } catch (error) {
+        alert(
+          "画像加载失败: " +
+            (error.response?.data?.error || error.message),
+        );
+        return;
+      }
+    }
+    if (!careerProfile) return;
     document.getElementById("profile-edit-directions").value = (
       careerProfile.target_directions || []
     ).join("，");
@@ -1082,14 +1096,21 @@ document.addEventListener("DOMContentLoaded", function () {
     .getElementById("search-plan-confirm")
     ?.addEventListener("click", async () => {
       const values = [];
+      const seenKeywords = new Set();
       searchPlanKeywords
         ?.querySelectorAll(".search-plan__row")
         .forEach((row) => {
           const enabled = row.querySelector('input[type="checkbox"]');
           const input = row.querySelector('input[type="text"]');
           const value = input?.value.trim();
-          if (enabled?.checked && value && !values.includes(value)) {
+          const normalizedValue = value ? value.toLowerCase() : "";
+          if (
+            enabled?.checked &&
+            value &&
+            !seenKeywords.has(normalizedValue)
+          ) {
             values.push(value);
+            seenKeywords.add(normalizedValue);
           }
         });
       if (!values.length) {
@@ -1733,9 +1754,7 @@ document.addEventListener("DOMContentLoaded", function () {
         jobDetailsDiv.innerHTML = `
                     <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
                         <div class="text-sm font-medium text-gray-900 mb-3">📋 岗位详情</div>
-                        <div class="text-xs text-gray-700 whitespace-pre-wrap" id="${detailId}_desc">
-                            ${displayText}${isLong ? "..." : ""}
-                        </div>
+                        <div class="text-xs text-gray-700 whitespace-pre-wrap" id="${detailId}_desc"></div>
                         ${
                           isLong
                             ? `
@@ -1749,6 +1768,13 @@ document.addEventListener("DOMContentLoaded", function () {
                         }
                     </div>
                 `;
+        const descriptionElement = jobDetailsDiv.querySelector(
+          `#${detailId}_desc`,
+        );
+        if (descriptionElement) {
+          descriptionElement.textContent =
+            displayText + (isLong ? "..." : "");
+        }
 
         div.appendChild(jobDetailsDiv);
       }

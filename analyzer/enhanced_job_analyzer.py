@@ -15,6 +15,7 @@ from datetime import datetime
 from .ai_client_factory import AIClientFactory
 from .job_analyzer import JobAnalyzer
 from .machine_summary import normalize_machine_summary
+from .profile_interview import wrap_untrusted_data
 from .prompts.extraction_prompts import ExtractionPrompts
 from .prompts.job_analysis_prompts import JobAnalysisPrompts, RESUME_MATCH_PROMPT
 
@@ -205,6 +206,8 @@ class EnhancedJobAnalyzer:
             item.strip() for item in target_directions
             if isinstance(item, str) and item.strip()
         ]
+        # 保存本轮已归一化结果，粗筛复用，避免再次清洗画像方向。
+        self._target_directions = target_directions
         self._search_keyword = (
             " / ".join(target_directions) if target_directions else keyword
         )
@@ -213,9 +216,16 @@ class EnhancedJobAnalyzer:
         effective_hard_filters = dict(hard_filters or {})
         if self._career_profile:
             excludes = list(effective_hard_filters.get("exclude_keywords") or [])
+            seen_excludes = {
+                item.strip()
+                for item in excludes
+                if isinstance(item, str) and item.strip()
+            }
             for item in self._career_profile.get("hard_avoids", []) or []:
-                if isinstance(item, str) and item.strip() and item.strip() not in excludes:
-                    excludes.append(item.strip())
+                cleaned = item.strip() if isinstance(item, str) else ""
+                if cleaned and cleaned not in seen_excludes:
+                    excludes.append(cleaned)
+                    seen_excludes.add(cleaned)
             if excludes:
                 effective_hard_filters["exclude_keywords"] = excludes
 
@@ -284,10 +294,7 @@ class EnhancedJobAnalyzer:
         prompt = ExtractionPrompts.get_job_relevance_screening_prompt(job, keyword)
         profile = getattr(self, "_career_profile", None)
         if profile:
-            directions = [
-                item for item in profile.get("target_directions", [])
-                if isinstance(item, str) and item.strip()
-            ]
+            directions = getattr(self, "_target_directions", [])
             prompt += (
                 "\n\n【求职画像 target_directions】\n- "
                 + "\n- ".join(directions)
@@ -337,33 +344,44 @@ class EnhancedJobAnalyzer:
         requirements_text = job.get('job_requirements') or ''
         if not requirements_text.strip():
             requirements_text = job.get('job_description', '')
+        untrusted_resume = wrap_untrusted_data(
+            resume_text[:2000] if resume_text else "（未提供简历）"
+        )
+        untrusted_job = wrap_untrusted_data(json.dumps({
+            "title": job.get("title", ""),
+            "company": job.get("company", ""),
+            "salary": job.get("salary", "未提供"),
+            "description": job.get("job_description", "")[:800],
+            "requirements": requirements_text[:800],
+        }, ensure_ascii=False))
         prompt = RESUME_MATCH_PROMPT.format(
-            resume_text=resume_text[:2000] if resume_text else "（未提供简历）",
-            job_title=job.get('title', ''),
-            company=job.get('company', ''),
-            salary=job.get('salary', '未提供'),
-            description=job.get('job_description', '')[:800],
-            requirements=requirements_text[:800],
+            resume_text=untrusted_resume,
+            job_title=untrusted_job,
+            company="见上方 untrusted_data.company",
+            salary="见上方 untrusted_data.salary",
+            description="见上方 untrusted_data.description",
+            requirements="见上方 untrusted_data.requirements",
         )
         profile = getattr(self, "_career_profile", None)
         if profile:
             transition = profile.get("transition")
-            profile_block = json.dumps(
-                profile, ensure_ascii=False, sort_keys=True
+            profile_block = wrap_untrusted_data(
+                json.dumps(profile, ensure_ascii=False, sort_keys=True)
             )
             prompt += (
                 "\n\n【求职画像——评估标准，简历仅作为能力素材】\n"
                 f"{profile_block}\n"
             )
+            # 正常 API 已由 normalize 保证 transition 完整；以下条件仍防守
+            # 旧缓存或直接调用 analyze_jobs 时传入的不完整画像。
             if (
                 isinstance(transition, dict)
                 and transition.get("is_transition") is True
                 and transition.get("to")
             ):
                 prompt += (
-                    f"候选人明确希望从 {transition.get('from') or '当前方向'} "
-                    f"转型到 {transition['to']}。评分锚必须切换为：这个岗位是否是"
-                    f"通往 {transition['to']} 的好跳板，以及现有经历中有哪些技能可迁移；"
+                    "画像数据表明候选人正在转型。评分锚必须切换为：这个岗位是否是"
+                    "通往 transition.to 的好跳板，以及现有经历中有哪些技能可迁移；"
                     "不要只按简历与 JD 的静态重合度打分。\n"
                 )
             else:

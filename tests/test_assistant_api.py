@@ -161,6 +161,23 @@ class TestAssistantAnswer:
         assert r.status_code == 502
         assert "secret internal detail" not in str(r.get_json())
 
+    @pytest.mark.parametrize("empty_answer", ("", "   ", None))
+    def test_empty_ai_answer_returns_502(
+        self, app, store, monkeypatch, empty_answer
+    ):
+        client, uid = _authed(app, store)
+        task_id = _success_task(store, uid)
+        _mock_ai(monkeypatch, answer=empty_answer)
+        response = client.post(
+            "/api/assistant",
+            json={"question": "对比", "task_id": task_id},
+            headers=ORIGIN,
+        )
+        assert response.status_code == 502
+        assert response.get_json()["error"] == (
+            "结果助手暂时不可用，请稍后重试"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
