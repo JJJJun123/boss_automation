@@ -110,6 +110,122 @@
           <div class="setup__group">
             <div class="section-label">
               <span class="section-label__num">II.</span>
+              Career profile
+            </div>
+
+            <section class="profile-interview" id="profile-interview" hidden>
+              <header class="profile-panel__head">
+                <div>
+                  <div class="profile-panel__eyebrow">Profile interview</div>
+                  <h3>补全简历里看不出的偏好</h3>
+                </div>
+                <span id="profile-round-label">最多 5 轮</span>
+              </header>
+              <div class="profile-chat__messages" id="profile-chat-messages"></div>
+              <form class="profile-chat__form" id="profile-chat-form">
+                <input
+                  id="profile-chat-input"
+                  type="text"
+                  maxlength="1000"
+                  placeholder="回答这一问…"
+                  autocomplete="off"
+                />
+                <button class="btn-secondary" id="profile-chat-send" type="submit">
+                  发送
+                </button>
+              </form>
+              <div class="profile-panel__status" id="profile-chat-status"></div>
+            </section>
+
+            <section class="career-profile-card" id="career-profile-card" hidden>
+              <div class="profile-refresh-note" id="profile-refresh-note" hidden>
+                当前画像基于上一版简历，建议重新聊几轮更新。
+              </div>
+              <div class="profile-panel__eyebrow">Your search compass</div>
+              <h3 class="career-profile-card__title">求职画像</h3>
+              <dl class="career-profile-card__grid">
+                <div>
+                  <dt>目标方向</dt>
+                  <dd id="profile-directions">—</dd>
+                </div>
+                <div>
+                  <dt>转型路径</dt>
+                  <dd id="profile-transition">—</dd>
+                </div>
+                <div>
+                  <dt>城市</dt>
+                  <dd id="profile-cities">—</dd>
+                </div>
+                <div>
+                  <dt>薪资底线</dt>
+                  <dd id="profile-salary">—</dd>
+                </div>
+                <div>
+                  <dt>硬性排除</dt>
+                  <dd id="profile-avoids">—</dd>
+                </div>
+                <div>
+                  <dt>职级/年限</dt>
+                  <dd id="profile-seniority">—</dd>
+                </div>
+                <div class="career-profile-card__wide">
+                  <dt>补充</dt>
+                  <dd id="profile-notes">—</dd>
+                </div>
+              </dl>
+              <div class="profile-panel__actions">
+                <button class="btn-secondary" id="profile-edit-btn" type="button">
+                  编辑
+                </button>
+                <button class="btn-secondary" id="profile-rechat-btn" type="button">
+                  重新聊
+                </button>
+              </div>
+            </section>
+
+            <form class="profile-editor" id="profile-editor" hidden>
+              <div class="field">
+                <label class="field__label" for="profile-edit-directions">目标方向 · 逗号分隔，最多 3 个</label>
+                <input id="profile-edit-directions" type="text" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="profile-edit-cities">城市 · 逗号分隔</label>
+                <input id="profile-edit-cities" type="text" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="profile-edit-salary">薪资底线</label>
+                <input id="profile-edit-salary" type="text" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="profile-edit-avoids">硬性排除 · 逗号分隔</label>
+                <input id="profile-edit-avoids" type="text" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="profile-edit-seniority">职级/年限</label>
+                <input id="profile-edit-seniority" type="text" />
+              </div>
+              <label class="profile-editor__check">
+                <input id="profile-edit-transition-enabled" type="checkbox" />
+                正在转型
+              </label>
+              <div class="profile-editor__transition" id="profile-edit-transition-fields">
+                <input id="profile-edit-transition-from" type="text" placeholder="从：券商风控" />
+                <input id="profile-edit-transition-to" type="text" placeholder="到：买方量化风控" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="profile-edit-notes">补充说明</label>
+                <textarea id="profile-edit-notes" rows="3"></textarea>
+              </div>
+              <div class="profile-panel__actions">
+                <button class="btn-secondary" type="submit">保存画像</button>
+                <button class="btn-secondary" id="profile-edit-cancel" type="button">取消</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="setup__group">
+            <div class="section-label">
+              <span class="section-label__num">III.</span>
               Search
             </div>
 
@@ -141,6 +257,33 @@
             </div>
 
             <button id="start-search-btn" class="btn-run">Begin search</button>
+            <section class="search-plan" id="search-plan" hidden>
+              <div class="profile-panel__eyebrow">Search plan · 确认后开跑</div>
+              <div class="search-plan__keywords" id="search-plan-keywords"></div>
+              <button class="search-plan__add" id="search-plan-add" type="button">
+                ＋ 添加搜索词
+              </button>
+              <div class="field search-plan__volume">
+                <label class="field__label" for="search-plan-per-keyword">
+                  每个词抓取岗位数
+                </label>
+                <input
+                  id="search-plan-per-keyword"
+                  type="number"
+                  min="5"
+                  max="30"
+                  value="15"
+                />
+              </div>
+              <div class="profile-panel__actions">
+                <button class="btn-secondary" id="search-plan-confirm" type="button">
+                  确认开跑
+                </button>
+                <button class="btn-secondary" id="search-plan-cancel" type="button">
+                  取消
+                </button>
+              </div>
+            </section>
             <div class="trial-status" id="trial-status">
               免费试用次数：加载中…
             </div>
@@ -148,7 +291,7 @@
 
           <div class="setup__group">
             <div class="section-label">
-              <span class="section-label__num">III.</span>
+              <span class="section-label__num">IV.</span>
               Model Key
             </div>
             <div class="key-card">
@@ -201,7 +344,7 @@
           <header class="feed__head">
             <div>
               <div class="section-label" style="margin-bottom: 6px">
-                <span class="section-label__num">IV.</span>
+                <span class="section-label__num">V.</span>
                 Latest dispatch
               </div>
               <div
@@ -297,6 +440,7 @@
 
           <section class="result-notes" id="result-notes" hidden>
             <div class="cache-note" id="cache-note" hidden></div>
+            <div class="keyword-error-note" id="keyword-error-note" hidden></div>
             <details class="discard-panel" id="discard-panel" hidden>
               <summary class="discard-panel__summary">
                 已过滤 <span id="discarded-count">0</span> 个岗位
@@ -312,6 +456,32 @@
             <div class="empty-state__icon">⌗</div>
             <h3 class="empty-state__title">尚无搜索结果</h3>
             <p class="empty-state__hint">输入关键词，按下 Begin search。</p>
+          </section>
+
+          <section class="result-assistant" id="result-assistant" hidden>
+            <header class="result-assistant__head">
+              <div>
+                <div class="profile-panel__eyebrow">Result assistant</div>
+                <h3>问问这些岗位怎么选</h3>
+              </div>
+              <span>单轮问答 · 只读</span>
+            </header>
+            <div class="result-assistant__history" id="assistant-history"></div>
+            <form class="result-assistant__form" id="assistant-form">
+              <input
+                id="assistant-question"
+                type="text"
+                maxlength="500"
+                placeholder="例如：哪两个岗位最值得优先投？"
+                autocomplete="off"
+              />
+              <button class="btn-secondary" id="assistant-send" type="submit">
+                提问
+              </button>
+            </form>
+            <div class="result-assistant__hint" id="assistant-hint">
+              助手使用你的 API Key，不消耗站方试用次数。
+            </div>
           </section>
         </main>
       </div>

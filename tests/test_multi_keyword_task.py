@@ -145,6 +145,7 @@ class TestMultiKeywordExecution:
         task = _run_task(client, store,
                          {"keywords": ["风控", "计量", "合规"], "per_keyword": 5})
         assert task["status"] == "success"
+        assert task["keyword"] == "风控，计量，合规"
         assert sorted(crawled) == ["合规", "风控", "计量"] or \
                sorted(crawled) == sorted(["风控", "计量", "合规"])
         result = _json.loads(task["result_json"])
@@ -181,6 +182,29 @@ class TestMultiKeywordExecution:
         result = _json.loads(task["result_json"])
         assert result["analyzed_count"] == 1
         assert "坏词" in result.get("keyword_errors", {})
+
+    def test_single_keyword_timeout_does_not_abort_others(
+        self, app, store, monkeypatch
+    ):
+        client, _ = _authed(app, store)
+        _passthrough_analyzer(monkeypatch)
+
+        async def _fake(keyword, city, max_jobs, **kw):
+            if keyword == "慢词":
+                import asyncio
+                raise asyncio.TimeoutError
+            return [_job(f"ok-{keyword}", f"{keyword}岗", keyword)]
+
+        monkeypatch.setattr("backend.app.unified_search_jobs", _fake)
+        task = _run_task(
+            client,
+            store,
+            {"keywords": ["慢词", "风控"], "per_keyword": 5},
+        )
+        assert task["status"] == "success"
+        result = _json.loads(task["result_json"])
+        assert result["keyword_errors"]["慢词"] == "爬取超时"
+        assert result["analyzed_count"] == 1
 
     def test_all_keywords_fail_task_fails(self, app, store, monkeypatch):
         client, _ = _authed(app, store)

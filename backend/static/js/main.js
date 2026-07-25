@@ -30,6 +30,13 @@ document.addEventListener("DOMContentLoaded", function () {
   let discardedJobs = [];
   let currentView = "qualified";
   let currentTaskId = null;
+  let lastCompletedTaskId = null;
+  let careerProfile = null;
+  let careerProfileNeedsRefresh = false;
+  let profileMessages = [];
+  let profileInterviewStarted = false;
+  let hasUserApiKey = false;
+  let assistantBusy = false;
 
   const DECISION_META = {
     apply: { label: "投", heading: "投递", className: "apply" },
@@ -78,6 +85,24 @@ document.addEventListener("DOMContentLoaded", function () {
   const deleteApiKeyBtn = document.getElementById("btn-delete-api-key");
   const trialStatus = document.getElementById("trial-status");
   const byokModal = document.getElementById("byok-required-modal");
+  const profileInterview = document.getElementById("profile-interview");
+  const profileChatMessages = document.getElementById(
+    "profile-chat-messages",
+  );
+  const profileChatForm = document.getElementById("profile-chat-form");
+  const profileChatInput = document.getElementById("profile-chat-input");
+  const profileChatSend = document.getElementById("profile-chat-send");
+  const profileChatStatus = document.getElementById("profile-chat-status");
+  const careerProfileCard = document.getElementById("career-profile-card");
+  const profileEditor = document.getElementById("profile-editor");
+  const searchPlan = document.getElementById("search-plan");
+  const searchPlanKeywords = document.getElementById("search-plan-keywords");
+  const resultAssistant = document.getElementById("result-assistant");
+  const assistantHistory = document.getElementById("assistant-history");
+  const assistantForm = document.getElementById("assistant-form");
+  const assistantQuestion = document.getElementById("assistant-question");
+  const assistantSend = document.getElementById("assistant-send");
+  const assistantHint = document.getElementById("assistant-hint");
 
   // ========== 单页面应用，移除页面切换功能 ==========
 
@@ -115,6 +140,12 @@ document.addEventListener("DOMContentLoaded", function () {
     if ((data.message || "").includes("API Key")) {
       loadApiKeyStatus();
       byokModal?.classList.add("open");
+    }
+    if (data.status === "success" && currentTaskId) {
+      lastCompletedTaskId = currentTaskId;
+      showResultAssistant();
+    } else if (data.status !== "success" && resultAssistant) {
+      resultAssistant.hidden = true;
     }
     currentTaskId = null;
   });
@@ -215,7 +246,11 @@ document.addEventListener("DOMContentLoaded", function () {
       if (title)
         title.textContent =
           resumeData.name || resumeData.filename || "简历已加载";
-      if (hint) hint.textContent = `${resumeData.length || ""} 字符 · TTL 24h`;
+      if (hint) {
+        hint.textContent = resumeData.length
+          ? `${resumeData.length} 字符 · TTL 24h`
+          : `${resumeData.filename || "简历"} · TTL 24h`;
+      }
     }
   }
 
@@ -442,6 +477,260 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
+  // ========== 求职画像 ==========
+  function setText(id, value) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value || "—";
+  }
+
+  function appendBubble(container, role, text) {
+    if (!container) return;
+    const bubble = document.createElement("div");
+    bubble.className = `chat-bubble chat-bubble--${role}`;
+    bubble.textContent = text;
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function profileList(value) {
+    return Array.isArray(value) && value.length ? value.join(" · ") : "—";
+  }
+
+  function renderCareerProfile(
+    profile,
+    needsRefresh = careerProfileNeedsRefresh,
+  ) {
+    careerProfile = profile || null;
+    if (!careerProfile || !careerProfileCard) return;
+    careerProfileNeedsRefresh = Boolean(needsRefresh);
+    setText("profile-directions", profileList(careerProfile.target_directions));
+    setText("profile-cities", profileList(careerProfile.cities));
+    setText("profile-salary", careerProfile.salary_floor);
+    setText("profile-avoids", profileList(careerProfile.hard_avoids));
+    setText("profile-seniority", careerProfile.seniority);
+    setText("profile-notes", careerProfile.notes);
+    const transition = careerProfile.transition;
+    setText(
+      "profile-transition",
+      transition?.is_transition
+        ? `${transition.from || "当前方向"} → ${transition.to || "目标方向"}`
+        : "非转型",
+    );
+    const refreshNote = document.getElementById("profile-refresh-note");
+    if (refreshNote) refreshNote.hidden = !careerProfileNeedsRefresh;
+    careerProfileCard.hidden = false;
+    if (profileInterview) profileInterview.hidden = true;
+    if (profileEditor) profileEditor.hidden = true;
+    profileInterviewStarted = false;
+  }
+
+  function setProfileChatBusy(busy, message = "") {
+    if (profileChatInput) profileChatInput.disabled = busy;
+    if (profileChatSend) profileChatSend.disabled = busy;
+    if (profileChatStatus) {
+      profileChatStatus.textContent = message;
+      profileChatStatus.classList.remove("error");
+    }
+  }
+
+  async function requestProfileReply() {
+    setProfileChatBusy(true, "顾问正在整理这一轮…");
+    try {
+      const response = await axios.post("/api/profile-chat", {
+        messages: profileMessages,
+      });
+      const body = response.data;
+      appendBubble(profileChatMessages, "assistant", body.message);
+      if (body.type === "complete") {
+        if (profileInterview) profileInterview.classList.add("is-complete");
+        setProfileChatBusy(true, "画像已完成");
+        setTimeout(() => {
+          renderCareerProfile(body.profile, false);
+          profileInterview?.classList.remove("is-complete");
+        }, 320);
+        return;
+      }
+      profileMessages.push({ role: "assistant", content: body.message });
+      const assistantRounds = profileMessages.filter(
+        (message) => message.role === "assistant",
+      ).length;
+      const roundLabel = document.getElementById("profile-round-label");
+      if (roundLabel)
+        roundLabel.textContent = `${Math.min(assistantRounds, 5)} / 5 轮`;
+      setProfileChatBusy(false, "");
+      profileChatInput?.focus();
+    } catch (error) {
+      setProfileChatBusy(false, "");
+      if (profileChatStatus) {
+        profileChatStatus.textContent =
+          error.response?.data?.error || "画像顾问暂时不可用，请重试";
+        profileChatStatus.classList.add("error");
+      }
+    }
+  }
+
+  function startProfileInterview(reset = true) {
+    if (!profileInterview) return;
+    if (reset) {
+      profileMessages = [];
+      profileChatMessages?.replaceChildren();
+      const roundLabel = document.getElementById("profile-round-label");
+      if (roundLabel) roundLabel.textContent = "最多 5 轮";
+    }
+    profileInterviewStarted = true;
+    profileInterview.hidden = false;
+    careerProfileCard && (careerProfileCard.hidden = true);
+    profileEditor && (profileEditor.hidden = true);
+    profileInterview.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (reset) requestProfileReply();
+  }
+
+  profileChatForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const content = profileChatInput?.value.trim() || "";
+    if (!content) return;
+    if (content.length > 1000) {
+      if (profileChatStatus) {
+        profileChatStatus.textContent = "单条回答最多 1000 字符";
+        profileChatStatus.classList.add("error");
+      }
+      return;
+    }
+    appendBubble(profileChatMessages, "user", content);
+    profileMessages.push({ role: "user", content });
+    if (profileChatInput) profileChatInput.value = "";
+    await requestProfileReply();
+  });
+
+  document
+    .getElementById("profile-rechat-btn")
+    ?.addEventListener("click", () => startProfileInterview(true));
+
+  function populateProfileEditor() {
+    if (!careerProfile || !profileEditor) return;
+    document.getElementById("profile-edit-directions").value = (
+      careerProfile.target_directions || []
+    ).join("，");
+    document.getElementById("profile-edit-cities").value = (
+      careerProfile.cities || []
+    ).join("，");
+    document.getElementById("profile-edit-salary").value =
+      careerProfile.salary_floor || "";
+    document.getElementById("profile-edit-avoids").value = (
+      careerProfile.hard_avoids || []
+    ).join("，");
+    document.getElementById("profile-edit-seniority").value =
+      careerProfile.seniority || "";
+    document.getElementById("profile-edit-notes").value =
+      careerProfile.notes || "";
+    const enabled = Boolean(careerProfile.transition?.is_transition);
+    const checkbox = document.getElementById(
+      "profile-edit-transition-enabled",
+    );
+    checkbox.checked = enabled;
+    document.getElementById("profile-edit-transition-from").value =
+      careerProfile.transition?.from || "";
+    document.getElementById("profile-edit-transition-to").value =
+      careerProfile.transition?.to || "";
+    const fields = document.getElementById("profile-edit-transition-fields");
+    if (fields) fields.hidden = !enabled;
+    careerProfileCard.hidden = true;
+    profileEditor.hidden = false;
+  }
+
+  document
+    .getElementById("profile-edit-btn")
+    ?.addEventListener("click", populateProfileEditor);
+  document
+    .getElementById("profile-edit-cancel")
+    ?.addEventListener("click", () => renderCareerProfile(careerProfile));
+  document
+    .getElementById("profile-edit-transition-enabled")
+    ?.addEventListener("change", (event) => {
+      const fields = document.getElementById("profile-edit-transition-fields");
+      if (fields) fields.hidden = !event.target.checked;
+    });
+
+  function splitProfileList(value) {
+    return (value || "")
+      .split(/[,，\n]/)
+      .map((item) => item.trim())
+      .filter((item, index, items) => item && items.indexOf(item) === index);
+  }
+
+  profileEditor?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const transitionEnabled = document.getElementById(
+      "profile-edit-transition-enabled",
+    ).checked;
+    const profile = {
+      target_directions: splitProfileList(
+        document.getElementById("profile-edit-directions").value,
+      ).slice(0, 3),
+      cities: splitProfileList(
+        document.getElementById("profile-edit-cities").value,
+      ),
+      salary_floor:
+        document.getElementById("profile-edit-salary").value.trim() || null,
+      hard_avoids: splitProfileList(
+        document.getElementById("profile-edit-avoids").value,
+      ),
+      seniority:
+        document.getElementById("profile-edit-seniority").value.trim() || null,
+      notes:
+        document.getElementById("profile-edit-notes").value.trim() || null,
+      transition: transitionEnabled
+        ? {
+            is_transition: true,
+            from: document
+              .getElementById("profile-edit-transition-from")
+              .value.trim(),
+            to: document
+              .getElementById("profile-edit-transition-to")
+              .value.trim(),
+          }
+        : null,
+    };
+    try {
+      const response = await axios.put("/api/career-profile", { profile });
+      renderCareerProfile(response.data.profile, false);
+    } catch (error) {
+      alert(
+        "画像保存失败: " +
+          (error.response?.data?.error || error.message),
+      );
+    }
+  });
+
+  async function loadOnboardingState() {
+    let hasResume = false;
+    try {
+      const resumeResponse = await axios.get("/api/resume/info");
+      hasResume = Boolean(resumeResponse.data.has_resume);
+      if (hasResume) {
+        updateResumeStatus(resumeResponse.data.resume_info);
+      }
+    } catch (error) {
+      if (error.response?.status === 401) return;
+    }
+
+    try {
+      const response = await axios.get("/api/career-profile");
+      renderCareerProfile(
+        response.data.profile,
+        Boolean(response.data.needs_refresh),
+      );
+    } catch (error) {
+      if (
+        hasResume &&
+        error.response?.status === 404 &&
+        !profileInterviewStarted
+      ) {
+        startProfileInterview(true);
+      }
+    }
+  }
+
   // ========== 加载配置 ==========
   async function loadConfig() {
     try {
@@ -480,6 +769,7 @@ document.addEventListener("DOMContentLoaded", function () {
       updateTrialStatus(body);
 
       if (response.ok) {
+        hasUserApiKey = true;
         if (apiProvider) apiProvider.value = body.provider;
         if (apiKeyStatus) {
           apiKeyStatus.textContent = `已配置 ${body.masked} · ${body.provider}`;
@@ -491,6 +781,7 @@ document.addEventListener("DOMContentLoaded", function () {
           trialStatus.classList.remove("exhausted");
         }
       } else {
+        hasUserApiKey = false;
         if (apiKeyStatus) {
           apiKeyStatus.textContent =
             body.code === "key_reconfigure_required"
@@ -503,11 +794,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         if (deleteApiKeyBtn) deleteApiKeyBtn.hidden = true;
       }
+      syncAssistantAvailability();
     } catch (error) {
+      hasUserApiKey = false;
       if (apiKeyStatus) {
         apiKeyStatus.textContent = "暂时无法读取 Key 状态";
         apiKeyStatus.className = "key-card__status error";
       }
+      syncAssistantAvailability();
     }
   }
 
@@ -612,83 +906,211 @@ document.addEventListener("DOMContentLoaded", function () {
   window.addEventListener("auth-ready", () => {
     loadConfig();
     loadApiKeyStatus();
+    loadOnboardingState();
     reattachActiveTask();
   });
 
   // 页面加载时获取配置
   loadConfig();
   loadApiKeyStatus();
+  loadOnboardingState();
   reattachActiveTask();
 
   // ========== 岗位搜索功能 ==========
-  if (startBtn) {
-    startBtn.addEventListener("click", async () => {
-      if (isSearching) return;
+  function addSearchKeywordRow(value = "") {
+    if (!searchPlanKeywords || searchPlanKeywords.children.length >= 3) return;
+    const row = document.createElement("div");
+    row.className = "search-plan__row";
 
-      const keyword = document.getElementById("keyword").value.trim();
-      const city = document.getElementById("city").value;
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = true;
+    enabled.setAttribute("aria-label", "启用此搜索词");
 
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 80;
+    input.value = value;
+    input.placeholder = "输入搜索词";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "search-plan__remove";
+    remove.textContent = "删除";
+    remove.addEventListener("click", () => row.remove());
+
+    row.append(enabled, input, remove);
+    searchPlanKeywords.appendChild(row);
+    if (!value) input.focus();
+  }
+
+  function showSearchPlan(keywords) {
+    if (!searchPlan || !searchPlanKeywords) return;
+    searchPlanKeywords.replaceChildren();
+    (keywords || []).slice(0, 3).forEach(addSearchKeywordRow);
+    if (!searchPlanKeywords.children.length) {
+      addSearchKeywordRow(document.getElementById("keyword").value.trim());
+    }
+    searchPlan.hidden = false;
+    searchPlan.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  async function launchSearch(payload) {
+    if (isSearching) return;
+    const city = document.getElementById("city").value;
+    if (!city) {
+      alert("请选择目标城市");
+      return;
+    }
+
+    isSearching = true;
+    allJobs = [];
+    qualifiedJobs = [];
+    discardedJobs = [];
+    lastCompletedTaskId = null;
+    renderDiscardedJobs([]);
+    showCacheHits(0);
+    showKeywordErrors({});
+    if (resultAssistant) resultAssistant.hidden = true;
+    if (assistantHistory) assistantHistory.replaceChildren();
+    if (searchPlan) searchPlan.hidden = true;
+    startBtn.textContent = "搜索中…";
+    startBtn.disabled = true;
+    startBtn.classList.add("searching");
+
+    try {
+      const response = await axios.post("/api/jobs/search", {
+        ...payload,
+        city,
+      });
+      currentTaskId = response.data.task_id;
+      qrPane?.classList.remove("open");
+    } catch (error) {
+      console.error("❌ 启动搜索失败:", error);
+      if (
+        error.response?.status === 402 &&
+        error.response?.data?.code === "byok_required"
+      ) {
+        showByokRequired();
+        loadApiKeyStatus();
+      } else if (error.response?.status === 409) {
+        const attached = await reattachActiveTask();
+        if (attached) {
+          if (progressMessage)
+            progressMessage.textContent =
+              "已有任务在进行中，已恢复显示——无需重复点击搜索。";
+          return;
+        }
+        alert("已有任务正在运行中，请稍候或刷新重试");
+      } else {
+        alert(
+          "启动搜索失败: " +
+            (error.response?.data?.error || error.message),
+        );
+      }
+      isSearching = false;
+      startBtn.textContent = "Begin search";
+      startBtn.disabled = false;
+      startBtn.classList.remove("searching");
+    }
+  }
+
+  startBtn?.addEventListener("click", async () => {
+    if (isSearching) return;
+    const keyword = document.getElementById("keyword").value.trim();
+    if (!careerProfile) {
       if (!keyword) {
         alert("请输入搜索关键词");
         return;
       }
-      if (!city) {
-        alert("请选择目标城市");
+      await launchSearch({
+        keyword,
+        max_jobs:
+          parseInt(document.getElementById("max_jobs").value, 10) || 5,
+      });
+      return;
+    }
+
+    startBtn.disabled = true;
+    startBtn.textContent = "生成搜索计划…";
+    try {
+      const response = await axios.post("/api/search-plan", {});
+      const preferredCity = response.data.profile?.cities?.[0];
+      const citySelect = document.getElementById("city");
+      if (
+        preferredCity &&
+        Array.from(citySelect?.options || []).some(
+          (option) => option.value === preferredCity,
+        )
+      ) {
+        citySelect.value = preferredCity;
+      }
+      showSearchPlan(response.data.keywords);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        careerProfile = null;
+        if (keyword) {
+          await launchSearch({
+            keyword,
+            max_jobs:
+              parseInt(document.getElementById("max_jobs").value, 10) || 5,
+          });
+          return;
+        }
+      }
+      alert(
+        "搜索计划生成失败: " +
+          (error.response?.data?.error || error.message),
+      );
+    } finally {
+      if (!isSearching) {
+        startBtn.disabled = false;
+        startBtn.textContent = "Begin search";
+      }
+    }
+  });
+
+  document.getElementById("search-plan-add")?.addEventListener("click", () => {
+    addSearchKeywordRow("");
+  });
+  document
+    .getElementById("search-plan-cancel")
+    ?.addEventListener("click", () => {
+      if (searchPlan) searchPlan.hidden = true;
+    });
+  document
+    .getElementById("search-plan-confirm")
+    ?.addEventListener("click", async () => {
+      const values = [];
+      searchPlanKeywords
+        ?.querySelectorAll(".search-plan__row")
+        .forEach((row) => {
+          const enabled = row.querySelector('input[type="checkbox"]');
+          const input = row.querySelector('input[type="text"]');
+          const value = input?.value.trim();
+          if (enabled?.checked && value && !values.includes(value)) {
+            values.push(value);
+          }
+        });
+      if (!values.length) {
+        alert("至少勾选并填写一个搜索词");
         return;
       }
-
-      isSearching = true;
-      allJobs = [];
-      qualifiedJobs = [];
-      discardedJobs = [];
-      renderDiscardedJobs([]);
-      showCacheHits(0);
-      startBtn.textContent = "搜索中…";
-      startBtn.disabled = true;
-      startBtn.classList.add("searching");
-
-      debugLog("🔍 开始搜索:", { keyword, city });
-
-      try {
-        const response = await axios.post("/api/jobs/search", {
-          keyword,
-          city,
-          max_jobs: parseInt(document.getElementById("max_jobs").value) || 5,
-        });
-
-        debugLog("✅ 搜索任务已启动:", response.data);
-        currentTaskId = response.data.task_id;
-        qrPane?.classList.remove("open");
-      } catch (error) {
-        console.error("❌ 启动搜索失败:", error);
-        if (
-          error.response?.status === 402 &&
-          error.response?.data?.code === "byok_required"
-        ) {
-          showByokRequired();
-          loadApiKeyStatus();
-        } else if (error.response?.status === 409) {
-          // 已有任务在跑（多为刷新后失忆再点）：接回显示，不弹窗打断
-          const attached = await reattachActiveTask();
-          if (attached) {
-            if (progressMessage)
-              progressMessage.textContent =
-                "已有任务在进行中，已恢复显示——无需重复点击搜索。";
-            return; // 按钮状态由 reattach 设置（保持搜索中）
-          }
-          alert("已有任务正在运行中，请稍候或刷新重试");
-        } else {
-          alert(
-            "启动搜索失败: " + (error.response?.data?.error || error.message),
-          );
-        }
-        isSearching = false;
-        startBtn.textContent = "Begin search";
-        startBtn.disabled = false;
-        startBtn.classList.remove("searching");
-      }
+      const perKeyword = Math.min(
+        30,
+        Math.max(
+          5,
+          parseInt(
+            document.getElementById("search-plan-per-keyword").value,
+            10,
+          ) || 15,
+        ),
+      );
+      await launchSearch({
+        keywords: values.slice(0, 3),
+        per_keyword: perKeyword,
+      });
     });
-  }
 
   // 更新进度
   function updateProgress(data) {
@@ -794,6 +1216,9 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       if (Object.prototype.hasOwnProperty.call(data.data, "cache_hits")) {
         showCacheHits(data.data.cache_hits);
+      }
+      if (Object.prototype.hasOwnProperty.call(data.data, "keyword_errors")) {
+        showKeywordErrors(data.data.keyword_errors);
       }
 
       // 检查是否需要简历
@@ -1031,12 +1456,28 @@ document.addEventListener("DOMContentLoaded", function () {
     syncResultNotesVisibility();
   }
 
+  function showKeywordErrors(errors) {
+    const note = document.getElementById("keyword-error-note");
+    if (!note) return;
+    const entries =
+      errors && typeof errors === "object" ? Object.entries(errors) : [];
+    note.hidden = entries.length === 0;
+    note.textContent = entries.length
+      ? `部分搜索词未完成：${entries
+          .map(([keyword, reason]) => `${keyword}（${reason}）`)
+          .join("；")}`
+      : "";
+    syncResultNotesVisibility();
+  }
+
   function syncResultNotesVisibility() {
     const notes = document.getElementById("result-notes");
     const cache = document.getElementById("cache-note");
+    const keywordErrors = document.getElementById("keyword-error-note");
     const discarded = document.getElementById("discard-panel");
-    if (notes && cache && discarded) {
-      notes.hidden = cache.hidden && discarded.hidden;
+    if (notes && cache && keywordErrors && discarded) {
+      notes.hidden =
+        cache.hidden && keywordErrors.hidden && discarded.hidden;
     }
   }
 
@@ -1069,6 +1510,71 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     syncResultNotesVisibility();
   }
+
+  function syncAssistantAvailability() {
+    const available =
+      hasUserApiKey && Boolean(lastCompletedTaskId) && !assistantBusy;
+    if (assistantQuestion) assistantQuestion.disabled = !available;
+    if (assistantSend) assistantSend.disabled = !available;
+    if (assistantHint) {
+      if (!hasUserApiKey) {
+        assistantHint.textContent =
+          "需要先在左侧配置你的 API Key，助手不会使用站方试用额度。";
+        assistantHint.classList.add("needs-key");
+      } else if (assistantBusy) {
+        assistantHint.textContent = "正在结合画像和岗位结果回答…";
+        assistantHint.classList.remove("needs-key");
+      } else {
+        assistantHint.textContent =
+          "助手使用你的 API Key，不消耗站方试用次数。";
+        assistantHint.classList.remove("needs-key");
+      }
+    }
+  }
+
+  function showResultAssistant() {
+    if (!resultAssistant) return;
+    resultAssistant.hidden = false;
+    syncAssistantAvailability();
+  }
+
+  assistantForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const question = assistantQuestion?.value.trim() || "";
+    if (!question || !lastCompletedTaskId || assistantBusy) return;
+    if (!hasUserApiKey) {
+      showByokRequired();
+      return;
+    }
+    appendBubble(assistantHistory, "user", question);
+    if (assistantQuestion) assistantQuestion.value = "";
+    assistantBusy = true;
+    syncAssistantAvailability();
+    try {
+      const response = await axios.post("/api/assistant", {
+        question,
+        task_id: lastCompletedTaskId,
+      });
+      appendBubble(assistantHistory, "assistant", response.data.answer);
+    } catch (error) {
+      if (
+        error.response?.status === 402 &&
+        error.response?.data?.code === "byok_required"
+      ) {
+        hasUserApiKey = false;
+        showByokRequired();
+      }
+      appendBubble(
+        assistantHistory,
+        "assistant",
+        error.response?.data?.error || "助手暂时无法回答，请稍后重试。",
+      );
+    } finally {
+      assistantBusy = false;
+      syncAssistantAvailability();
+      assistantQuestion?.focus();
+    }
+  });
 
   // 渲染岗位列表
   function renderJobsList(jobs) {
@@ -1381,39 +1887,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // 拖拽上传支持
-  if (uploadArea) {
-    uploadArea.addEventListener("dragover", function (e) {
-      e.preventDefault();
-      uploadArea.classList.add("dragover");
-    });
-
-    uploadArea.addEventListener("dragleave", function (e) {
-      e.preventDefault();
-      uploadArea.classList.remove("dragover");
-    });
-
-    uploadArea.addEventListener("drop", function (e) {
-      e.preventDefault();
-      uploadArea.classList.remove("dragover");
-
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        const file = files[0];
-        if (
-          file.type === "application/pdf" ||
-          file.type ===
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-          file.type === "text/plain"
-        ) {
-          uploadResume(file);
-        } else {
-          alert("请上传PDF、DOCX或TXT格式的文件");
-        }
-      }
-    });
-  }
-
   // 上传简历函数
   async function uploadResume(file) {
     debugLog("📤 开始上传简历:", file.name);
@@ -1451,11 +1924,23 @@ document.addEventListener("DOMContentLoaded", function () {
         if (response.data.success) {
           // 隐藏上传进度
           if (uploadProgress) uploadProgress.style.display = "none";
+          if (uploadArea) uploadArea.style.display = "block";
 
           // 更新简历状态 - 简化版本，不再显示AI分析
           updateResumeStatus(response.data.resume_data);
 
           debugLog("✅ 简历上传成功:", response.data.resume_data.name);
+          if (!response.data.has_career_profile) {
+            startProfileInterview(true);
+          } else if (response.data.profile_needs_refresh) {
+            loadOnboardingState();
+            const shouldRefresh = window.confirm(
+              "检测到简历已更换，现有求职画像仍基于上一版简历。现在重新聊几轮更新画像吗？",
+            );
+            if (shouldRefresh) startProfileInterview(true);
+          } else {
+            loadOnboardingState();
+          }
         } else {
           alert("简历上传失败: " + response.data.error);
           resetUploadArea();

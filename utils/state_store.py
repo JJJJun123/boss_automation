@@ -344,6 +344,48 @@ class StateStore:
             ).fetchone()
         return dict(row) if row else None
 
+    # ─── 求职画像 ──────────────────────────────────────────
+
+    def set_career_profile(self, user_id: str, profile_json: str,
+                           resume_hash: str) -> None:
+        """保存用户最新画像；更新时保留首次创建时间。"""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO career_profiles "
+                "(user_id, profile_json, resume_hash, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "profile_json = excluded.profile_json, "
+                "resume_hash = excluded.resume_hash, "
+                "updated_at = excluded.updated_at",
+                (user_id, profile_json, resume_hash, now, now),
+            )
+            conn.commit()
+
+    def get_career_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """读取解析后的最新画像；不存在或历史坏数据返回 None。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT profile_json, resume_hash, updated_at "
+                "FROM career_profiles WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            profile = json.loads(row["profile_json"])
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("忽略无法解析的求职画像：user_id=%s", user_id)
+            return None
+        if not isinstance(profile, dict):
+            return None
+        return {
+            "profile": profile,
+            "resume_hash": row["resume_hash"],
+            "updated_at": row["updated_at"],
+        }
+
     # ─── 岗位事实与分析缓存 ────────────────────────────────
 
     def upsert_job(self, job: Dict[str, Any]) -> None:
@@ -871,6 +913,15 @@ CREATE TABLE IF NOT EXISTS resumes (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_expires ON resumes(expires_at);
+
+CREATE TABLE IF NOT EXISTS career_profiles (
+    user_id      TEXT PRIMARY KEY,
+    profile_json TEXT NOT NULL,
+    resume_hash  TEXT,
+    created_at   REAL NOT NULL,
+    updated_at   REAL NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS jobs (
     job_id     TEXT PRIMARY KEY,

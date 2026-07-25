@@ -179,7 +179,9 @@ class EnhancedJobAnalyzer:
     
     def analyze_jobs(self, jobs_list: List[Dict[str, Any]], resume_text: str = "",
                      keyword: str = "",
-                     hard_filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+                     hard_filters: Optional[Dict[str, Any]] = None,
+                     career_profile: Optional[Dict[str, Any]] = None
+                     ) -> List[Dict[str, Any]]:
         """
         流水线：Hard filter（省 API 成本）→ AI 类型筛选 → 主力模型简历匹配，按分数降序返回。
 
@@ -188,17 +190,43 @@ class EnhancedJobAnalyzer:
             resume_text: 简历全文（直接传入，不做额外结构化）
             keyword: 搜索关键词（用于类型筛选）
             hard_filters: F2 硬性过滤（薪资/年限/学历/排除标签），在 AI 前过滤省成本
+            career_profile: 对话形成的求职画像；不传时完全沿用旧行为
         """
         # 分析器实例可能跨搜索复用；每次调用都只暴露本轮被过滤的岗位。
         self.discarded_jobs = []
-        self._search_keyword = keyword
+        self._career_profile = career_profile if isinstance(
+            career_profile, dict
+        ) else None
+        target_directions = (
+            self._career_profile.get("target_directions", [])
+            if self._career_profile else []
+        )
+        target_directions = [
+            item.strip() for item in target_directions
+            if isinstance(item, str) and item.strip()
+        ]
+        self._search_keyword = (
+            " / ".join(target_directions) if target_directions else keyword
+        )
+
+        # 画像硬排除与请求显式 hard_filters 合并，但不修改调用方原字典。
+        effective_hard_filters = dict(hard_filters or {})
+        if self._career_profile:
+            excludes = list(effective_hard_filters.get("exclude_keywords") or [])
+            for item in self._career_profile.get("hard_avoids", []) or []:
+                if isinstance(item, str) and item.strip() and item.strip() not in excludes:
+                    excludes.append(item.strip())
+            if excludes:
+                effective_hard_filters["exclude_keywords"] = excludes
 
         # 阶段0：Hard filter（爬虫后、AI 前）——阶段 1.8。
         # 命中用户硬性排除条件的岗位直接剔除，不送昂贵 AI。
-        if hard_filters:
+        if effective_hard_filters:
             from .hard_filter import apply_hard_filters
             before = len(jobs_list)
-            jobs_list, dropped = apply_hard_filters(jobs_list, hard_filters)
+            jobs_list, dropped = apply_hard_filters(
+                jobs_list, effective_hard_filters
+            )
             self.discarded_jobs.extend({
                 "title": item.get("title", ""),
                 "company": item.get("company", ""),
@@ -254,6 +282,18 @@ class EnhancedJobAnalyzer:
         """调用 GLM 判断岗位类型与搜索关键词的相关性。可被测试 mock 替换。"""
         keyword = getattr(self, '_search_keyword', '')
         prompt = ExtractionPrompts.get_job_relevance_screening_prompt(job, keyword)
+        profile = getattr(self, "_career_profile", None)
+        if profile:
+            directions = [
+                item for item in profile.get("target_directions", [])
+                if isinstance(item, str) and item.strip()
+            ]
+            prompt += (
+                "\n\n【求职画像 target_directions】\n- "
+                + "\n- ".join(directions)
+                + "\n判定标准：岗位与任一目标方向相关即可通过；"
+                  "画像方向优先于本次单一搜索词。"
+            )
         
         if self._screening_rule_fallback_active:
             return self._build_rule_screening_result(job, keyword)
@@ -305,6 +345,32 @@ class EnhancedJobAnalyzer:
             description=job.get('job_description', '')[:800],
             requirements=requirements_text[:800],
         )
+        profile = getattr(self, "_career_profile", None)
+        if profile:
+            transition = profile.get("transition")
+            profile_block = json.dumps(
+                profile, ensure_ascii=False, sort_keys=True
+            )
+            prompt += (
+                "\n\n【求职画像——评估标准，简历仅作为能力素材】\n"
+                f"{profile_block}\n"
+            )
+            if (
+                isinstance(transition, dict)
+                and transition.get("is_transition") is True
+                and transition.get("to")
+            ):
+                prompt += (
+                    f"候选人明确希望从 {transition.get('from') or '当前方向'} "
+                    f"转型到 {transition['to']}。评分锚必须切换为：这个岗位是否是"
+                    f"通往 {transition['to']} 的好跳板，以及现有经历中有哪些技能可迁移；"
+                    "不要只按简历与 JD 的静态重合度打分。\n"
+                )
+            else:
+                prompt += (
+                    "请以画像中的目标方向、城市、薪资与偏好为评估标准，"
+                    "简历用于判断能力证据。\n"
+                )
         # Stage 2 需要打分/判断，开启 thinking 让 DeepSeek 先做链式推理再输出 JSON。
         # Claude/GPT 推理模型使用 16000；DeepSeek 维持已调优的 6000，避免超过
         # 其输出上限。各客户端负责把兼容输入名 max_tokens 转成实际 API 参数。
