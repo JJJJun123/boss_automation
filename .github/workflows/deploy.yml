@@ -1,0 +1,23 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [local_dev]
+
+concurrency:
+  group: deploy-local-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH (forced command on server)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 45.76.111.206 >> ~/.ssh/known_hosts 2>/dev/null
+          # deploy key 在服务器端被 authorized_keys 强制命令锁定，
+          # 只能执行 /usr/local/bin/deploy-boss.sh（pull + restart + 健康检查）
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes root@45.76.111.206 deploy
