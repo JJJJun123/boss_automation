@@ -215,8 +215,10 @@ def _create_user_or_station_ai_client(store, user_id: str,
         return None
 
     if user_api_key is not None:
-        screening_model, analysis_model = _get_provider_models(provider)
-        model_name = analysis_model if purpose == "assistant" else screening_model
+        # 画像对话与助手全程主力模型：画像质量决定搜索词与评分锚的质量，
+        # 每轮多花几分钱值得（用户拍板 2026-07-28）。站方补贴档仍走便宜模型。
+        _screening_model, analysis_model = _get_provider_models(provider)
+        model_name = analysis_model
     else:
         model_name = "deepseek-v4-flash"
         if _config_manager:

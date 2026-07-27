@@ -46,9 +46,7 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   function normalizedDecision(job) {
-    return DECISION_META[job?.final_decision]
-      ? job.final_decision
-      : "consider";
+    return DECISION_META[job?.final_decision] ? job.final_decision : "consider";
   }
 
   // ========== 初始化所有DOM元素 ==========
@@ -86,9 +84,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const trialStatus = document.getElementById("trial-status");
   const byokModal = document.getElementById("byok-required-modal");
   const profileInterview = document.getElementById("profile-interview");
-  const profileChatMessages = document.getElementById(
-    "profile-chat-messages",
-  );
+  const qcardDeck = document.getElementById("qcard-deck");
+  const qcardPrev = document.getElementById("qcard-prev");
+  const qcardNext = document.getElementById("qcard-next");
   const profileChatForm = document.getElementById("profile-chat-form");
   const profileChatInput = document.getElementById("profile-chat-input");
   const profileChatSend = document.getElementById("profile-chat-send");
@@ -524,6 +522,105 @@ document.addEventListener("DOMContentLoaded", function () {
     profileInterviewStarted = false;
   }
 
+  // ── 索引卡访谈状态 ──
+  // qaCards: [{question, answer|null}]；qcardView: 当前查看的卡片下标
+  let qaCards = [];
+  let qcardView = -1;
+
+  function qcardUpdateNav() {
+    const last = qaCards.length - 1;
+    if (qcardPrev) qcardPrev.disabled = qcardView <= 0;
+    if (qcardNext) qcardNext.disabled = qcardView >= last;
+    const label = document.getElementById("profile-round-label");
+    if (label)
+      label.textContent = qaCards.length
+        ? `${Math.min(qcardView + 1, 5)} / 5`
+        : "— / 5";
+    // 只有停在最新卡且未作答时才允许输入
+    const onLive =
+      qcardView === last && last >= 0 && qaCards[last].answer === null;
+    if (profileChatInput) profileChatInput.disabled = !onLive;
+    if (profileChatSend) profileChatSend.disabled = !onLive;
+    if (onLive) profileChatInput?.focus();
+  }
+
+  function qcardBuild(card, isDone) {
+    const el = document.createElement("div");
+    el.className =
+      "qcard" +
+      (isDone ? " qcard--done" : "") +
+      (card.answer !== null && !isDone ? " qcard--history" : "");
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "qcard__eyebrow";
+    const qn = document.createElement("span");
+    qn.textContent = isDone ? "Interview · Done" : `Q · ${qcardView + 1}`;
+    eyebrow.appendChild(qn);
+    if (card.answer !== null && !isDone) {
+      const stamp = document.createElement("span");
+      stamp.className = "qcard__stamp";
+      stamp.textContent = "已归档";
+      eyebrow.appendChild(stamp);
+    }
+    el.appendChild(eyebrow);
+    const q = document.createElement("div");
+    q.className = "qcard__question";
+    q.textContent = card.question;
+    el.appendChild(q);
+    if (card.answer !== null && !isDone) {
+      const a = document.createElement("div");
+      a.className = "qcard__answer";
+      const lab = document.createElement("span");
+      lab.className = "qcard__answer-label";
+      lab.textContent = "你的回答";
+      a.appendChild(lab);
+      a.appendChild(document.createTextNode(card.answer));
+      el.appendChild(a);
+    }
+    return el;
+  }
+
+  function qcardRender(direction, isDone = false) {
+    if (!qcardDeck) return;
+    const card = qaCards[qcardView];
+    if (!card) return;
+    // 旧卡滑出；已在退场中的直接清掉，避免快速翻页时动画/定时器叠加
+    qcardDeck.querySelectorAll(".qcard").forEach((old) => {
+      if (old.dataset.exiting) {
+        old.remove();
+        return;
+      }
+      old.dataset.exiting = "1";
+      old.classList.add(
+        direction === "from-right" ? "qcard--exit-left" : "qcard--exit-right",
+      );
+      setTimeout(() => old.remove(), 340);
+    });
+    const el = qcardBuild(card, isDone);
+    el.classList.add(
+      direction === "from-right" ? "qcard--enter-right" : "qcard--enter-left",
+    );
+    qcardDeck.appendChild(el);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() =>
+        el.classList.remove("qcard--enter-right", "qcard--enter-left"),
+      ),
+    );
+    qcardUpdateNav();
+  }
+
+  let qcardNavLock = false;
+  function qcardNavStep(delta) {
+    if (qcardNavLock) return;
+    const target = qcardView + delta;
+    if (target < 0 || target > qaCards.length - 1) return;
+    qcardNavLock = true;
+    setTimeout(() => (qcardNavLock = false), 340);
+    qcardView = target;
+    qcardRender(delta > 0 ? "from-right" : "from-left");
+  }
+  qcardPrev?.addEventListener("click", () => qcardNavStep(-1));
+  qcardNext?.addEventListener("click", () => qcardNavStep(1));
+
   function setProfileChatBusy(busy, message = "") {
     if (profileChatInput) profileChatInput.disabled = busy;
     if (profileChatSend) profileChatSend.disabled = busy;
@@ -540,27 +637,39 @@ document.addEventListener("DOMContentLoaded", function () {
         messages: profileMessages,
       });
       const body = response.data;
-      appendBubble(profileChatMessages, "assistant", body.message);
       if (body.type === "complete") {
+        qaCards.push({
+          question: body.message || "画像已完成 ✓",
+          answer: null,
+        });
+        qcardView = qaCards.length - 1;
+        qcardRender("from-right", true);
         if (profileInterview) profileInterview.classList.add("is-complete");
         setProfileChatBusy(true, "画像已完成");
         setTimeout(() => {
           renderCareerProfile(body.profile, false);
           profileInterview?.classList.remove("is-complete");
-        }, 320);
+        }, 900);
         return;
       }
       profileMessages.push({ role: "assistant", content: body.message });
-      const assistantRounds = profileMessages.filter(
-        (message) => message.role === "assistant",
-      ).length;
-      const roundLabel = document.getElementById("profile-round-label");
-      if (roundLabel)
-        roundLabel.textContent = `${Math.min(assistantRounds, 5)} / 5 轮`;
+      qaCards.push({ question: body.message, answer: null });
+      qcardView = qaCards.length - 1;
+      qcardRender("from-right");
       setProfileChatBusy(false, "");
-      profileChatInput?.focus();
+      qcardUpdateNav();
     } catch (error) {
+      // 回滚未送达的这一轮回答，恢复到输入框让用户原文重试
+      const lastMsg = profileMessages[profileMessages.length - 1];
+      if (lastMsg?.role === "user") {
+        profileMessages.pop();
+        const liveCard = qaCards[qaCards.length - 1];
+        if (liveCard) liveCard.answer = null;
+        if (profileChatInput && !profileChatInput.value)
+          profileChatInput.value = lastMsg.content;
+      }
       setProfileChatBusy(false, "");
+      if (qaCards.length) qcardUpdateNav();
       if (profileChatStatus) {
         profileChatStatus.textContent =
           error.response?.data?.error || "画像顾问暂时不可用，请重试";
@@ -573,9 +682,11 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!profileInterview) return;
     if (reset) {
       profileMessages = [];
-      profileChatMessages?.replaceChildren();
+      qaCards = [];
+      qcardView = -1;
+      qcardDeck?.querySelectorAll(".qcard").forEach((el) => el.remove());
       const roundLabel = document.getElementById("profile-round-label");
-      if (roundLabel) roundLabel.textContent = "最多 5 轮";
+      if (roundLabel) roundLabel.textContent = "— / 5";
     }
     profileInterviewStarted = true;
     profileInterview.hidden = false;
@@ -596,7 +707,8 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       return;
     }
-    appendBubble(profileChatMessages, "user", content);
+    const liveCard = qaCards[qaCards.length - 1];
+    if (liveCard) liveCard.answer = content;
     profileMessages.push({ role: "user", content });
     if (profileChatInput) profileChatInput.value = "";
     await requestProfileReply();
@@ -615,8 +727,7 @@ document.addEventListener("DOMContentLoaded", function () {
         careerProfileNeedsRefresh = Boolean(response.data.needs_refresh);
       } catch (error) {
         alert(
-          "画像加载失败: " +
-            (error.response?.data?.error || error.message),
+          "画像加载失败: " + (error.response?.data?.error || error.message),
         );
         return;
       }
@@ -638,9 +749,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("profile-edit-notes").value =
       careerProfile.notes || "";
     const enabled = Boolean(careerProfile.transition?.is_transition);
-    const checkbox = document.getElementById(
-      "profile-edit-transition-enabled",
-    );
+    const checkbox = document.getElementById("profile-edit-transition-enabled");
     checkbox.checked = enabled;
     document.getElementById("profile-edit-transition-from").value =
       careerProfile.transition?.from || "";
@@ -691,8 +800,7 @@ document.addEventListener("DOMContentLoaded", function () {
       ),
       seniority:
         document.getElementById("profile-edit-seniority").value.trim() || null,
-      notes:
-        document.getElementById("profile-edit-notes").value.trim() || null,
+      notes: document.getElementById("profile-edit-notes").value.trim() || null,
       transition: transitionEnabled
         ? {
             is_transition: true,
@@ -709,10 +817,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const response = await axios.put("/api/career-profile", { profile });
       renderCareerProfile(response.data.profile, false);
     } catch (error) {
-      alert(
-        "画像保存失败: " +
-          (error.response?.data?.error || error.message),
-      );
+      alert("画像保存失败: " + (error.response?.data?.error || error.message));
     }
   });
 
@@ -1018,8 +1123,7 @@ document.addEventListener("DOMContentLoaded", function () {
         alert("已有任务正在运行中，请稍候或刷新重试");
       } else {
         alert(
-          "启动搜索失败: " +
-            (error.response?.data?.error || error.message),
+          "启动搜索失败: " + (error.response?.data?.error || error.message),
         );
       }
       isSearching = false;
@@ -1039,8 +1143,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       await launchSearch({
         keyword,
-        max_jobs:
-          parseInt(document.getElementById("max_jobs").value, 10) || 5,
+        max_jobs: parseInt(document.getElementById("max_jobs").value, 10) || 5,
       });
       return;
     }
@@ -1073,8 +1176,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       }
       alert(
-        "搜索计划生成失败: " +
-          (error.response?.data?.error || error.message),
+        "搜索计划生成失败: " + (error.response?.data?.error || error.message),
       );
     } finally {
       if (!isSearching) {
@@ -1104,11 +1206,7 @@ document.addEventListener("DOMContentLoaded", function () {
           const input = row.querySelector('input[type="text"]');
           const value = input?.value.trim();
           const normalizedValue = value ? value.toLowerCase() : "";
-          if (
-            enabled?.checked &&
-            value &&
-            !seenKeywords.has(normalizedValue)
-          ) {
+          if (enabled?.checked && value && !seenKeywords.has(normalizedValue)) {
             values.push(value);
             seenKeywords.add(normalizedValue);
           }
@@ -1248,7 +1346,6 @@ document.addEventListener("DOMContentLoaded", function () {
       } else {
         displayResults(data.data.results, data.data.stats);
       }
-
     }
   }
 
@@ -1471,9 +1568,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!note) return;
     const safeCount = Math.max(0, Number(count) || 0);
     note.hidden = safeCount === 0;
-    note.textContent = safeCount
-      ? `♻ ${safeCount} 个岗位复用历史分析`
-      : "";
+    note.textContent = safeCount ? `♻ ${safeCount} 个岗位复用历史分析` : "";
     syncResultNotesVisibility();
   }
 
@@ -1497,8 +1592,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const keywordErrors = document.getElementById("keyword-error-note");
     const discarded = document.getElementById("discard-panel");
     if (notes && cache && keywordErrors && discarded) {
-      notes.hidden =
-        cache.hidden && keywordErrors.hidden && discarded.hidden;
+      notes.hidden = cache.hidden && keywordErrors.hidden && discarded.hidden;
     }
   }
 
@@ -1772,8 +1866,7 @@ document.addEventListener("DOMContentLoaded", function () {
           `#${detailId}_desc`,
         );
         if (descriptionElement) {
-          descriptionElement.textContent =
-            displayText + (isLong ? "..." : "");
+          descriptionElement.textContent = displayText + (isLong ? "..." : "");
         }
 
         div.appendChild(jobDetailsDiv);

@@ -119,9 +119,33 @@
                   <div class="profile-panel__eyebrow">Profile interview</div>
                   <h3>补全简历里看不出的偏好</h3>
                 </div>
-                <span id="profile-round-label">最多 5 轮</span>
+                <div class="qcard-nav">
+                  <button
+                    class="qcard-nav__btn"
+                    id="qcard-prev"
+                    type="button"
+                    aria-label="上一问"
+                    disabled
+                  >
+                    ‹
+                  </button>
+                  <span class="qcard-nav__counter" id="profile-round-label"
+                    >— / 5</span
+                  >
+                  <button
+                    class="qcard-nav__btn"
+                    id="qcard-next"
+                    type="button"
+                    aria-label="下一问"
+                    disabled
+                  >
+                    ›
+                  </button>
+                </div>
               </header>
-              <div class="profile-chat__messages" id="profile-chat-messages"></div>
+              <div class="qcard-deck" id="qcard-deck">
+                <div class="qcard-deck__ghost" aria-hidden="true"></div>
+              </div>
               <form class="profile-chat__form" id="profile-chat-form">
                 <input
                   id="profile-chat-input"
@@ -130,15 +154,27 @@
                   placeholder="回答这一问…"
                   autocomplete="off"
                 />
-                <button class="btn-secondary" id="profile-chat-send" type="submit">
+                <button
+                  class="btn-secondary"
+                  id="profile-chat-send"
+                  type="submit"
+                >
                   发送
                 </button>
               </form>
               <div class="profile-panel__status" id="profile-chat-status"></div>
             </section>
 
-            <section class="career-profile-card" id="career-profile-card" hidden>
-              <div class="profile-refresh-note" id="profile-refresh-note" hidden>
+            <section
+              class="career-profile-card"
+              id="career-profile-card"
+              hidden
+            >
+              <div
+                class="profile-refresh-note"
+                id="profile-refresh-note"
+                hidden
+              >
                 当前画像基于上一版简历，建议重新聊几轮更新。
               </div>
               <div class="profile-panel__eyebrow">Your search compass</div>
@@ -174,10 +210,18 @@
                 </div>
               </dl>
               <div class="profile-panel__actions">
-                <button class="btn-secondary" id="profile-edit-btn" type="button">
+                <button
+                  class="btn-secondary"
+                  id="profile-edit-btn"
+                  type="button"
+                >
                   编辑
                 </button>
-                <button class="btn-secondary" id="profile-rechat-btn" type="button">
+                <button
+                  class="btn-secondary"
+                  id="profile-rechat-btn"
+                  type="button"
+                >
                   重新聊
                 </button>
               </div>
@@ -185,40 +229,69 @@
 
             <form class="profile-editor" id="profile-editor" hidden>
               <div class="field">
-                <label class="field__label" for="profile-edit-directions">目标方向 · 逗号分隔，最多 3 个</label>
+                <label class="field__label" for="profile-edit-directions"
+                  >目标方向 · 逗号分隔，最多 3 个</label
+                >
                 <input id="profile-edit-directions" type="text" />
               </div>
               <div class="field">
-                <label class="field__label" for="profile-edit-cities">城市 · 逗号分隔</label>
+                <label class="field__label" for="profile-edit-cities"
+                  >城市 · 逗号分隔</label
+                >
                 <input id="profile-edit-cities" type="text" />
               </div>
               <div class="field">
-                <label class="field__label" for="profile-edit-salary">薪资底线</label>
+                <label class="field__label" for="profile-edit-salary"
+                  >薪资底线</label
+                >
                 <input id="profile-edit-salary" type="text" />
               </div>
               <div class="field">
-                <label class="field__label" for="profile-edit-avoids">硬性排除 · 逗号分隔</label>
+                <label class="field__label" for="profile-edit-avoids"
+                  >硬性排除 · 逗号分隔</label
+                >
                 <input id="profile-edit-avoids" type="text" />
               </div>
               <div class="field">
-                <label class="field__label" for="profile-edit-seniority">职级/年限</label>
+                <label class="field__label" for="profile-edit-seniority"
+                  >职级/年限</label
+                >
                 <input id="profile-edit-seniority" type="text" />
               </div>
               <label class="profile-editor__check">
                 <input id="profile-edit-transition-enabled" type="checkbox" />
                 正在转型
               </label>
-              <div class="profile-editor__transition" id="profile-edit-transition-fields">
-                <input id="profile-edit-transition-from" type="text" placeholder="从：券商风控" />
-                <input id="profile-edit-transition-to" type="text" placeholder="到：买方量化风控" />
+              <div
+                class="profile-editor__transition"
+                id="profile-edit-transition-fields"
+              >
+                <input
+                  id="profile-edit-transition-from"
+                  type="text"
+                  placeholder="从：券商风控"
+                />
+                <input
+                  id="profile-edit-transition-to"
+                  type="text"
+                  placeholder="到：买方量化风控"
+                />
               </div>
               <div class="field">
-                <label class="field__label" for="profile-edit-notes">补充说明</label>
+                <label class="field__label" for="profile-edit-notes"
+                  >补充说明</label
+                >
                 <textarea id="profile-edit-notes" rows="3"></textarea>
               </div>
               <div class="profile-panel__actions">
                 <button class="btn-secondary" type="submit">保存画像</button>
-                <button class="btn-secondary" id="profile-edit-cancel" type="button">取消</button>
+                <button
+                  class="btn-secondary"
+                  id="profile-edit-cancel"
+                  type="button"
+                >
+                  取消
+                </button>
               </div>
             </form>
           </div>
@@ -259,8 +332,15 @@
             <button id="start-search-btn" class="btn-run">Begin search</button>
             <section class="search-plan" id="search-plan" hidden>
               <div class="profile-panel__eyebrow">Search plan · 确认后开跑</div>
-              <div class="search-plan__keywords" id="search-plan-keywords"></div>
-              <button class="search-plan__add" id="search-plan-add" type="button">
+              <div
+                class="search-plan__keywords"
+                id="search-plan-keywords"
+              ></div>
+              <button
+                class="search-plan__add"
+                id="search-plan-add"
+                type="button"
+              >
                 ＋ 添加搜索词
               </button>
               <div class="field search-plan__volume">
@@ -276,10 +356,18 @@
                 />
               </div>
               <div class="profile-panel__actions">
-                <button class="btn-secondary" id="search-plan-confirm" type="button">
+                <button
+                  class="btn-secondary"
+                  id="search-plan-confirm"
+                  type="button"
+                >
                   确认开跑
                 </button>
-                <button class="btn-secondary" id="search-plan-cancel" type="button">
+                <button
+                  class="btn-secondary"
+                  id="search-plan-cancel"
+                  type="button"
+                >
                   取消
                 </button>
               </div>
@@ -440,7 +528,11 @@
 
           <section class="result-notes" id="result-notes" hidden>
             <div class="cache-note" id="cache-note" hidden></div>
-            <div class="keyword-error-note" id="keyword-error-note" hidden></div>
+            <div
+              class="keyword-error-note"
+              id="keyword-error-note"
+              hidden
+            ></div>
             <details class="discard-panel" id="discard-panel" hidden>
               <summary class="discard-panel__summary">
                 已过滤 <span id="discarded-count">0</span> 个岗位

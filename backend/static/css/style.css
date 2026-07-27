@@ -1504,3 +1504,134 @@ a:hover {
   color: var(--cream);
   border-color: var(--ink);
 }
+
+/* ─── 画像访谈 · 索引卡轮播 ───
+   隐喻：每个问题一张索引卡，答完向左"归档"滑出，新卡自右进场；
+   箭头翻阅已归档问答。纸卡质感 = 细墨边 + 赭石顶线 + 微阴影。 */
+.qcard-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.qcard-nav__btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+.qcard-nav__btn:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--cream);
+}
+.qcard-nav__btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.qcard-nav__counter {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+  min-width: 52px;
+  text-align: center;
+}
+
+.qcard-deck {
+  position: relative;
+  min-height: 170px;
+  margin: 14px 0 12px;
+  overflow: hidden;
+}
+/* 底层"下一张卡"的纸边暗示 */
+.qcard-deck__ghost {
+  position: absolute;
+  inset: 10px -4px 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  background: color-mix(in srgb, var(--cream) 60%, transparent);
+}
+
+.qcard {
+  position: absolute;
+  inset: 0 6px 8px 0;
+  background: var(--cream);
+  border: 1px solid var(--ink);
+  border-top: 3px solid var(--ochre);
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--ink) 12%, transparent);
+  padding: 16px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.32s cubic-bezier(0.22, 0.9, 0.3, 1),
+    opacity 0.32s ease;
+}
+.qcard--enter-right {
+  transform: translateX(112%);
+  opacity: 0;
+}
+.qcard--enter-left {
+  transform: translateX(-112%) rotate(-1.5deg);
+  opacity: 0;
+}
+.qcard--exit-left {
+  transform: translateX(-112%) rotate(-2deg);
+  opacity: 0;
+}
+.qcard--exit-right {
+  transform: translateX(112%);
+  opacity: 0;
+}
+
+.qcard__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ochre);
+  display: flex;
+  justify-content: space-between;
+}
+.qcard__stamp {
+  color: var(--ink-muted);
+}
+.qcard__question {
+  font-size: 17px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.qcard__answer {
+  margin-top: auto;
+  padding-left: 12px;
+  border-left: 3px solid var(--ochre);
+  font-style: italic;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.qcard__answer-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+  letter-spacing: 0.14em;
+  color: var(--ink-muted);
+  display: block;
+  margin-bottom: 3px;
+}
+.qcard--history .qcard__question {
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.qcard--done {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-top-color: var(--forest, #2e5339);
+}
+.qcard--done .qcard__question {
+  font-size: 20px;
+}
