@@ -608,6 +608,37 @@ document.addEventListener("DOMContentLoaded", function () {
     qcardUpdateNav();
   }
 
+  // 等待 AI 时滑入加载卡（不进 qaCards，回复到达即被真卡顶掉）
+  function qcardShowLoading() {
+    if (!qcardDeck) return;
+    qcardDeck.querySelectorAll(".qcard").forEach((old) => {
+      if (old.dataset.exiting) {
+        old.remove();
+        return;
+      }
+      old.dataset.exiting = "1";
+      old.classList.add("qcard--exit-left");
+      setTimeout(() => old.remove(), 340);
+    });
+    const el = document.createElement("div");
+    el.className = "qcard qcard--loading";
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "qcard__eyebrow";
+    const qn = document.createElement("span");
+    qn.textContent = "Thinking";
+    eyebrow.appendChild(qn);
+    el.appendChild(eyebrow);
+    const q = document.createElement("div");
+    q.className = "qcard__question qcard__question--loading";
+    q.textContent = "顾问正在想下一问…";
+    el.appendChild(q);
+    el.classList.add("qcard--enter-right");
+    qcardDeck.appendChild(el);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => el.classList.remove("qcard--enter-right")),
+    );
+  }
+
   let qcardNavLock = false;
   function qcardNavStep(delta) {
     if (qcardNavLock) return;
@@ -630,8 +661,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  let profileChatPending = false;
+
   async function requestProfileReply() {
-    setProfileChatBusy(true, "顾问正在整理这一轮…");
+    if (profileChatPending) return;
+    profileChatPending = true;
+    qcardShowLoading();
+    setProfileChatBusy(true, "顾问正在想下一问，主力模型约需 10-20 秒…");
     try {
       const response = await axios.post("/api/profile-chat", {
         messages: profileMessages,
@@ -669,12 +705,20 @@ document.addEventListener("DOMContentLoaded", function () {
           profileChatInput.value = lastMsg.content;
       }
       setProfileChatBusy(false, "");
-      if (qaCards.length) qcardUpdateNav();
+      if (qaCards.length) {
+        // 清掉加载卡，退回当前未答卡
+        qcardView = qaCards.length - 1;
+        qcardRender("from-left");
+      } else {
+        qcardDeck?.querySelectorAll(".qcard").forEach((el) => el.remove());
+      }
       if (profileChatStatus) {
         profileChatStatus.textContent =
           error.response?.data?.error || "画像顾问暂时不可用，请重试";
         profileChatStatus.classList.add("error");
       }
+    } finally {
+      profileChatPending = false;
     }
   }
 
@@ -693,7 +737,16 @@ document.addEventListener("DOMContentLoaded", function () {
     careerProfileCard && (careerProfileCard.hidden = true);
     profileEditor && (profileEditor.hidden = true);
     profileInterview.scrollIntoView({ behavior: "smooth", block: "center" });
-    if (reset) requestProfileReply();
+    if (reset) {
+      // 开场问前端固定：即时出卡不等 AI，也省一次主力模型调用
+      const opener =
+        "先聊聊：你这次求职最想解决什么？继续深耕现在的方向，还是考虑转型？";
+      profileMessages.push({ role: "assistant", content: opener });
+      qaCards.push({ question: opener, answer: null });
+      qcardView = 0;
+      qcardRender("from-right");
+      setProfileChatBusy(false, "");
+    }
   }
 
   profileChatForm?.addEventListener("submit", async (event) => {

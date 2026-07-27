@@ -1635,3 +1635,17 @@ a:hover {
 .qcard--done .qcard__question {
   font-size: 20px;
 }
+
+/* 等待 AI 的加载卡：虚线边 + 文字脉冲 */
+.qcard--loading {
+  border-style: dashed;
+  box-shadow: none;
+}
+.qcard__question--loading {
+  color: var(--ink-muted);
+  animation: qcard-pulse 1.4s ease-in-out infinite;
+}
+@keyframes qcard-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
