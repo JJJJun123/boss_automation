@@ -18,6 +18,7 @@ Flask==3.0.0
 Flask-CORS==4.0.0
 Flask-SocketIO==5.3.6
 python-socketio==5.10.0
+gunicorn>=23.0.0
 
 # Document processing (for resume parsing)
 python-docx==1.1.0

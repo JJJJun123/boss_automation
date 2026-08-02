@@ -425,6 +425,53 @@ def create_app(store=None) -> Flask:
             "masked": mask_key(api_key),
         })
 
+    @app.route("/api/user-key/test", methods=["POST"])
+    @require_user_id
+    def test_user_api_key():
+        """探测待保存的用户 Key；返回可用性，但不写入数据库。
+
+        请求参数：JSON ``provider`` 与 ``api_key``。
+        返回结果：成功时返回 provider；失败时只返回稳定错误码，不回显 Key、
+        provider 原始异常或上游响应正文。
+        """
+        if not _is_same_origin(request):
+            return jsonify({"error": "请求来源不合法"}), 403
+
+        data = request.get_json(silent=True) or {}
+        provider = str(data.get("provider", "")).strip().lower()
+        api_key = str(data.get("api_key", "")).strip()
+        if provider not in {"deepseek", "claude", "gpt"}:
+            return jsonify({"error": "不支持的 AI provider"}), 400
+        if not api_key:
+            return jsonify({"error": "API Key 必填"}), 400
+
+        try:
+            is_valid = validate_api_key(
+                provider, api_key, raise_on_timeout=True
+            )
+        except TimeoutError:
+            return jsonify({
+                "error": "Key 验证超时，请稍后重试",
+                "code": "key_validation_timeout",
+            }), 503
+        except Exception as exc:
+            logger.warning(
+                "用户 Key 探测失败 provider=%s type=%s",
+                provider,
+                type(exc).__name__,
+            )
+            return jsonify({
+                "error": "暂时无法连接模型服务，请稍后重试",
+                "code": "key_test_unavailable",
+            }), 502
+
+        if not is_valid:
+            return jsonify({
+                "error": "Key 无效或无权访问该模型服务",
+                "code": "key_invalid",
+            }), 400
+        return jsonify({"success": True, "provider": provider})
+
     @app.route("/api/settings/api-key", methods=["GET"])
     @require_user_id
     def get_api_key():
@@ -1055,6 +1102,22 @@ def create_app(store=None) -> Flask:
     def handle_disconnect():
         logger.info("客户端已断开连接")
 
+    return app
+
+
+def create_app_for_gunicorn(store=None) -> Flask:
+    """创建供 Gunicorn 加载的 WSGI 应用，并清理重启遗留任务。
+
+    参数：
+        store - 可选 StateStore；测试可注入临时数据库，生产默认使用 data/state.db。
+    返回：
+        Flask - 已挂载 threading 模式 Socket.IO 的应用实例。
+
+    这个入口只构造并返回应用，不调用 ``socketio.run``，因此可安全用于
+    ``gunicorn 'backend.app:create_app_for_gunicorn()'``。
+    """
+    app = create_app(store=store)
+    app.config["STORE"].terminate_orphan_active_tasks()
     return app
 
 

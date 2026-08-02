@@ -1,0 +1,19 @@
+[Unit]
+Description=Boss Automation web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/boss_automation
+EnvironmentFile=/etc/boss-automation.env
+Environment="PATH=/var/www/boss_automation/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+ExecStart=/usr/bin/env gunicorn --bind 127.0.0.1:3001 --worker-class gthread --workers 1 --threads 16 --timeout 120 'backend.app:create_app_for_gunicorn()'
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=130
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

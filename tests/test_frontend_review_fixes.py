@@ -7,6 +7,12 @@ from pathlib import Path
 MAIN_JS = (
     Path(__file__).resolve().parents[1] / "backend" / "static" / "js" / "main.js"
 )
+INDEX_HTML = (
+    Path(__file__).resolve().parents[1] / "backend" / "templates" / "index.html"
+)
+STYLE_CSS = (
+    Path(__file__).resolve().parents[1] / "backend" / "static" / "css" / "style.css"
+)
 
 
 def _source() -> str:
@@ -31,3 +37,32 @@ def test_profile_editor_loads_missing_profile_before_opening():
     source = _source()
     assert "async function populateProfileEditor()" in source
     assert 'await axios.get("/api/career-profile")' in source
+
+
+def test_key_configuration_lives_in_settings_drawer():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    drawer_start = html.index('id="settings-drawer"')
+    key_input = html.index('id="api-key-input"')
+    assert 'id="btn-open-settings"' in html
+    assert 'id="btn-close-settings"' in html
+    assert drawer_start < key_input
+    assert 'id="btn-test-api-key"' in html
+    assert "Invitation management" in html
+
+
+def test_settings_drawer_has_open_close_and_byok_bridge():
+    source = _source()
+    assert "function openSettingsDrawer()" in source
+    assert "function closeSettingsDrawer()" in source
+    assert 'fetch("/api/user-key/test"' in source
+    assert 'apiKeyForm?.addEventListener("submit"' in source
+    assert "event.preventDefault();" in source
+    assert 'getElementById("byok-go-settings")' in source
+    assert "openSettingsDrawer();" in source
+
+
+def test_settings_drawer_uses_existing_editorial_design_tokens():
+    css = STYLE_CSS.read_text(encoding="utf-8")
+    assert ".settings-drawer.open" in css
+    assert "background: var(--cream)" in css
+    assert "font-family: var(--font-display)" in css

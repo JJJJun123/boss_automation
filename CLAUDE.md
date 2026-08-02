@@ -58,6 +58,10 @@ export APP_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; 
 python run_web.py
 ```
 
+生产环境不用 `run_web.py`，使用单 worker 的 gthread Gunicorn；可部署仓库内
+`deploy/boss-automation.service`。`deploy/boss-state-backup.cron` 每日 04:00
+在线备份 `data/state.db`，保留最近 14 份。
+
 **访问地址**：http://localhost:3001（macOS 26 上 5000 被 AirPlay 占用，配置在 `config/app_config.yaml` 的 `web.port`）
 
 > 首次使用需在浏览器中手动扫码登录 Boss 直聘，登录态持久化到 Chrome profile：`~/Library/Application Support/boss_automation/browser_profile/boss_zhipin/`。下次启动免登。

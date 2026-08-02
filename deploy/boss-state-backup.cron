@@ -1,0 +1,1 @@
+0 4 * * * root /var/www/boss_automation/scripts/backup_state.sh /var/www/boss_automation/data/state.db /root/backups 14 >> /var/log/boss-state-backup.log 2>&1

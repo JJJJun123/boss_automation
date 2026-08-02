@@ -156,6 +156,47 @@ class StateStore:
             conn.commit()
         return code
 
+    def list_invites(self, status: Optional[str] = None) -> list[Dict[str, Any]]:
+        """按创建时间倒序列出邀请码。
+
+        参数：
+            status - 可选状态过滤：unused / used / revoked。
+        返回：
+            邀请码记录字典列表；不修改任何状态。
+        """
+        allowed_statuses = {"unused", "used", "revoked"}
+        if status is not None and status not in allowed_statuses:
+            raise ValueError(f"不支持的邀请码状态: {status}")
+
+        query = (
+            "SELECT code, status, user_id, created_at, used_at FROM invites"
+        )
+        params = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY created_at DESC, code ASC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def revoke_invite(self, code: str) -> bool:
+        """作废一个尚未使用的邀请码。
+
+        参数：
+            code - 要作废的邀请码。
+        返回：
+            True 表示状态由 unused 改为 revoked；已使用、已作废或不存在返回 False。
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE invites SET status = 'revoked' "
+                "WHERE code = ? AND status = 'unused'",
+                (code,),
+            )
+            conn.commit()
+        return cursor.rowcount == 1
+
     def consume_invite(self, code: str) -> Optional[Tuple[str, str]]:
         """消费邀请码 → 创建用户 + 签发 session token（一个事务原子完成）
 

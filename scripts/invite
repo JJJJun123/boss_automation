@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# 服务器邀请码短命令；可软链到 /usr/local/bin/invite。
+
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
+
+if [ -n "${BOSS_PYTHON_BIN:-}" ]; then
+  PYTHON_BIN="$BOSS_PYTHON_BIN"
+elif [ -x "$PROJECT_DIR/.venv/bin/python" ]; then
+  PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+
+exec "$PYTHON_BIN" "$SCRIPT_DIR/invite.py" "$@"

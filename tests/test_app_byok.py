@@ -174,6 +174,76 @@ class TestApiKeyRoutes:
         assert r.status_code == 401
 
 
+class TestApiKeyProbeRoute:
+    """未保存 Key 的连通性探测不能改动用户配置或泄露异常。"""
+
+    def test_valid_pending_key_is_tested_without_storing(self, authed, store):
+        client, uid = authed
+        pending_key = "sk-pending-abcdef123456"
+        with _mock.patch("backend.app.validate_api_key", return_value=True):
+            response = client.post(
+                "/api/user-key/test",
+                json={"provider": "deepseek", "api_key": pending_key},
+                headers=ORIGIN,
+            )
+        assert response.status_code == 200
+        assert response.get_json() == {
+            "success": True,
+            "provider": "deepseek",
+        }
+        assert pending_key not in response.get_data(as_text=True)
+        assert store.get_user_api_key(uid) is None
+
+    def test_invalid_pending_key_returns_clear_safe_error(self, authed):
+        client, _uid = authed
+        pending_key = "sk-invalid-secret"
+        with _mock.patch("backend.app.validate_api_key", return_value=False):
+            response = client.post(
+                "/api/user-key/test",
+                json={"provider": "deepseek", "api_key": pending_key},
+                headers=ORIGIN,
+            )
+        assert response.status_code == 400
+        assert response.get_json()["code"] == "key_invalid"
+        assert pending_key not in response.get_data(as_text=True)
+
+    def test_pending_key_timeout_is_retryable(self, authed):
+        client, _uid = authed
+        with _mock.patch(
+            "backend.app.validate_api_key", side_effect=TimeoutError
+        ):
+            response = client.post(
+                "/api/user-key/test",
+                json={"provider": "claude", "api_key": "sk-timeout"},
+                headers=ORIGIN,
+            )
+        assert response.status_code == 503
+        assert response.get_json()["code"] == "key_validation_timeout"
+
+    def test_provider_exception_is_not_exposed(self, authed):
+        client, _uid = authed
+        with _mock.patch(
+            "backend.app.validate_api_key",
+            side_effect=RuntimeError("provider exploded with secret context"),
+        ):
+            response = client.post(
+                "/api/user-key/test",
+                json={"provider": "gpt", "api_key": "sk-private"},
+                headers=ORIGIN,
+            )
+        assert response.status_code == 502
+        assert response.get_json()["code"] == "key_test_unavailable"
+        assert "provider exploded" not in response.get_data(as_text=True)
+
+    def test_probe_requires_authentication(self, app):
+        response = app.test_client().post(
+            "/api/user-key/test",
+            json={"provider": "deepseek", "api_key": "sk-private"},
+            headers=ORIGIN,
+        )
+        assert response.status_code == 401
+
+
 # ─── 搜索配额门 ──────────────────────────────────────────
 
 

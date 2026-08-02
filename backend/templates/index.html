@@ -53,6 +53,17 @@
             <span class="status-pill__dot" id="status-dot"></span>
             <span id="status-text">连接中…</span>
           </span>
+          <button
+            class="settings-trigger"
+            id="btn-open-settings"
+            type="button"
+            aria-label="打开设置"
+            aria-controls="settings-drawer"
+            aria-expanded="false"
+          >
+            <span aria-hidden="true">⚙</span>
+            <span class="settings-trigger__label">Settings</span>
+          </button>
         </div>
       </header>
 
@@ -377,54 +388,6 @@
             </div>
           </div>
 
-          <div class="setup__group">
-            <div class="section-label">
-              <span class="section-label__num">IV.</span>
-              Model Key
-            </div>
-            <div class="key-card">
-              <div class="field">
-                <label class="field__label" for="api-provider"
-                  >Provider · 模型服务</label
-                >
-                <select id="api-provider">
-                  <option value="deepseek">DeepSeek · 推荐</option>
-                  <option value="claude">Claude</option>
-                  <option value="gpt">GPT</option>
-                </select>
-              </div>
-              <div class="field">
-                <label class="field__label" for="api-key-input"
-                  >API Key · 仅加密保存</label
-                >
-                <input
-                  id="api-key-input"
-                  type="password"
-                  placeholder="sk-…"
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-              </div>
-              <button
-                class="btn-secondary key-card__action"
-                id="btn-save-api-key"
-                type="button"
-              >
-                验证并保存
-              </button>
-              <div class="key-card__status" id="api-key-status">
-                尚未配置 · 可先免费试用
-              </div>
-              <button
-                class="key-card__delete"
-                id="btn-delete-api-key"
-                type="button"
-                hidden
-              >
-                删除已保存的 Key
-              </button>
-            </div>
-          </div>
         </aside>
 
         <!-- ============ COLUMN II — feed ============ -->
@@ -432,7 +395,7 @@
           <header class="feed__head">
             <div>
               <div class="section-label" style="margin-bottom: 6px">
-                <span class="section-label__num">V.</span>
+                <span class="section-label__num">IV.</span>
                 Latest dispatch
               </div>
               <div
@@ -585,6 +548,101 @@
         </div>
       </footer>
     </div>
+
+    <div class="settings-backdrop" id="settings-backdrop"></div>
+    <aside
+      class="settings-drawer"
+      id="settings-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-hidden="true"
+      aria-labelledby="settings-title"
+      tabindex="-1"
+    >
+      <header class="settings-drawer__head">
+        <div>
+          <div class="gate__eyebrow">Private controls · 私密配置</div>
+          <h2 id="settings-title">Settings</h2>
+        </div>
+        <button
+          class="settings-drawer__close"
+          id="btn-close-settings"
+          type="button"
+          aria-label="关闭设置"
+        >
+          ✕ close
+        </button>
+      </header>
+
+      <div class="settings-drawer__body">
+        <section class="settings-section" aria-labelledby="key-settings-title">
+          <div class="settings-section__index">01 / Key configuration</div>
+          <h3 id="key-settings-title">Model Key</h3>
+          <p class="settings-section__lead">
+            Key 仅加密保存在服务器。测试连接不会保存当前输入。
+          </p>
+          <form class="key-card" id="api-key-form" autocomplete="off">
+            <div class="field">
+              <label class="field__label" for="api-provider"
+                >Provider · 模型服务</label
+              >
+              <select id="api-provider">
+                <option value="deepseek">DeepSeek · 推荐</option>
+                <option value="claude">Claude</option>
+                <option value="gpt">GPT</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field__label" for="api-key-input"
+                >API Key · 仅加密保存</label
+              >
+              <input
+                id="api-key-input"
+                type="password"
+                placeholder="sk-…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="key-card__actions">
+              <button
+                class="btn-secondary key-card__action"
+                id="btn-test-api-key"
+                type="button"
+              >
+                测试连接
+              </button>
+              <button
+                class="btn-secondary key-card__action"
+                id="btn-save-api-key"
+                type="button"
+              >
+                验证并保存
+              </button>
+            </div>
+            <div class="key-card__status" id="api-key-status" aria-live="polite">
+              尚未配置 · 可先免费试用
+            </div>
+            <button
+              class="key-card__delete"
+              id="btn-delete-api-key"
+              type="button"
+              hidden
+            >
+              删除已保存的 Key
+            </button>
+          </form>
+        </section>
+
+        <section class="settings-section" aria-labelledby="invite-settings-title">
+          <div class="settings-section__index">02 / Reserved</div>
+          <h3 id="invite-settings-title">Invitation management</h3>
+          <p class="settings-section__lead">
+            当前通过服务器 CLI 管理邀请码；这里预留后续管理员入口。
+          </p>
+        </section>
+      </div>
+    </aside>
 
     <!-- AI Details modal -->
     <div class="modal" id="ai-details-modal">

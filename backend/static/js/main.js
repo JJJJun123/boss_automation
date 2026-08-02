@@ -77,12 +77,18 @@ document.addEventListener("DOMContentLoaded", function () {
   const qrImage = document.getElementById("qr-image");
   const qrState = document.getElementById("qr-state");
   const apiProvider = document.getElementById("api-provider");
+  const apiKeyForm = document.getElementById("api-key-form");
   const apiKeyInput = document.getElementById("api-key-input");
   const apiKeyStatus = document.getElementById("api-key-status");
   const saveApiKeyBtn = document.getElementById("btn-save-api-key");
+  const testApiKeyBtn = document.getElementById("btn-test-api-key");
   const deleteApiKeyBtn = document.getElementById("btn-delete-api-key");
   const trialStatus = document.getElementById("trial-status");
   const byokModal = document.getElementById("byok-required-modal");
+  const settingsDrawer = document.getElementById("settings-drawer");
+  const settingsBackdrop = document.getElementById("settings-backdrop");
+  const openSettingsBtn = document.getElementById("btn-open-settings");
+  const closeSettingsBtn = document.getElementById("btn-close-settings");
   const profileInterview = document.getElementById("profile-interview");
   const qcardDeck = document.getElementById("qcard-deck");
   const qcardPrev = document.getElementById("qcard-prev");
@@ -137,7 +143,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if ((data.message || "").includes("API Key")) {
       loadApiKeyStatus();
-      byokModal?.classList.add("open");
+      openSettingsDrawer();
     }
     if (data.status === "success" && currentTaskId) {
       lastCompletedTaskId = currentTaskId;
@@ -981,6 +987,80 @@ document.addEventListener("DOMContentLoaded", function () {
     byokModal?.classList.add("open");
   }
 
+  function openSettingsDrawer() {
+    if (!settingsDrawer) return;
+    settingsDrawer.classList.add("open");
+    settingsDrawer.setAttribute("aria-hidden", "false");
+    settingsBackdrop?.classList.add("open");
+    openSettingsBtn?.setAttribute("aria-expanded", "true");
+    document.body.classList.add("settings-open");
+    loadApiKeyStatus();
+    window.setTimeout(() => apiKeyInput?.focus(), 180);
+  }
+
+  function closeSettingsDrawer() {
+    if (!settingsDrawer) return;
+    settingsDrawer.classList.remove("open");
+    settingsDrawer.setAttribute("aria-hidden", "true");
+    settingsBackdrop?.classList.remove("open");
+    openSettingsBtn?.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("settings-open");
+    openSettingsBtn?.focus();
+  }
+
+  openSettingsBtn?.addEventListener("click", openSettingsDrawer);
+  closeSettingsBtn?.addEventListener("click", closeSettingsDrawer);
+  settingsBackdrop?.addEventListener("click", closeSettingsDrawer);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && settingsDrawer?.classList.contains("open")) {
+      closeSettingsDrawer();
+    }
+  });
+
+  testApiKeyBtn?.addEventListener("click", async () => {
+    const apiKey = apiKeyInput?.value.trim() || "";
+    if (!apiKey) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = "请先输入 API Key";
+        apiKeyStatus.className = "key-card__status error";
+      }
+      return;
+    }
+
+    testApiKeyBtn.disabled = true;
+    testApiKeyBtn.textContent = "测试中…";
+    try {
+      const response = await fetch("/api/user-key/test", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: apiProvider?.value || "deepseek",
+          api_key: apiKey,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "连接测试失败");
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = `连接成功 · ${body.provider} Key 可用，尚未保存`;
+        apiKeyStatus.className = "key-card__status configured";
+      }
+    } catch (error) {
+      if (apiKeyStatus) {
+        apiKeyStatus.textContent = error.message;
+        apiKeyStatus.className = "key-card__status error";
+      }
+    } finally {
+      testApiKeyBtn.disabled = false;
+      testApiKeyBtn.textContent = "测试连接";
+    }
+  });
+
+  apiKeyForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveApiKeyBtn?.click();
+  });
+
   saveApiKeyBtn?.addEventListener("click", async () => {
     const apiKey = apiKeyInput?.value.trim() || "";
     if (!apiKey) {
@@ -1041,8 +1121,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   document.getElementById("byok-go-settings")?.addEventListener("click", () => {
     byokModal?.classList.remove("open");
-    apiKeyInput?.scrollIntoView({ behavior: "smooth", block: "center" });
-    apiKeyInput?.focus();
+    openSettingsDrawer();
   });
   byokModal?.addEventListener("click", (event) => {
     if (event.target === byokModal) byokModal.classList.remove("open");
@@ -1933,11 +2012,23 @@ document.addEventListener("DOMContentLoaded", function () {
       analysisDiv.className = "job-analysis-panel hidden mt-4";
       analysisDiv.style.display = "none";
 
+      const esc = (s) =>
+        String(s ?? "").replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
       const highlights = (job.match_highlights || [])
-        .map((h) => `<li class="text-xs text-gray-600">• ${h}</li>`)
+        .map((h) => `<li class="text-xs text-gray-600">• ${esc(h)}</li>`)
         .join("");
       const gaps = (job.gaps || [])
-        .map((g) => `<li class="text-xs text-gray-600">• ${g}</li>`)
+        .map((g) => `<li class="text-xs text-gray-600">• ${esc(g)}</li>`)
         .join("");
 
       analysisDiv.innerHTML = `
